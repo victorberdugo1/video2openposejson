@@ -41,8 +41,10 @@ INSTALL REQUIREMENTS
 --------------------
 With the virtual environment activated:
 ```
-  pip install --upgrade pip
-  pip install -r requirements.txt
+python -m pip install --upgrade pip
+```
+```
+pip install -r requirements.txt
 ```
 REQUIREMENTS IN requirements.txt:
   diffusers==0.14.0
