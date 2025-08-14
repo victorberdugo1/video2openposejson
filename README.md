@@ -20,21 +20,21 @@ python -m venv env
 
 PowerShell:
 ```
-.\venv\Scripts\Activate.ps1
+.\env\Scripts\Activate.ps1
 ```
   CMD: 
 ```
-.\venv\Scripts\activate.bat
+.\env\Scripts\activate.bat
 ```
 
 ### Linux / macOS:
   1. Create the environment:
 ```
-python3 -m venv venv
+python3 -m venv env
 ```
   2. Activate the environment:
 ```
-source venv/bin/activate
+source env/bin/activate
 ```
 
 INSTALL REQUIREMENTS
