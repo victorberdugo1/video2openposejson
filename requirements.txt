@@ -2,5 +2,8 @@ diffusers==0.14.0
 opencv-python
 ffmpeg-python
 moviepy
+imageio
+imageio-ffmpeg
 controlnet_aux
 mediapipe
+gradio
