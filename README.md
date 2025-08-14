@@ -14,7 +14,7 @@ CREATE VIRTUAL ENVIRONMENT
 ### Windows (PowerShell or CMD):
   1. Create the environment:
 ```
-python -m venv venv
+python -m venv env
 ```
   2. Activate the environment:
 
