@@ -60,13 +60,17 @@ Once the environment is activated and packages installed:
 ```
 python appjson2.py  
 ```
-- Upload a **video** or **GIF**.  
+This will open a local interface accessible at:
+http://127.0.0.1:7860/
+- Upload a **video** or **GIF** recorded with two cameras: one side view and one front view
 - Press **Procesar** to generate:  
   - OpenPose-processed video  
   - Individual frames  
-  - JSON files with keypoints
+  - all_keypoints.json file with the two detected people separately
 
-Example to run the keypoints visualizer:
+This will create 3d_combined_data.json, containing the merged 3D skeleton.
+
+To visualize it, run the keypoints visualizer:
 ```
 python view.py
 ```
