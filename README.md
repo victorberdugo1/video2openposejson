@@ -56,9 +56,20 @@ REQUIREMENTS IN requirements.txt:
 
 RUN THE PROJECT
 ---------------
-Example to run the keypoints visualizer:
-  python view.py
+Once the environment is activated and packages installed:
+```
+python appjson2.py  
+```
+- Upload a **video** or **GIF**.  
+- Press **Procesar** to generate:  
+  - OpenPose-processed video  
+  - Individual frames  
+  - JSON files with keypoints
 
+Example to run the keypoints visualizer:
+```
+python view.py
+```
 DEACTIVATE THE ENVIRONMENT
 --------------------------
 ```
