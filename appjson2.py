@@ -57,30 +57,22 @@ def get_frames(video_in):
     return frames, fps
 
 def process_frame(frame_path):
-    # Cargar imagen original
     original_image = Image.open(frame_path)
     width, height = original_image.size
-    
-    # Detección de poses con MediaPipe
+
     image = mp.Image.create_from_file(frame_path)
     detection = pose_detector.detect(image)
     landmarks = detection.pose_landmarks
-    
-    # Generar imagen OpenPose
+
     if landmarks:
         op_img = openpose(original_image)
     else:
-        # Crear imagen negra si no hay detecciones
         op_img = Image.fromarray(np.zeros((height, width, 3), dtype=np.uint8))
-    
-    # Redimensionar al tamaño original
+
     op_img = op_img.resize((width, height))
-    
-    # Guardar imagen procesada
     out_img = f"openpose_{frame_path}"
     op_img.save(out_img)
 
-    # Procesar keypoints para múltiples personas
     frame_kps = {}
     if landmarks:
         centers = []
@@ -95,8 +87,7 @@ def process_frame(frame_path):
             for idx, name in MEDIAPIPE_KEYPOINTS:
                 v = lm[idx]
                 person[name] = {'x': v.x, 'y': v.y, 'z': v.z, 'visibility': v.visibility}
-            
-            # Calcular cuello
+
             l, r = lm[11], lm[12]
             person["Neck"] = {
                 'x': (l.x + r.x)/2,
@@ -104,10 +95,9 @@ def process_frame(frame_path):
                 'z': (l.z + r.z)/2,
                 'visibility': (l.visibility + r.visibility)/2
             }
-            
+
             frame_kps[f"person_{new_id}"] = person
 
-    # Guardar keypoints en JSON
     for pid, kps in frame_kps.items():
         json_path = f"openpose_{os.path.splitext(frame_path)[0]}_{pid}.json"
         with open(json_path, 'w') as f:
@@ -116,11 +106,10 @@ def process_frame(frame_path):
     return out_img, frame_kps
 
 def create_video(imgs, fps, prefix):
-    # Verificar tamaños de imagen
     sizes = [Image.open(img).size for img in imgs]
     if len(set(sizes)) != 1:
-        raise ValueError(f"Tamaños de imagen inconsistentes detectados: {set(sizes)}")
-    
+        raise ValueError(f"Inconsistent image sizes detected: {set(sizes)}")
+
     clip = ImageSequenceClip(imgs, fps=fps)
     out = f"{prefix}_result.mp4"
     clip.write_videofile(out, fps=fps, verbose=False, logger=None)
@@ -149,15 +138,39 @@ def infer(video_in):
     with open("all_keypoints.json", 'w') as f:
         json.dump(all_kps, f, indent=2)
     
-    # Crear video y limpiar
+    # Crear video
     vid = create_video(imgs, fps, "openpose")
     [os.remove(f) for f in frames]
     
-    return vid, imgs + ["all_keypoints.json"]
+    # --- Generar automáticamente el JSON combinado 3D ---
+    combined_3d = {}
+    for frame_key in all_kps:
+        frame_data = all_kps[frame_key]
+        if "person_0" in frame_data and "person_1" in frame_data:
+            combined_person = {}
+            side_person = frame_data["person_0"]   # lateral
+            front_person = frame_data["person_1"]  # frontal
+            for joint_name in front_person:
+                if joint_name in side_person:
+                    combined_person[joint_name] = {
+                        "x": front_person[joint_name]["x"],
+                        "y": front_person[joint_name]["y"],
+                        "z": side_person[joint_name]["x"]
+                    }
+            combined_3d[frame_key] = {"person_0": combined_person}
+    with open('3d_combined_data.json', 'w') as f:
+        json.dump(combined_3d, f, indent=2)
+    
+    return vid, imgs + ["all_keypoints.json", "3d_combined_data.json"]
+
+def clean_files():
+    for f in os.listdir():
+        if os.path.isfile(f) and (f.startswith('frame_') or f.startswith('openpose_') or f == "video_resized.mp4"):
+            os.remove(f)
 
 title = """
 <div style="text-align:center; max-width:500px; margin:0 auto;">
-  <h1>Video to OpenPose (Consistente Person_0 / Person_1)</h1>
+  <h1>Video 2 OpenPose (3D json)</h1>
 </div>
 """
 
@@ -166,12 +179,15 @@ with gr.Blocks() as demo:
     with gr.Row():
         with gr.Column():
             video_in = gr.Video(sources=["upload"])
-            gif_in = gr.File(label="Importar GIF", file_types=['.gif'])
+            gif_in = gr.File(label="Import GIF", file_types=['.gif'])
             gif_in.change(fn=convert_gif_to_video, inputs=gif_in, outputs=video_in)
-            btn = gr.Button("Procesar")
+            btn = gr.Button("Process")
+            clean_btn = gr.Button("Clean")
         with gr.Column():
-            video_out = gr.Video(label="Resultado OpenPose")
-            files = gr.Files(label="Archivos Generados")
+            video_out = gr.Video(label="OpenPose Result")
+            files = gr.Files(label="Generated Files")
+
     btn.click(fn=infer, inputs=[video_in], outputs=[video_out, files])
+    clean_btn.click(fn=clean_files, inputs=[], outputs=[])
 
 demo.launch()

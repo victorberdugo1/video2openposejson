@@ -54,9 +54,9 @@ def set_equal_aspect(ax):
 def init():
     ax.clear()
     set_equal_aspect(ax)
-    ax.set_xlabel("X")
-    ax.set_ylabel("Profundidad (Z JSON)")
-    ax.set_zlabel("Altura (Y JSON)")
+    ax.set_xlabel("X axis")
+    ax.set_ylabel("Y axis")
+    ax.set_zlabel("Z axis")
     ax.view_init(elev=15, azim=70)  # vista frontal
     return []
 
@@ -78,7 +78,7 @@ def update(frame_num):
         # Dibujar puntos y etiquetas de keypoints
         for key, p in keypoints.items():
             ax.scatter(-p["x"], p["z"], p["y"], s=30)
-            ax.text(-p["x"], p["z"], p["y"] + offset, f"{key}", size=7)
+            ax.text(-p["x"], p["z"], p["y"], f"{key}", size=7)
 
         # Dibujar líneas del esqueleto
         for start, end in connections:
