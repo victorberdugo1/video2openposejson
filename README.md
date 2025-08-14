@@ -1,0 +1,69 @@
+PROJECT video2openpose json
+===========
+
+This project uses Python to process videos and extract keypoints.
+
+REQUIREMENTS
+------------
+- Python 3.10 or higher
+- pip
+
+CREATE VIRTUAL ENVIRONMENT
+--------------------------
+
+### Windows (PowerShell or CMD):
+  1. Create the environment:
+```
+python -m venv venv
+```
+  2. Activate the environment:
+
+PowerShell:
+```
+.\venv\Scripts\Activate.ps1
+```
+  CMD: 
+```
+.\venv\Scripts\activate.bat
+```
+
+### Linux / macOS:
+  1. Create the environment:
+```
+python3 -m venv venv
+```
+  2. Activate the environment:
+```
+source venv/bin/activate
+```
+
+INSTALL REQUIREMENTS
+--------------------
+With the virtual environment activated:
+```
+  pip install --upgrade pip
+  pip install -r requirements.txt
+```
+REQUIREMENTS IN requirements.txt:
+  diffusers==0.14.0
+  opencv-python
+  ffmpeg-python
+  moviepy
+  controlnet_aux
+  mediapipe
+
+RUN THE PROJECT
+---------------
+Example to run the keypoints visualizer:
+  python view.py
+
+DEACTIVATE THE ENVIRONMENT
+--------------------------
+```
+deactivate
+```
+NOTES
+-----
+- Make sure Python is up-to-date.
+- On Linux/macOS you might need to install ffmpeg via your system:
+    sudo apt install ffmpeg
