@@ -23,6 +23,7 @@
 // void DrawOnTop(Bone* bone, t_mesh* mesh, int frameNum);
 // void boneFreeTree(Bone* root);
 
+/*
 #include <stdlib.h>
 #include <stdio.h>
 #include "raylib.h"
@@ -324,6 +325,601 @@ int main(void)
 
     // Cleanup
     UnloadTexture(texture);
+    CloseWindow();
+
+    return 0;
+}
+*/
+/*
+#include <stdlib.h>
+#include <stdio.h>
+#include "raylib.h"
+#include "rlgl.h"
+#include "raymath.h"
+#include <math.h>
+#include <float.h>
+
+#define ATLAS_COLS 8
+#define ATLAS_ROWS 5
+
+Texture2D texture;
+Vector3 billboardPos = {0.0f, 0.0f, 0.0f};
+float billboardSize = 2.0f;
+
+void DrawBillboardFull(Camera camera, Texture2D tex, Rectangle src, Vector3 pos, float size)
+{
+    Vector3 camDir = Vector3Subtract(camera.position, pos);
+    float distance = Vector3Length(camDir);
+
+    if (distance < 0.001f) {
+        DrawBillboardPro(camera, tex, src, pos, camera.up, (Vector2){size, size}, (Vector2){0.5f, 0.5f}, 0.0f, WHITE);
+        return;
+    }
+
+    camDir = Vector3Scale(camDir, 1.0f / distance);
+    Vector3 worldUp = {0.0f, 1.0f, 0.0f};
+    Vector3 right, up;
+
+    Vector3 forward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+    right = Vector3CrossProduct(forward, camera.up);
+    right = Vector3Normalize(right);
+
+    if (fabsf(Vector3DotProduct(camDir, worldUp)) > 0.999f) {
+        up = Vector3CrossProduct(camDir, right);
+    } else {
+        right = Vector3CrossProduct(worldUp, camDir);
+        right = Vector3Normalize(right);
+        up = Vector3CrossProduct(camDir, right);
+    }
+
+    DrawBillboardPro(camera, tex, src, pos, up, (Vector2){size, size}, (Vector2){0.5f, 0.5f}, 0.0f, WHITE);
+}
+
+int main(void)
+{
+    const int screenWidth = 1280;
+    const int screenHeight = 720;
+    InitWindow(screenWidth, screenHeight, "Billboard - Mirror optimization");
+    SetTargetFPS(60);
+
+    // -------------------------
+    // Cámara base
+    // -------------------------
+    Camera camera = {
+        .position = {4.0f, 2.0f, 4.0f},
+        .target = {0.0f, 1.0f, 0.0f},
+        .up = {0.0f, 1.0f, 0.0f},
+        .fovy = 60.0f,
+        .projection = CAMERA_PERSPECTIVE
+    };
+
+    // Orbita variables
+    float orbitYaw, orbitPitch, orbitRadius;
+    const float yawSensitivity = 0.01f;
+    const float pitchSensitivity = 0.01f;
+    const float zoomSensitivity = 0.5f;
+    const float pitchMax = 1.4f;
+    const float pitchMin = -1.4f;
+    const float radiusMin = 1.0f;
+    const float radiusMax = 30.0f;
+    //const float PI = 3.14159265358979323846f;
+
+    // Inicializar órbita desde posición inicial de la cámara
+    {
+        Vector3 dir = Vector3Subtract(camera.position, camera.target);
+        orbitRadius = Vector3Length(dir);
+        if (orbitRadius <= 0.0001f) orbitRadius = 6.0f;
+        orbitYaw = atan2f(dir.x, dir.z);
+        orbitPitch = asinf(dir.y / orbitRadius);
+    }
+
+    // Free camera vars
+    Vector3 freePos = camera.position;
+    float freeYaw, freePitch;
+    float freeSpeed = 5.0f;
+    const float freeYawSens = 0.005f;
+    const float freePitchSens = 0.005f;
+    const float freeSprintMult = 2.5f;
+    {
+        Vector3 forward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+        freeYaw = atan2f(forward.x, forward.z);
+        freePitch = asinf(forward.y);
+    }
+
+    int camMode = 1; // 1 orbital, 2 free
+
+    // Cargar textura
+    Image img = LoadImage("tex.png");
+    if (img.data == NULL) {
+        img = GenImageChecked(1024, 640, 128, 80, RED, GREEN);
+        for (int row = 0; row < ATLAS_ROWS; row++) {
+            for (int col = 0; col < ATLAS_COLS; col++) {
+                char textBuf[16];
+                sprintf(textBuf, "%d", row * ATLAS_COLS + col);
+                ImageDrawText(&img, textBuf,
+                              col * (img.width / ATLAS_COLS) + 20,
+                              row * (img.height / ATLAS_ROWS) + 20,
+                              40, BLACK);
+            }
+        }
+    }
+    texture = LoadTextureFromImage(img);
+    UnloadImage(img);
+
+    // Cálculos estáticos sobre optimización
+    int totalFrames = ATLAS_COLS * ATLAS_ROWS;
+    int uniqueCols = (ATLAS_COLS / 2) + 1; // floor(ATLAS_COLS/2)+1 works for even/odd
+    if (ATLAS_COLS % 2 != 0) uniqueCols = (ATLAS_COLS + 1) / 2; // ensure correct for odd
+    int uniqueFrames = uniqueCols * ATLAS_ROWS;
+    int saved = totalFrames - uniqueFrames;
+    float percentSaved = ((float)saved / (float)totalFrames) * 100.0f;
+
+    while (!WindowShouldClose())
+    {
+        float dt = GetFrameTime();
+
+        // Cambiar modo
+        if (IsKeyPressed(KEY_ONE)) {
+            camMode = 1;
+            Vector3 dir = Vector3Subtract(camera.position, billboardPos);
+            orbitRadius = Vector3Length(dir);
+            if (orbitRadius <= 0.0001f) orbitRadius = 6.0f;
+            orbitYaw = atan2f(dir.x, dir.z);
+            orbitPitch = asinf(dir.y / orbitRadius);
+        }
+        if (IsKeyPressed(KEY_TWO)) {
+            camMode = 2;
+            freePos = camera.position;
+            Vector3 forward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+            freeYaw = atan2f(forward.x, forward.z);
+            freePitch = asinf(forward.y);
+        }
+
+        // mover billboard (siempre)
+        if (IsKeyDown(KEY_RIGHT)) billboardPos.x += 0.1f;
+        if (IsKeyDown(KEY_LEFT))  billboardPos.x -= 0.1f;
+        if (IsKeyDown(KEY_UP))    billboardPos.z -= 0.1f;
+        if (IsKeyDown(KEY_DOWN))  billboardPos.z += 0.1f;
+        if (IsKeyDown(KEY_SPACE) && !IsKeyDown(KEY_LEFT_CONTROL)) billboardPos.y += 0.1f;
+        if (IsKeyDown(KEY_LEFT_SHIFT) && !IsKeyDown(KEY_LEFT_CONTROL)) billboardPos.y -= 0.1f;
+
+        // Orbital mode
+        if (camMode == 1) {
+            Vector2 md = GetMouseDelta();
+            if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+                orbitYaw   += md.x * yawSensitivity;
+                orbitPitch += -md.y * pitchSensitivity;
+                if (orbitPitch > pitchMax) orbitPitch = pitchMax;
+                if (orbitPitch < pitchMin) orbitPitch = pitchMin;
+            }
+            float wheel = GetMouseWheelMove();
+            if (wheel != 0.0f) {
+                orbitRadius -= wheel * zoomSensitivity;
+                if (orbitRadius < radiusMin) orbitRadius = radiusMin;
+                if (orbitRadius > radiusMax) orbitRadius = radiusMax;
+            }
+            Vector3 target = billboardPos;
+            float x = orbitRadius * cosf(orbitPitch) * sinf(orbitYaw);
+            float y = orbitRadius * sinf(orbitPitch);
+            float z = orbitRadius * cosf(orbitPitch) * cosf(orbitYaw);
+            camera.position = (Vector3){ target.x + x, target.y + y, target.z + z };
+            camera.target = target;
+            camera.up = (Vector3){ 0.0f, 1.0f, 0.0f };
+        }
+        // Free mode
+        else {
+            Vector2 md = GetMouseDelta();
+            if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) {
+                freeYaw   += md.x * freeYawSens;
+                freePitch += -md.y * freePitchSens;
+                const float freePitchLimit = 1.49f;
+                if (freePitch > freePitchLimit) freePitch = freePitchLimit;
+                if (freePitch < -freePitchLimit) freePitch = -freePitchLimit;
+            }
+            Vector3 forwardDir = { sinf(freeYaw) * cosf(freePitch), sinf(freePitch), cosf(freeYaw) * cosf(freePitch) };
+            forwardDir = Vector3Normalize(forwardDir);
+            Vector3 rightDir = Vector3Normalize(Vector3CrossProduct((Vector3){0.0f,1.0f,0.0f}, forwardDir));
+            float speed = freeSpeed;
+            if (IsKeyDown(KEY_LEFT_SHIFT)) speed *= freeSprintMult;
+            if (IsKeyDown(KEY_W)) freePos = Vector3Add(freePos, Vector3Scale(forwardDir, speed * dt));
+            if (IsKeyDown(KEY_S)) freePos = Vector3Subtract(freePos, Vector3Scale(forwardDir, speed * dt));
+            if (IsKeyDown(KEY_A)) freePos = Vector3Subtract(freePos, Vector3Scale(rightDir, speed * dt));
+            if (IsKeyDown(KEY_D)) freePos = Vector3Add(freePos, Vector3Scale(rightDir, speed * dt));
+            if (IsKeyDown(KEY_E)) freePos.y += speed * dt;
+            if (IsKeyDown(KEY_Q)) freePos.y -= speed * dt;
+            camera.position = freePos;
+            Vector3 lookTarget = Vector3Add(freePos, forwardDir);
+            camera.target = lookTarget;
+            camera.up = (Vector3){ 0.0f, 1.0f, 0.0f };
+        }
+
+        // -------------------------
+        // Cálculo de columna/fila y mirroring horizontal
+        // -------------------------
+        Vector3 camDir = Vector3Subtract(camera.position, billboardPos);
+        float camDist = Vector3Length(camDir);
+        if (camDist < 0.0001f) camDist = 0.0001f;
+
+        float yawAngle = atan2f(camDir.x, camDir.z);
+        if (yawAngle < 0.0f) yawAngle += 2.0f * PI;
+        float horizDist = sqrtf(camDir.x * camDir.x + camDir.z * camDir.z);
+        float pitchAngle = atan2f(camDir.y, horizDist);
+
+        int rawCol = (int)floorf((yawAngle / (2.0f * PI)) * (float)ATLAS_COLS);
+        if (rawCol < 0) rawCol = 0;
+        if (rawCol >= ATLAS_COLS) rawCol = ATLAS_COLS - 1;
+
+        float pitchNorm = (pitchAngle + (PI * 0.5f)) / PI;
+        int rowIndex = (int)floorf(pitchNorm * (float)ATLAS_ROWS);
+        if (rowIndex < 0) rowIndex = 0;
+        if (rowIndex >= ATLAS_ROWS) rowIndex = ATLAS_ROWS - 1;
+
+        // Mirroring horizontal:
+        // canonicalCol = min(rawCol, ATLAS_COLS - rawCol)  (works for even/odd)
+        int canonicalCol;
+        bool flipHoriz = false;
+        int half = ATLAS_COLS / 2; // integer division
+        if (rawCol <= half) {
+            canonicalCol = rawCol;
+            flipHoriz = false;
+        } else {
+            canonicalCol = ATLAS_COLS - rawCol;
+            flipHoriz = true;
+        }
+
+        int frameIndex = rowIndex * ATLAS_COLS + rawCol; // original index (debug)
+        int canonicalFrame = rowIndex * ATLAS_COLS + canonicalCol; // index in canonical layout (debug)
+
+        // Calcular src para la celda canonicalCol/rowIndex
+        float frameWidth = (float)texture.width / ATLAS_COLS;
+        float frameHeight = (float)texture.height / ATLAS_ROWS;
+
+        Rectangle src;
+        if (!flipHoriz) {
+            src = (Rectangle){ canonicalCol * frameWidth, rowIndex * frameHeight, frameWidth, frameHeight };
+        } else {
+            // Flip horizontally by negating width and offsetting x to the right edge of the cell
+            src = (Rectangle){ (canonicalCol + 1) * frameWidth, rowIndex * frameHeight, -frameWidth, frameHeight };
+        }
+
+        // -------------------------
+        // Render
+        // -------------------------
+        BeginDrawing();
+        ClearBackground(RAYWHITE);
+
+        BeginMode3D(camera);
+            DrawGrid(20, 1.0f);
+            DrawBillboardFull(camera, texture, src, billboardPos, billboardSize);
+            DrawSphere(billboardPos, 0.1f, RED);
+        EndMode3D();
+
+        // HUD / info
+        DrawText(TextFormat("Modo: %s  (Pulsa 1=Orbital, 2=Free)", (camMode==1) ? "ORBITAL" : "FREE"), 10, 10, 20, BLACK);
+        DrawText(TextFormat("Camera Pos: (%.2f, %.2f, %.2f)", camera.position.x, camera.position.y, camera.position.z), 10, 40, 20, BLACK);
+        DrawText(TextFormat("Billboard Pos: (%.2f, %.2f, %.2f)", billboardPos.x, billboardPos.y, billboardPos.z), 10, 70, 20, BLACK);
+        DrawText(TextFormat("Raw frameIdx: %d  (col %d, row %d)", frameIndex, rawCol, rowIndex), 10, 100, 20, BLACK);
+        DrawText(TextFormat("Canonical col: %d  flipHoriz: %s", canonicalCol, flipHoriz ? "YES" : "NO"), 10, 130, 20, BLACK);
+        DrawText(TextFormat("Unique cols: %d  Unique frames: %d (saved %d = %.1f%%)", uniqueCols, uniqueFrames, saved, percentSaved), 10, 160, 20, BLACK);
+
+        if (camMode == 1) {
+            DrawText("Orbital: arrastra con BOTON IZQUIERDO, rueda para zoom", 10, 190, 20, DARKGRAY);
+        } else {
+            DrawText("Free: mantén BOTON DERECHO para mirar, WASD mover, E/Q subir/bajar, SHIFT sprint", 10, 190, 20, DARKGRAY);
+        }
+        DrawText("Flechas para mover billboard, SPACE/LEFT_SHIFT para altura del billboard", 10, 220, 20, DARKGRAY);
+
+        EndDrawing();
+    }
+
+    UnloadTexture(texture);
+    CloseWindow();
+    return 0;
+}
+*/
+
+#include <stdlib.h>
+#include <stdio.h>
+#include "raylib.h"
+#include "rlgl.h"
+#include "raymath.h"
+#include <math.h>
+
+#define ATLAS_COLS 8
+#define ATLAS_ROWS 5
+
+// Ajusta si cambias número de capas
+#define LAYERS_COUNT 4
+
+// Nombres de archivo esperados: tex0.png .. tex3.png
+const char *layerFiles[LAYERS_COUNT] = { "tex0.png", "tex1.png", "tex2.png", "tex3.png" };
+
+Texture2D layerTex[LAYERS_COUNT];
+Vector3 billboardPos = {0.0f, 0.0f, 0.0f};
+float billboardSize = 2.0f;
+
+// Parallax y escala por capa (ajusta a tu gusto)
+float layerDepths[LAYERS_COUNT]    = { -0.08f, -0.03f, 0.03f, 0.08f }; // back -> front
+float layerScales[LAYERS_COUNT]    = { 1.05f, 1.02f, 1.02f, 1.08f };
+float layerYOffsets[LAYERS_COUNT]  = { 0.08f, 0.0f, -0.02f, 0.05f };
+
+void DrawBillboardFull(Camera camera, Texture2D tex, Rectangle src, Vector3 pos, float size)
+{
+    Vector3 camDir = Vector3Subtract(camera.position, pos);
+    float distance = Vector3Length(camDir);
+
+    if (distance < 0.001f) {
+        DrawBillboardPro(camera, tex, src, pos, camera.up, (Vector2){size, size}, (Vector2){0.5f, 0.5f}, 0.0f, WHITE);
+        return;
+    }
+
+    camDir = Vector3Scale(camDir, 1.0f / distance);
+    Vector3 worldUp = {0.0f, 1.0f, 0.0f};
+    Vector3 right, up;
+
+    Vector3 forward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+    right = Vector3CrossProduct(forward, camera.up);
+    right = Vector3Normalize(right);
+
+    if (fabsf(Vector3DotProduct(camDir, worldUp)) > 0.999f) {
+        up = Vector3CrossProduct(camDir, right);
+    } else {
+        right = Vector3CrossProduct(worldUp, camDir);
+        right = Vector3Normalize(right);
+        up = Vector3CrossProduct(camDir, right);
+    }
+
+    DrawBillboardPro(camera, tex, src, pos, up, (Vector2){size, size}, (Vector2){0.5f, 0.5f}, 0.0f, WHITE);
+}
+
+int main(void)
+{
+    const int screenWidth = 1280;
+    const int screenHeight = 720;
+    InitWindow(screenWidth, screenHeight, "Capas separadas: tex0..tex3");
+    SetTargetFPS(60);
+
+    // Cámara base y vars (mismos modos que antes)
+    Camera camera = {
+        .position = {4.0f, 2.0f, 4.0f},
+        .target = {0.0f, 1.0f, 0.0f},
+        .up = {0.0f, 1.0f, 0.0f},
+        .fovy = 60.0f,
+        .projection = CAMERA_PERSPECTIVE
+    };
+
+    //const float PI = 3.14159265358979323846f;
+
+    // Orbital vars
+    float orbitYaw, orbitPitch, orbitRadius;
+    const float yawSensitivity = 0.01f;
+    const float pitchSensitivity = 0.01f;
+    const float zoomSensitivity = 0.5f;
+    const float pitchMax = 1.4f;
+    const float pitchMin = -1.4f;
+    const float radiusMin = 1.0f;
+    const float radiusMax = 30.0f;
+
+    {
+        Vector3 dir = Vector3Subtract(camera.position, camera.target);
+        orbitRadius = Vector3Length(dir);
+        if (orbitRadius <= 0.0001f) orbitRadius = 6.0f;
+        orbitYaw = atan2f(dir.x, dir.z);
+        orbitPitch = asinf(dir.y / orbitRadius);
+    }
+
+    // Free camera vars
+    Vector3 freePos = camera.position;
+    float freeYaw, freePitch;
+    float freeSpeed = 5.0f;
+    const float freeYawSens = 0.005f;
+    const float freePitchSens = 0.005f;
+    const float freeSprintMult = 2.5f;
+    {
+        Vector3 forward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+        freeYaw = atan2f(forward.x, forward.z);
+        freePitch = asinf(forward.y);
+    }
+
+    int camMode = 1; // 1 orbital, 2 free
+
+    // -----------------------
+    // Cargar las texturas por capa
+    // -----------------------
+    for (int i = 0; i < LAYERS_COUNT; i++) {
+        Image img = LoadImage(layerFiles[i]);
+        if (img.data == NULL) {
+            // placeholder con texto claro para debug
+            int pw = 512, ph = 512;
+            img = GenImageColor(pw, ph, Fade(SKYBLUE, 0.6f));
+            ImageDrawText(&img, layerFiles[i], 20, ph/2 - 10, 24, BLACK);
+        }
+        // Asegurarnos que la imagen tenga orientación "normal" para texturas
+        ImageFlipVertical(&img);
+        layerTex[i] = LoadTextureFromImage(img);
+        UnloadImage(img);
+        // activar filtrado bilinear si está disponible
+        SetTextureFilter(layerTex[i], TEXTURE_FILTER_BILINEAR);
+    }
+
+    // -----------------------
+    // Loop principal
+    // -----------------------
+    while (!WindowShouldClose())
+    {
+        float dt = GetFrameTime();
+
+        // Cambiar modo cámara con 1/2
+        if (IsKeyPressed(KEY_ONE)) {
+            camMode = 1;
+            Vector3 dir = Vector3Subtract(camera.position, billboardPos);
+            orbitRadius = Vector3Length(dir);
+            if (orbitRadius <= 0.0001f) orbitRadius = 6.0f;
+            orbitYaw = atan2f(dir.x, dir.z);
+            orbitPitch = asinf(dir.y / orbitRadius);
+        }
+        if (IsKeyPressed(KEY_TWO)) {
+            camMode = 2;
+            freePos = camera.position;
+            Vector3 forward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+            freeYaw = atan2f(forward.x, forward.z);
+            freePitch = asinf(forward.y);
+        }
+
+        // Mover billboard (siempre)
+        if (IsKeyDown(KEY_RIGHT)) billboardPos.x += 0.1f;
+        if (IsKeyDown(KEY_LEFT))  billboardPos.x -= 0.1f;
+        if (IsKeyDown(KEY_UP))    billboardPos.z -= 0.1f;
+        if (IsKeyDown(KEY_DOWN))  billboardPos.z += 0.1f;
+        if (IsKeyDown(KEY_SPACE) && !IsKeyDown(KEY_LEFT_CONTROL)) billboardPos.y += 0.1f;
+        if (IsKeyDown(KEY_LEFT_SHIFT) && !IsKeyDown(KEY_LEFT_CONTROL)) billboardPos.y -= 0.1f;
+
+        // Cámara: orbital o free
+        if (camMode == 1) {
+            Vector2 md = GetMouseDelta();
+            if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+                orbitYaw   += md.x * yawSensitivity;
+                orbitPitch += -md.y * pitchSensitivity;
+                if (orbitPitch > pitchMax) orbitPitch = pitchMax;
+                if (orbitPitch < pitchMin) orbitPitch = pitchMin;
+            }
+            float wheel = GetMouseWheelMove();
+            if (wheel != 0.0f) {
+                orbitRadius -= wheel * zoomSensitivity;
+                if (orbitRadius < radiusMin) orbitRadius = radiusMin;
+                if (orbitRadius > radiusMax) orbitRadius = radiusMax;
+            }
+            Vector3 target = billboardPos;
+            float x = orbitRadius * cosf(orbitPitch) * sinf(orbitYaw);
+            float y = orbitRadius * sinf(orbitPitch);
+            float z = orbitRadius * cosf(orbitPitch) * cosf(orbitYaw);
+            camera.position = (Vector3){ target.x + x, target.y + y, target.z + z };
+            camera.target = target;
+            camera.up = (Vector3){ 0.0f, 1.0f, 0.0f };
+        } else {
+            Vector2 md = GetMouseDelta();
+            if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) {
+                freeYaw   += md.x * freeYawSens;
+                freePitch += -md.y * freePitchSens;
+                const float freePitchLimit = 1.49f;
+                if (freePitch > freePitchLimit) freePitch = freePitchLimit;
+                if (freePitch < -freePitchLimit) freePitch = -freePitchLimit;
+            }
+            Vector3 forwardDir = { sinf(freeYaw) * cosf(freePitch), sinf(freePitch), cosf(freeYaw) * cosf(freePitch) };
+            forwardDir = Vector3Normalize(forwardDir);
+            Vector3 rightDir = Vector3Normalize(Vector3CrossProduct((Vector3){0.0f,1.0f,0.0f}, forwardDir));
+            float speed = freeSpeed;
+            if (IsKeyDown(KEY_LEFT_SHIFT)) speed *= freeSprintMult;
+            if (IsKeyDown(KEY_W)) freePos = Vector3Add(freePos, Vector3Scale(forwardDir, speed * dt));
+            if (IsKeyDown(KEY_S)) freePos = Vector3Subtract(freePos, Vector3Scale(forwardDir, speed * dt));
+            if (IsKeyDown(KEY_A)) freePos = Vector3Subtract(freePos, Vector3Scale(rightDir, speed * dt));
+            if (IsKeyDown(KEY_D)) freePos = Vector3Add(freePos, Vector3Scale(rightDir, speed * dt));
+            if (IsKeyDown(KEY_E)) freePos.y += speed * dt;
+            if (IsKeyDown(KEY_Q)) freePos.y -= speed * dt;
+            camera.position = freePos;
+            Vector3 lookTarget = Vector3Add(freePos, forwardDir);
+            camera.target = lookTarget;
+            camera.up = (Vector3){ 0.0f, 1.0f, 0.0f };
+        }
+
+        // -----------------------
+        // Determinar columna/fila en función de la dirección cámara->billboard
+        // -----------------------
+        Vector3 camDir = Vector3Subtract(camera.position, billboardPos);
+        float camDist = Vector3Length(camDir);
+        if (camDist < 0.0001f) camDist = 0.0001f;
+
+        float yawAngle = atan2f(camDir.x, camDir.z);
+        if (yawAngle < 0.0f) yawAngle += 2.0f * PI;
+        float horizDist = sqrtf(camDir.x*camDir.x + camDir.z*camDir.z);
+        float pitchAngle = atan2f(camDir.y, horizDist);
+
+        int rawCol = (int)floorf((yawAngle / (2.0f * PI)) * (float)ATLAS_COLS);
+        if (rawCol < 0) rawCol = 0;
+        if (rawCol >= ATLAS_COLS) rawCol = ATLAS_COLS - 1;
+
+        float pitchNorm = (pitchAngle + (PI * 0.5f)) / PI; // 0..1
+        int rowIndex = (int)floorf(pitchNorm * (float)ATLAS_ROWS);
+        if (rowIndex < 0) rowIndex = 0;
+        if (rowIndex >= ATLAS_ROWS) rowIndex = ATLAS_ROWS - 1;
+
+        // Canonical col + flip (espejado horizontal)
+        int half = ATLAS_COLS / 2;
+        int canonicalCol;
+        bool flipHoriz = false;
+        if (rawCol <= half) {
+            canonicalCol = rawCol;
+            flipHoriz = false;
+        } else {
+            canonicalCol = ATLAS_COLS - rawCol;
+            flipHoriz = true;
+        }
+
+        // -----------------------
+        // Dibujar capas (back -> front)
+        // -----------------------
+        BeginDrawing();
+        ClearBackground(RAYWHITE);
+
+        BeginMode3D(camera);
+            DrawGrid(20, 1.0f);
+
+            // viewDir desde billboard hacia la cámara (usado para desplazar capas)
+            Vector3 viewDir = Vector3Normalize(Vector3Subtract(camera.position, billboardPos));
+
+            // Desactivar depth test para dibujar capas con blending correcto (ordenadas back->front)
+            rlDisableDepthTest();
+            for (int i = 0; i < LAYERS_COUNT; i++) {
+                // posición de la capa desplazada a lo largo de viewDir
+                Vector3 layerPos = Vector3Add(billboardPos, Vector3Scale(viewDir, layerDepths[i]));
+                layerPos.y += layerYOffsets[i];
+
+                Texture2D tex = layerTex[i];
+
+                // Determinar si la textura es un atlas (suficiente tamaño)
+                bool isAtlas = ((int)tex.width >= ATLAS_COLS && (int)tex.height >= ATLAS_ROWS);
+
+                Rectangle src;
+                if (isAtlas) {
+                    float frameW = (float)tex.width / ATLAS_COLS;
+                    float frameH = (float)tex.height / ATLAS_ROWS;
+                    if (!flipHoriz) {
+                        src = (Rectangle){ canonicalCol * frameW, rowIndex * frameH, frameW, frameH };
+                    } else {
+                        // flip por negación de width
+                        src = (Rectangle){ (canonicalCol + 1) * frameW, rowIndex * frameH, -frameW, frameH };
+                    }
+                } else {
+                    // imagen única: usar toda la textura
+                    if (!flipHoriz) {
+                        src = (Rectangle){ 0.0f, 0.0f, (float)tex.width, (float)tex.height };
+                    } else {
+                        src = (Rectangle){ (float)tex.width, 0.0f, -(float)tex.width, (float)tex.height };
+                    }
+                }
+
+                float scale = layerScales[i] * billboardSize;
+                DrawBillboardFull(camera, tex, src, layerPos, scale);
+            }
+            rlEnableDepthTest();
+
+            // Referencia
+            DrawSphere(billboardPos, 0.02f, RED);
+
+        EndMode3D();
+
+        // HUD
+        DrawText(TextFormat("Modo: %s  (Pulsa 1=Orbital, 2=Free)", (camMode==1) ? "ORBITAL" : "FREE"), 10, 10, 20, BLACK);
+        DrawText(TextFormat("Camera: (%.2f,%.2f,%.2f)", camera.position.x, camera.position.y, camera.position.z), 10, 40, 20, BLACK);
+        DrawText(TextFormat("Billboard: (%.2f,%.2f,%.2f)", billboardPos.x, billboardPos.y, billboardPos.z), 10, 70, 20, BLACK);
+        DrawText(TextFormat("rawCol,row: %d,%d   canonicalCol: %d   flip:%s", rawCol, rowIndex, canonicalCol, flipHoriz ? "Y":"N"), 10, 100, 20, BLACK);
+        DrawText("Flechas: mover billboard | 1=orbital 2=free | Izq raton=rotar orbita | Rueda=zoom", 10, 130, 20, DARKGRAY);
+
+        EndDrawing();
+    }
+
+    // cleanup
+    for (int i = 0; i < LAYERS_COUNT; i++) UnloadTexture(layerTex[i]);
     CloseWindow();
 
     return 0;
