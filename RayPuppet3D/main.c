@@ -355,7 +355,7 @@ void DrawBillboardFull2D(Camera camera, Texture2D tex, Rectangle src, Vector3 po
         return;
     }
     camDir = Vector3Scale(camDir, 1.0f / distance);
-    Vector3 worldUp = {0.0f, 1.0f, 0.0f};
+    Vector3 worldUp = (Vector3){0.0f, 1.0f, 0.0f};
     Vector3 right, up;
     Vector3 forward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
     right = Vector3CrossProduct(forward, camera.up);
@@ -370,14 +370,8 @@ void DrawBillboardFull2D(Camera camera, Texture2D tex, Rectangle src, Vector3 po
     DrawBillboardPro(camera, tex, src, pos, up, size, (Vector2){0.5f, 0.5f}, 0.0f, WHITE);
 }
 
-Rectangle GetAtlasCellSrc(Texture2D tex, int rawCol, int rowIndex)
+Rectangle GetAtlasCellSrc(Texture2D tex, int col, int rowIndex, bool mirrored)
 {
-    bool mirrored = false;
-    int col = rawCol;
-    if (rawCol >= ATLAS_COLS) {
-        col = 2*ATLAS_COLS - 1 - rawCol;
-        mirrored = true;
-    }
     int atlasRow = ATLAS_ROWS - 1 - rowIndex;
     float cellW = (float)tex.width / ATLAS_COLS;
     float cellH = (float)tex.height / ATLAS_ROWS;
@@ -409,7 +403,6 @@ int main(void)
         orbitYaw = atan2f(dir.x, dir.z);
         orbitPitch = asinf(dir.y / orbitRadius);
     }
-
     Vector3 freePos = camera.position;
     float freeYaw, freePitch;
     {
@@ -434,17 +427,14 @@ int main(void)
     }
     texture = LoadTextureFromImage(img);
     UnloadImage(img);
-
     SetTextureFilter(texture, TEXTURE_FILTER_POINT);
     SetTextureWrap(texture, TEXTURE_WRAP_CLAMP);
 
     while (!WindowShouldClose())
     {
         float dt = GetFrameTime();
-
         if (IsKeyPressed(KEY_ONE)) camMode = 1;
         if (IsKeyPressed(KEY_TWO)) camMode = 2;
-
         if (IsKeyDown(KEY_RIGHT)) billboardPos.x += 0.1f;
         if (IsKeyDown(KEY_LEFT))  billboardPos.x -= 0.1f;
         if (IsKeyDown(KEY_UP))    billboardPos.z -= 0.1f;
@@ -499,18 +489,29 @@ int main(void)
         float horizDist = sqrtf(camDir.x*camDir.x + camDir.z*camDir.z);
         float pitchAngle = atan2f(camDir.y, horizDist);
 
-        int rawCol = (int)floorf((yawAngle / (2.0f*PI)) * (float)(2*ATLAS_COLS));
-        rawCol = Clamp(rawCol, 0, 2*ATLAS_COLS-1);
+        int sector = (int)floorf((yawAngle / (2.0f*PI)) * 8.0f) % 8;
+        int baseCol = 0;
+        bool mirrored = false;
+        switch(sector) {
+            case 0: baseCol = 0; break;
+            case 1: baseCol = 1; break;
+            case 2: baseCol = 2; break;
+            case 3: baseCol = 3; break;
+            case 4: baseCol = 4; break;
+            case 5: baseCol = 3; mirrored = true; break;
+            case 6: baseCol = 2; mirrored = true; break;
+            case 7: baseCol = 1; mirrored = true; break;
+        }
 
         float pitchNorm = (pitchAngle + (PI*0.5f)) / PI;
         int rowIndex = (int)floorf(pitchNorm * (float)ATLAS_ROWS);
         rowIndex = Clamp(rowIndex, 0, ATLAS_ROWS-1);
 
-        Rectangle src = GetAtlasCellSrc(texture, rawCol, rowIndex);
+        Rectangle src = GetAtlasCellSrc(texture, baseCol, rowIndex, mirrored);
         float cellW = (float)texture.width / ATLAS_COLS;
         float cellH = (float)texture.height / ATLAS_ROWS;
         float aspect = cellW / cellH;
-        Vector2 worldSize = { billboardSize*aspect, billboardSize };
+        Vector2 worldSize = (Vector2){ billboardSize*aspect, billboardSize };
 
         BeginDrawing();
             ClearBackground(RAYWHITE);
@@ -525,10 +526,8 @@ int main(void)
 
     UnloadTexture(texture);
     CloseWindow();
-
     return 0;
 }
-   
 
 
 /*
