@@ -338,64 +338,87 @@ int main(void)
 #include "raylib.h"
 #include "rlgl.h"
 #include "raymath.h"
-
 #define ATLAS_COLS 5
 #define ATLAS_ROWS 5
-
+//#ifndef PI
+//#define PI 3.14159265358979323846f
+//#endif
+//#define RAD2DEG (180.0f / PI)
 Texture2D texture;
 Vector3 billboardPos = {0.0f, 0.0f, 0.0f};
 float billboardSize = 2.0f;
-
-void DrawBillboardFull2D(Camera camera, Texture2D tex, Rectangle src, Vector3 pos, Vector2 size)
+// ---- Dibujar quad texturizado en 3D desde 4 vértices (usa rlgl) ----
+static void DrawQuadTextured3D(Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3,
+                               float u0, float v0t, float u1, float v1t)
 {
-    Vector3 camDir = Vector3Subtract(camera.position, pos);
-    float distance = Vector3Length(camDir);
-    if (distance < 0.001f) {
-        DrawBillboardPro(camera, tex, src, pos, camera.up, size, (Vector2){0.5f, 0.5f}, 0.0f, WHITE);
-        return;
-    }
-    camDir = Vector3Scale(camDir, 1.0f / distance);
-    Vector3 worldUp = (Vector3){0.0f, 1.0f, 0.0f};
-    Vector3 right, up;
-    Vector3 forward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
-    right = Vector3CrossProduct(forward, camera.up);
-    right = Vector3Normalize(right);
-    if (fabsf(Vector3DotProduct(camDir, worldUp)) > 0.999f) {
-        up = Vector3CrossProduct(camDir, right);
-    } else {
-        right = Vector3CrossProduct(worldUp, camDir);
-        right = Vector3Normalize(right);
-        up = Vector3CrossProduct(camDir, right);
-    }
-    DrawBillboardPro(camera, tex, src, pos, up, size, (Vector2){0.5f, 0.5f}, 0.0f, WHITE);
+    rlSetTexture(texture.id);
+    rlBegin(RL_QUADS);
+        rlColor4ub(255, 255, 255, 255); // <- línea clave
+        rlTexCoord2f(u0, v0t); rlVertex3f(v0.x, v0.y, v0.z);
+        rlTexCoord2f(u1, v0t); rlVertex3f(v1.x, v1.y, v1.z);
+        rlTexCoord2f(u1, v1t); rlVertex3f(v2.x, v2.y, v2.z);
+        rlTexCoord2f(u0, v1t); rlVertex3f(v3.x, v3.y, v3.z);
+    rlEnd();
+    rlSetTexture(0);
 }
-
-Rectangle GetAtlasCellSrc(Texture2D tex, int col, int rowIndex, bool mirrored)
+// ---- Billboard custom: centra, rota en el plano (right, up) y admite mirroring ----
+void DrawBillboardCustom(Camera camera, Rectangle src, Vector3 pos, Vector2 size, float rotationDeg, bool mirrored)
+{
+    Vector3 camForward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+    Vector3 right = Vector3Normalize(Vector3CrossProduct(camForward, camera.up));
+    Vector3 up = Vector3Normalize(Vector3CrossProduct(right, camForward));
+    float a = rotationDeg * (PI / 180.0f);
+    float ca = cosf(a);
+    float sa = sinf(a);
+    Vector3 newRight = Vector3Subtract(Vector3Scale(right, ca), Vector3Scale(up, sa));
+    Vector3 newUp    = Vector3Add(Vector3Scale(right, sa), Vector3Scale(up, ca));
+    Vector3 halfX = Vector3Scale(newRight, size.x * 0.5f);
+    Vector3 halfY = Vector3Scale(newUp,    size.y * 0.5f);
+    Vector3 p0 = Vector3Subtract(Vector3Subtract(pos, halfX), halfY); // -x, -y
+    Vector3 p1 = Vector3Add   (Vector3Subtract(pos, halfY), halfX);   // +x, -y
+    Vector3 p2 = Vector3Add   (Vector3Add(pos, halfX), halfY);        // +x, +y
+    Vector3 p3 = Vector3Subtract(Vector3Add(pos, halfY), halfX);     // -x, +y
+    float texW = (float)texture.width;
+    float texH = (float)texture.height;
+    float u_left  = src.x / texW;
+    float u_right = (src.x + src.width) / texW;
+    float v_top   = src.y / texH;
+    float v_bottom= (src.y + src.height) / texH;
+    if (src.width < 0) { float tmp = u_left; u_left = u_right; u_right = tmp; }
+    if (src.height < 0){ float tmp = v_top; v_top = v_bottom; v_bottom = tmp; }
+    // CORRECCIÓN VERTICAL: invertir verticalmente para que no salga "de cabeza"
+    float v0t = v_bottom;
+    float v1t = v_top;
+    if (mirrored) {
+        float tmp = u_left; u_left = u_right; u_right = tmp;
+    }
+    DrawQuadTextured3D(p0, p1, p2, p3, u_left, v0t, u_right, v1t);
+}
+// Obtener la src rect de una celda del atlas (devuelvo siempre ancho positivo; mirroring fuera)
+Rectangle GetAtlasCellSrcPos(Texture2D tex, int col, int rowIndex, bool mirrored, bool *outMirrored)
 {
     int atlasRow = ATLAS_ROWS - 1 - rowIndex;
     float cellW = (float)tex.width / ATLAS_COLS;
     float cellH = (float)tex.height / ATLAS_ROWS;
     float srcX = col * cellW;
     float srcY = atlasRow * cellH;
-    if (mirrored) return (Rectangle){ srcX + cellW, srcY, -cellW, cellH };
-    else          return (Rectangle){ srcX, srcY, cellW, cellH };
+    if (outMirrored) *outMirrored = mirrored;
+    return (Rectangle){ srcX, srcY, cellW, cellH };
 }
 
 int main(void)
 {
-    const int screenWidth = 1280;
-    const int screenHeight = 720;
-    InitWindow(screenWidth, screenHeight, "Billboard Atlas 5x5");
+    const int screenWidth = 1920;
+    const int screenHeight = 1440;
+    InitWindow(screenWidth, screenHeight, "Billboard centrado - top/bottom rotación corregida");
     SetTargetFPS(60);
-
     Camera camera = { 0 };
     camera.position = (Vector3){4.0f, 2.0f, 4.0f};
     camera.target   = (Vector3){0.0f, 1.0f, 0.0f};
     camera.up       = (Vector3){0.0f, 1.0f, 0.0f};
     camera.fovy     = 60.0f;
     camera.projection = CAMERA_PERSPECTIVE;
-
-    int camMode = 1; 
+    int camMode = 1;
     float orbitYaw, orbitPitch, orbitRadius;
     {
         Vector3 dir = Vector3Subtract(camera.position, camera.target);
@@ -410,7 +433,8 @@ int main(void)
         freeYaw = atan2f(forward.x, forward.z);
         freePitch = asinf(forward.y);
     }
-
+    bool invertRotation = true;   // toggle R
+    bool add180Offset = false;    // toggle T
     Image img = LoadImage("tex.png");
     if (img.data == NULL) {
         int pw = 1280, ph = 800;
@@ -429,10 +453,11 @@ int main(void)
     UnloadImage(img);
     SetTextureFilter(texture, TEXTURE_FILTER_POINT);
     SetTextureWrap(texture, TEXTURE_WRAP_CLAMP);
-
     while (!WindowShouldClose())
     {
         float dt = GetFrameTime();
+        if (IsKeyPressed(KEY_R)) invertRotation = !invertRotation;
+        if (IsKeyPressed(KEY_T)) add180Offset = !add180Offset;
         if (IsKeyPressed(KEY_ONE)) camMode = 1;
         if (IsKeyPressed(KEY_TWO)) camMode = 2;
         if (IsKeyDown(KEY_RIGHT)) billboardPos.x += 0.1f;
@@ -441,7 +466,6 @@ int main(void)
         if (IsKeyDown(KEY_DOWN))  billboardPos.z += 0.1f;
         if (IsKeyDown(KEY_SPACE)) billboardPos.y += 0.1f;
         if (IsKeyDown(KEY_LEFT_SHIFT)) billboardPos.y -= 0.1f;
-
         if (camMode == 1) {
             Vector2 md = GetMouseDelta();
             if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
@@ -482,14 +506,17 @@ int main(void)
             camera.target = Vector3Add(freePos, forwardDir);
             camera.up = (Vector3){ 0,1,0 };
         }
-
         Vector3 camDir = Vector3Subtract(camera.position, billboardPos);
         float yawAngle = atan2f(camDir.x, camDir.z);
         if (yawAngle < 0.0f) yawAngle += 2.0f*PI;
         float horizDist = sqrtf(camDir.x*camDir.x + camDir.z*camDir.z);
         float pitchAngle = atan2f(camDir.y, horizDist);
-
         int sector = (int)floorf((yawAngle / (2.0f*PI)) * 8.0f) % 8;
+        float pitchNorm = (pitchAngle + (PI*0.5f)) / PI;
+        int rowIndex = (int)floorf(pitchNorm * (float)ATLAS_ROWS);
+        rowIndex = Clamp(rowIndex, 0, ATLAS_ROWS-1);
+        bool useFixedTop = (rowIndex == 0);
+        bool useFixedBottom = (rowIndex == ATLAS_ROWS - 1);
         int baseCol = 0;
         bool mirrored = false;
         switch(sector) {
@@ -502,33 +529,42 @@ int main(void)
             case 6: baseCol = 2; break;
             case 7: baseCol = 1; break;
         }
-
-        float pitchNorm = (pitchAngle + (PI*0.5f)) / PI;
-        int rowIndex = (int)floorf(pitchNorm * (float)ATLAS_ROWS);
-        rowIndex = Clamp(rowIndex, 0, ATLAS_ROWS-1);
-
-        Rectangle src = GetAtlasCellSrc(texture, baseCol, rowIndex, mirrored);
+        Rectangle src;
+        float rotationDeg = 0.0f;
+        bool finalMirrored = false;
+        if (useFixedTop || useFixedBottom) {
+            src = GetAtlasCellSrcPos(texture, 0, useFixedTop ? 0 : ATLAS_ROWS-1, false, &finalMirrored);
+            rotationDeg = yawAngle * RAD2DEG;
+            // Ajustar a pasos de 45°
+            rotationDeg = roundf(rotationDeg / 45.0f) * 45.0f;
+            if (useFixedBottom) rotationDeg = -rotationDeg;
+            if (add180Offset) rotationDeg -= 180.0f;
+        } else {
+            src = GetAtlasCellSrcPos(texture, baseCol, rowIndex, mirrored, &finalMirrored);
+            rotationDeg = 0.0f;
+        }
         float cellW = (float)texture.width / ATLAS_COLS;
         float cellH = (float)texture.height / ATLAS_ROWS;
         float aspect = cellW / cellH;
-        Vector2 worldSize = (Vector2){ billboardSize*aspect, billboardSize };
-
+        Vector2 worldSize = (Vector2){ billboardSize * aspect, billboardSize };
         BeginDrawing();
             ClearBackground(RAYWHITE);
             BeginMode3D(camera);
                 DrawGrid(20, 1.0f);
-                DrawBillboardFull2D(camera, texture, src, billboardPos, worldSize);
-                DrawSphere(billboardPos, 0.02f, RED);
+                DrawBillboardCustom(camera, src, billboardPos, worldSize, rotationDeg, finalMirrored);
             EndMode3D();
-            DrawText(TextFormat("Modo: %s (1 Orbit / 2 Libre)", camMode==1?"Orbit":"Libre"), 10, 10, 20, DARKGRAY);
+            DrawText(TextFormat("Modo: %s (1 Orbit / 2 Libre). Top fijo: %s, Bottom fijo: %s",
+                                camMode==1?"Orbit":"Libre",
+                                useFixedTop ? "SI" : "NO",
+                                useFixedBottom ? "SI" : "NO"), 10, 10, 18, DARKGRAY);
+            DrawText("R = invertir sentido (solo top/bottom) | T = +180° offset (solo top/bottom) | Flechas / Space / Shift para mover billboard", 10, 34, 12, GRAY);
+            DrawText(TextFormat("Yaw(deg): %.1f  PitchIdx: %d  Sector: %d", yawAngle*RAD2DEG, rowIndex, sector), 10, 50, 12, GRAY);
         EndDrawing();
     }
-
     UnloadTexture(texture);
     CloseWindow();
     return 0;
 }
-
 
 /*
 #include <stdlib.h>
