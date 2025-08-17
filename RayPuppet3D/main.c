@@ -494,13 +494,13 @@ int main(void)
         bool mirrored = false;
         switch(sector) {
             case 0: baseCol = 0; break;
-            case 1: baseCol = 1; break;
-            case 2: baseCol = 2; break;
-            case 3: baseCol = 3; break;
+            case 1: baseCol = 1; mirrored = true; break;
+            case 2: baseCol = 2; mirrored = true; break;
+            case 3: baseCol = 3; mirrored = true; break;
             case 4: baseCol = 4; break;
-            case 5: baseCol = 3; mirrored = true; break;
-            case 6: baseCol = 2; mirrored = true; break;
-            case 7: baseCol = 1; mirrored = true; break;
+            case 5: baseCol = 3; break;
+            case 6: baseCol = 2; break;
+            case 7: baseCol = 1; break;
         }
 
         float pitchNorm = (pitchAngle + (PI*0.5f)) / PI;
