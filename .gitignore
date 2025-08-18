@@ -206,3 +206,14 @@ __marimo__/
 *.swp
 *.swo
 *.swn
+# Ignorar todo lo relacionado con raylib
+raylib/
+libraylib.a
+
+# Ignorar ejecutable y objetos
+raypup
+obj/
+
+# Ignorar archivos generados por el sistema
+*.o
+*.a
