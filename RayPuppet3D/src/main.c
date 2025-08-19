@@ -62,12 +62,12 @@ int main(void) {
     if (img.data == NULL) {
         int pw = 1280, ph = 800;
         img = GenImageColor(pw, ph, CLITERAL(Color){0,0,0,0});
-        float cellW = (float)pw / ATLAS_COLS;
-        float cellH = (float)ph / ATLAS_ROWS;
-        for (int r = 0; r < ATLAS_ROWS; r++) {
-            for (int c = 0; c < ATLAS_COLS; c++) {
+        float cellW = (float)pw / AXIS_YAW;
+        float cellH = (float)ph / AXIS_PITCH;
+        for (int r = 0; r < AXIS_PITCH; r++) {
+            for (int c = 0; c < AXIS_YAW; c++) {
                 char buf[8];
-                snprintf(buf, sizeof(buf), "%02d", r*ATLAS_COLS + c);
+                snprintf(buf, sizeof(buf), "%02d", r*AXIS_YAW + c);
                 ImageDrawText(&img, buf, (int)(c*cellW)+8, (int)(r*cellH)+8, (int)(cellH/3), BLACK);
             }
         }
@@ -138,11 +138,11 @@ int main(void) {
         float horizDist = sqrtf(camDir.x*camDir.x + camDir.z*camDir.z);
         float pitchAngle = atan2f(camDir.y, horizDist);
         float pitchNorm = (pitchAngle + (PI*0.5f)) / PI;
-        int rowIndex = (int)floorf(pitchNorm * (float)ATLAS_ROWS);
-        rowIndex = Clamp(rowIndex, 0, ATLAS_ROWS-1);
+        int rowIndex = (int)floorf(pitchNorm * (float)AXIS_PITCH);
+        rowIndex = Clamp(rowIndex, 0, AXIS_PITCH-1);
 
         bool useFixedTop = (rowIndex == 0);
-        bool useFixedBottom = (rowIndex == ATLAS_ROWS - 1);
+        bool useFixedBottom = (rowIndex == AXIS_PITCH - 1);
 
         // Transiciones perfectas a 22.5°
         int baseCol = 0;
@@ -176,7 +176,7 @@ int main(void) {
         bool finalMirrored = false;
 
         if (useFixedTop || useFixedBottom) {
-            src = GetAtlasCellSrcPos(texture, 0, useFixedTop ? 0 : ATLAS_ROWS-1, false, &finalMirrored);
+            src = GetAtlasCellSrcPos(texture, 0, useFixedTop ? 0 : AXIS_PITCH-1, false, &finalMirrored);
             rotationDeg = sectorAngles[sector];
             if (useFixedBottom) {
                 rotationDeg = 360.0f - rotationDeg;
@@ -186,8 +186,8 @@ int main(void) {
             src = GetAtlasCellSrcPos(texture, baseCol, rowIndex, mirrored, &finalMirrored);
         }
 
-        float cellW = (float)texture.width / ATLAS_COLS;
-        float cellH = (float)texture.height / ATLAS_ROWS;
+        float cellW = (float)texture.width / AXIS_YAW;
+        float cellH = (float)texture.height / AXIS_PITCH;
         float aspect = cellW / cellH;
         Vector2 worldSize = (Vector2){ bonetileSize * aspect, bonetileSize };
 
@@ -216,7 +216,7 @@ int main(void) {
 #include "raylib.h"
 #include "rlgl.h"
 #include "raymath.h"
-#include "bonetile.h"   // contiene ATLAS_COLS/ROWS y prototipos
+#include "bonetile.h"   // contiene AXIS_YAW/ROWS y prototipos
 
 int main(void) {
     const int screenWidth = 2056;
@@ -274,12 +274,12 @@ int main(void) {
     if (imgA.data == NULL) {
         int pw = 1280, ph = 800;
         imgA = GenImageColor(pw, ph, CLITERAL(Color){40, 120, 200, 255});
-        float cellW = (float)pw / ATLAS_COLS;
-        float cellH = (float)ph / ATLAS_ROWS;
-        for (int r = 0; r < ATLAS_ROWS; r++) {
-            for (int c = 0; c < ATLAS_COLS; c++) {
+        float cellW = (float)pw / AXIS_YAW;
+        float cellH = (float)ph / AXIS_PITCH;
+        for (int r = 0; r < AXIS_PITCH; r++) {
+            for (int c = 0; c < AXIS_YAW; c++) {
                 char buf[8];
-                snprintf(buf, sizeof(buf), "A%02d", r*ATLAS_COLS + c);
+                snprintf(buf, sizeof(buf), "A%02d", r*AXIS_YAW + c);
                 ImageDrawText(&imgA, buf, (int)(c*cellW)+8, (int)(r*cellH)+8, (int)(cellH/4), BLACK);
             }
         }
@@ -294,12 +294,12 @@ int main(void) {
     if (imgB.data == NULL) {
         int pw = 1280, ph = 800;
         imgB = GenImageColor(pw, ph, CLITERAL(Color){120, 200, 90, 255});
-        float cellW = (float)pw / ATLAS_COLS;
-        float cellH = (float)ph / ATLAS_ROWS;
-        for (int r = 0; r < ATLAS_ROWS; r++) {
-            for (int c = 0; c < ATLAS_COLS; c++) {
+        float cellW = (float)pw / AXIS_YAW;
+        float cellH = (float)ph / AXIS_PITCH;
+        for (int r = 0; r < AXIS_PITCH; r++) {
+            for (int c = 0; c < AXIS_YAW; c++) {
                 char buf[8];
-                snprintf(buf, sizeof(buf), "B%02d", r*ATLAS_COLS + c);
+                snprintf(buf, sizeof(buf), "B%02d", r*AXIS_YAW + c);
                 ImageDrawText(&imgB, buf, (int)(c*cellW)+8, (int)(r*cellH)+8, (int)(cellH/4), BLACK);
             }
         }
@@ -368,8 +368,8 @@ int main(void) {
 
         // Calcular parámetros para cada bonetile
         const float sectorAngles[] = {0.0f, 45.0f, 90.0f, 135.0f, 180.0f, 225.0f, 270.0f, 315.0f};
-        float cellW = (float)textureA.width / ATLAS_COLS;
-        float cellH = (float)textureA.height / ATLAS_ROWS;
+        float cellW = (float)textureA.width / AXIS_YAW;
+        float cellH = (float)textureA.height / AXIS_PITCH;
         float aspect = cellW / cellH;
         Vector2 worldSize = (Vector2){ bonetileSize * aspect, bonetileSize };
 
@@ -382,11 +382,11 @@ int main(void) {
         float horizDistNeck = sqrtf(camDirNeck.x*camDirNeck.x + camDirNeck.z*camDirNeck.z);
         float pitchAngleNeck = atan2f(camDirNeck.y, horizDistNeck);
         float pitchNormNeck = (pitchAngleNeck + (PI*0.5f)) / PI;
-        int rowIndexNeck = (int)floorf(pitchNormNeck * (float)ATLAS_ROWS);
-        rowIndexNeck = Clamp(rowIndexNeck, 0, ATLAS_ROWS-1);
+        int rowIndexNeck = (int)floorf(pitchNormNeck * (float)AXIS_PITCH);
+        rowIndexNeck = Clamp(rowIndexNeck, 0, AXIS_PITCH-1);
 
         bool useFixedTopNeck = (rowIndexNeck == 0);
-        bool useFixedBottomNeck = (rowIndexNeck == ATLAS_ROWS - 1);
+        bool useFixedBottomNeck = (rowIndexNeck == AXIS_PITCH - 1);
 
         int baseColNeck = 0;
         bool mirroredNeck = false;
@@ -411,7 +411,7 @@ int main(void) {
         }
 
         if (useFixedTopNeck || useFixedBottomNeck) {
-            srcNeck = GetAtlasCellSrcPos(textureA, 0, useFixedTopNeck ? 0 : ATLAS_ROWS-1, false, &finalMirroredNeck);
+            srcNeck = GetAtlasCellSrcPos(textureA, 0, useFixedTopNeck ? 0 : AXIS_PITCH-1, false, &finalMirroredNeck);
             rotationDegNeck = sectorAngles[sectorNeck];
             if (useFixedBottomNeck) {
                 rotationDegNeck = 360.0f - rotationDegNeck;
@@ -431,11 +431,11 @@ int main(void) {
         float horizDistNose = sqrtf(camDirNose.x*camDirNose.x + camDirNose.z*camDirNose.z);
         float pitchAngleNose = atan2f(camDirNose.y, horizDistNose);
         float pitchNormNose = (pitchAngleNose + (PI*0.5f)) / PI;
-        int rowIndexNose = (int)floorf(pitchNormNose * (float)ATLAS_ROWS);
-        rowIndexNose = Clamp(rowIndexNose, 0, ATLAS_ROWS-1);
+        int rowIndexNose = (int)floorf(pitchNormNose * (float)AXIS_PITCH);
+        rowIndexNose = Clamp(rowIndexNose, 0, AXIS_PITCH-1);
 
         bool useFixedTopNose = (rowIndexNose == 0);
-        bool useFixedBottomNose = (rowIndexNose == ATLAS_ROWS - 1);
+        bool useFixedBottomNose = (rowIndexNose == AXIS_PITCH - 1);
 
         int baseColNose = 0;
         bool mirroredNose = false;
@@ -460,7 +460,7 @@ int main(void) {
         }
 
         if (useFixedTopNose || useFixedBottomNose) {
-            srcNose = GetAtlasCellSrcPos(textureB, 0, useFixedTopNose ? 0 : ATLAS_ROWS-1, false, &finalMirroredNose);
+            srcNose = GetAtlasCellSrcPos(textureB, 0, useFixedTopNose ? 0 : AXIS_PITCH-1, false, &finalMirroredNose);
             rotationDegNose = sectorAngles[sectorNose];
             if (useFixedBottomNose) {
                 rotationDegNose = 360.0f - rotationDegNose;

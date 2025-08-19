@@ -56,14 +56,19 @@ void DrawBonetileCustom(Texture2D tex, Camera camera, Rectangle src, Vector3 pos
 }
 
 Rectangle GetAtlasCellSrcPos(Texture2D tex, int col, int rowIndex, bool mirrored, bool *outMirrored) {
-    // rowIndex: 0 = top
-    int atlasRow = ATLAS_ROWS - 1 - rowIndex;
-    float cellW = (float)tex.width / ATLAS_COLS;
-    float cellH = (float)tex.height / ATLAS_ROWS;
-    float srcX = col * cellW;
-    float srcY = atlasRow * cellH;
+    
+	int		atlasRow;
+    float	cellW;
+    float	cellH;
+    float	srcX;
+    float	srcY;
 
-    if (outMirrored) *outMirrored = mirrored;
+	atlasRow = 5 - 1 - rowIndex;
+    cellW = (float)tex.width / ATLAS_COLS;
+    cellH = (float)tex.height / ATLAS_ROWS;
+    srcX = col * cellW;
+    srcY = atlasRow * cellH;
+    if (outMirrored)
+		*outMirrored = mirrored;
     return (Rectangle){ srcX, srcY, cellW, cellH };
 }
-

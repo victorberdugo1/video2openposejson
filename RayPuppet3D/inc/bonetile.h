@@ -7,8 +7,11 @@
 #include "raymath.h"
 
 // Tamaño del atlas (defínelo aquí una vez)
-#define ATLAS_COLS 5
-#define ATLAS_ROWS 5
+#define ATLAS_COLS 8
+#define ATLAS_ROWS 8
+
+#define AXIS_YAW 5
+#define AXIS_PITCH 5
 
 // Prototipos públicos (las funciones reciben Texture2D en vez de depender de global)
 Rectangle GetAtlasCellSrcPos(Texture2D tex, int col, int rowIndex, bool mirrored, bool *outMirrored);
