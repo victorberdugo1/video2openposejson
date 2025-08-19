@@ -462,7 +462,7 @@ int main(void) {
         if (useFixedTopNose || useFixedBottomNose) {
             srcNose = GetAtlasCellSrcPos(textureB, 0, useFixedTopNose ? 0 : AXIS_PITCH-1, false, &finalMirroredNose);
             rotationDegNose = sectorAngles[sectorNose];
-            if (useFixedBottomNose) {
+            if (useFixedTopNose) {
                 rotationDegNose = 360.0f - rotationDegNose;
                 if (rotationDegNose >= 360.0f) rotationDegNose -= 360.0f;
             }
@@ -485,17 +485,19 @@ int main(void) {
                 float dNeck = Vector3Distance(camera.position, neckPos);
                 float dNose = Vector3Distance(camera.position, nosePos);
 
+                rlDisableDepthTest();
                 BeginBlendMode(BLEND_ALPHA);
-                rlDisableDepthMask();
 
                     if (dNeck > dNose) {
-                        // Cuello más lejano: dibujar primero
-                        DrawBonetileCustom(textureA, camera, srcNeck, neckPos, worldSize, rotationDegNeck, finalMirroredNeck);
-                        DrawBonetileCustom(textureB, camera, srcNose, nosePos, worldSize, rotationDegNose, finalMirroredNose);
+                        DrawBonetileCustom(textureA, camera, srcNeck, neckPos,
+								worldSize, rotationDegNeck, finalMirroredNeck);
+                        DrawBonetileCustom(textureB, camera, srcNose, nosePos,
+								worldSize, rotationDegNose, finalMirroredNose);
                     } else {
-                        // Nariz más lejana: dibujar primero
-                        DrawBonetileCustom(textureB, camera, srcNose, nosePos, worldSize, rotationDegNose, finalMirroredNose);
-                        DrawBonetileCustom(textureA, camera, srcNeck, neckPos, worldSize, rotationDegNeck, finalMirroredNeck);
+                        DrawBonetileCustom(textureB, camera, srcNose, nosePos,
+								worldSize, rotationDegNose, finalMirroredNose);
+                        DrawBonetileCustom(textureA, camera, srcNeck, neckPos,
+								worldSize, rotationDegNeck, finalMirroredNeck);
                     }
 
                 rlEnableDepthMask();
