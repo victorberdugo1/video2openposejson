@@ -33,8 +33,6 @@
 #include "bonetile.h"   
 
 
-// Convierte una celda lógica (0..ATLAS_COLS-1, 0..ATLAS_ROWS-1)
-// falta arreglar la parte de arriba y abajo 
 static Rectangle SrcFromLogical(Texture2D tex, int logicalCol, int logicalRow,
                                 int physCols, int physRows,
                                 bool mirrored, bool *outMirrored)
@@ -47,12 +45,11 @@ static Rectangle SrcFromLogical(Texture2D tex, int logicalCol, int logicalRow,
     float physCellW = (float)tex.width  / (float)physCols;
     float physCellH = (float)tex.height / (float)physRows;
 
-    int blockW = physCols / ATLAS_COLS; // cuantas columnas físicas por columna lógica
-    int blockH = physRows / ATLAS_ROWS; // cuantas filas físicas por fila lógica
+    int blockW = physCols / ATLAS_COLS;
+    int blockH = physRows / ATLAS_ROWS;
 
     int physCol = logicalCol * blockW;
 
-    // --- Aquí: fila física calculada desde TOP ---
     int physRow = logicalRow * blockH;
 
     float srcX = physCol * physCellW;
@@ -67,10 +64,9 @@ static Rectangle SrcFromLogical(Texture2D tex, int logicalCol, int logicalRow,
 int main(void) {
     const int screenW = 2056;
     const int screenH = 1504;
-    InitWindow(screenW, screenH, "Bonetiles - mapeo vertical suave (topdown = 03)");
+    InitWindow(screenW, screenH, "Bonetiles");
     SetTargetFPS(60);
 
-    // Cámara base
     Camera camera = {0};
     camera.position = (Vector3){0.0f, 0.6f, 2.5f};
     camera.target   = (Vector3){0.0f, 0.6f, 0.0f};
@@ -78,7 +74,7 @@ int main(void) {
     camera.fovy     = 45.0f;
     camera.projection = CAMERA_PERSPECTIVE;
 
-    int camMode = 1; // 1 = orbit, 2 = free
+    int camMode = 1;
     float orbitYaw = 0.0f, orbitPitch = -0.2f, orbitRadius = 2.5f;
 
     // Hardcode: posiciones Neck y Nose normalizadas (JSON)
@@ -115,24 +111,14 @@ int main(void) {
     SetTextureFilter(texB, TEXTURE_FILTER_POINT);
     SetTextureWrap(texB, TEXTURE_WRAP_CLAMP);
 
-    // Física de cada textura en celdas (ejemplo: textura física 8x8)
     const int physColsA = 8, physRowsA = 8;
     const int physColsB = 8, physRowsB = 8;
 
-    // Etiquetas en orden lógico 4x4 (fila-major)
-    const char *labels[16] = {
-        "00 front_mid",   "01 front_low",    "02 front_high",  "03 topdown",
-        "04 diag45_mid",  "05 side90_mid",   "06 back135_mid", "07 back_mid",
-        "08 diag45_low",  "09 side90_low",   "10 back135_low", "11 back_low",
-        "12 diag45_high", "13 side90_high",  "14 back135_high","15 back_high"
-    };
 
-    // Tablas por grupo vertical (indices lógicos 0..15)
-    // Row groups: MAIN (0), LOW (1), HIGH (2) — topdown=3 es override
     const int indices[3][8] = {
-        /* MAIN */ {  0,  4,  5,  6,  7,  6,  5,  4 },
-        /* HIGH  */ {  2, 12, 13, 14, 15, 14, 13, 12 },
-        /* HIGH */ {  1,  8,  9, 10, 11, 10,  9,  8 }
+		{  0,  4,  5,  6,  7,  6,  5,  4 },
+        {  2, 12, 13, 14, 15, 14, 13, 12 },
+        {  1,  8,  9, 10, 11, 10,  9,  8 }
     };
     const int topdownIndex = 3;
 
@@ -141,11 +127,9 @@ int main(void) {
     bool finalMirrNeck = false, finalMirrNose = false;
     const float sectorAngles[8] = {0,45,90,135,180,225,270,315};
 
-    // Umbrales de pitch (en grados) para las bandas verticales
-    const float TOPDOWN_ANGLE = 70.0f;   // >70° up -> topdown, < -70° down -> topdown
-    const float HIGH_THRESHOLD = 22.5f;  // pitch >= 22.5 -> HIGH
-    const float MAIN_THRESHOLD = -22.5f; // pitch between -22.5..22.5 -> MAIN
-    // entre MAIN_THRESHOLD y -TOPDOWN_ANGLE -> LOW
+    const float TOPDOWN_ANGLE = 70.0f;
+    const float HIGH_THRESHOLD = 22.5f;
+    const float MAIN_THRESHOLD = -22.5f;
 
     while (!WindowShouldClose()) {
         float dt = GetFrameTime();
@@ -197,19 +181,17 @@ int main(void) {
         float yawDegN = yawN * RAD2DEG;
 
         float horizN = sqrtf(camDirN.x*camDirN.x + camDirN.z*camDirN.z);
-        float pitchN = atan2f(camDirN.y, horizN);        // -pi/2 .. +pi/2
-        float pitchDegN = pitchN * RAD2DEG;             // -90 .. +90
+        float pitchN = atan2f(camDirN.y, horizN);
+        float pitchDegN = pitchN * RAD2DEG;
 
-        // decidir fila vertical o topdown
-        int chosenRowN = -1; // 0=MAIN,1=LOW,2=HIGH ; topdown override
+        int chosenRowN = -1;
         bool useTopdownN = false;
-        if (pitchDegN >= TOPDOWN_ANGLE) useTopdownN = true;          // looking from far above
-        else if (pitchDegN >= HIGH_THRESHOLD) chosenRowN = 2;        // HIGH
-        else if (pitchDegN >= MAIN_THRESHOLD) chosenRowN = 0;        // MAIN
-        else if (pitchDegN >= -TOPDOWN_ANGLE) chosenRowN = 1;       // LOW
-        else useTopdownN = true;                                     // looking from far below
+        if (pitchDegN >= TOPDOWN_ANGLE) useTopdownN = true;
+        else if (pitchDegN >= HIGH_THRESHOLD) chosenRowN = 2;
+        else if (pitchDegN >= MAIN_THRESHOLD) chosenRowN = 0;
+        else if (pitchDegN >= -TOPDOWN_ANGLE) chosenRowN = 1;
+        else useTopdownN = true;
 
-        // sector nearest (0..7)
         int sectorN = 0;
         float minDiffN = 360.0f;
         for (int i = 0; i < 8; i++) {
@@ -221,12 +203,11 @@ int main(void) {
         int chosenIndexN;
         if (useTopdownN) {
             chosenIndexN = topdownIndex;
-            rotNeck = sectorAngles[sectorN]; // rotate topdown according to sector
+            rotNeck = sectorAngles[sectorN];
             finalMirrNeck = false;
         } else {
             chosenIndexN = indices[chosenRowN][sectorN];
             rotNeck = 0.0f;
-            // heurística de espejo para caras posteriores (puedes cambiar esto a una tabla si quieres)
             finalMirrNeck = !(sectorN >= 5 && sectorN <= 7);
         }
 
@@ -234,8 +215,6 @@ int main(void) {
         int logicalRowNeck = chosenIndexN / ATLAS_COLS;
         srcNeck = SrcFromLogical(texA, logicalColNeck, logicalRowNeck, physColsA, physRowsA, finalMirrNeck, &finalMirrNeck);
 
-        // --- NOSE: calcular yaw/pitch ---
-// --- NOSE: calcular yaw/pitch ---
 Vector3 camDirO = Vector3Subtract(camera.position, nosePos);
 float yawO = atan2f(camDirO.x, camDirO.z);
 if (yawO < 0.0f) yawO += 2.0f*PI;
@@ -275,13 +254,10 @@ int chosenIndexO;
 if (useTopdownO) {
     chosenIndexO = topdownIndex;
     
-    // AJUSTES ESPECÍFICOS PARA VISTAS EXTREMAS
     if (isTopViewO) {
-        // Vista desde arriba - rotación normal + 180°
         rotNose = sectorAngles[sectorO] + 180.0f;
         finalMirrNose = false;
     } else {
-        // Vista desde abajo - invertir el ángulo (360 - ángulo)
         rotNose = 360.0f - sectorAngles[sectorO];
         finalMirrNose = true;
     }
@@ -332,7 +308,7 @@ int logicalColNose = chosenIndexO % ATLAS_COLS;
             const int cellW = 220, cellH = 28, margin = 6;
             const int startX = screenW - (cellW + 20);
             const int startY = 20;
-            DrawText("Atlas logical 4x4 (indices + etiquetas):", startX, startY - 20, 20, DARKGRAY);
+            DrawText("Atlas logical 4x4", startX, startY - 20, 20, DARKGRAY);
 
             for (int r = 0; r < gridRows; r++) {
                 for (int c = 0; c < gridCols; c++) {
@@ -345,8 +321,7 @@ int logicalColNose = chosenIndexO % ATLAS_COLS;
                     else if (idx == chosenIndexO) { bg = Fade(BLUE, 0.85f); txt = WHITE; }
                     DrawRectangleRec(rcell, bg);
                     DrawRectangleLines((int)rcell.x, (int)rcell.y, (int)rcell.width, (int)rcell.height, GRAY);
-                    char buf[64]; snprintf(buf, sizeof(buf), "%02d %s", idx, labels[idx]);
-                    DrawText(buf, (int)rcell.x + 6, (int)rcell.y + 4, 12, txt);
+
                 }
             }
 
