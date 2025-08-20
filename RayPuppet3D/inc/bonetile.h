@@ -7,8 +7,8 @@
 #include "raymath.h"
 
 // Tamaño del atlas (defínelo aquí una vez)
-#define ATLAS_COLS 8
-#define ATLAS_ROWS 8
+#define ATLAS_COLS 4
+#define ATLAS_ROWS 4
 
 #define AXIS_YAW 5
 #define AXIS_PITCH 5
