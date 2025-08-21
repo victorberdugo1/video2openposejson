@@ -327,16 +327,13 @@ int main(void) {
             camera.position = (Vector3){ target.x + x, target.y + y, target.z + z };
             camera.target = target;
         } else {
-            // Modo vuelo libre - control FPS mejorado
             if (cameraMouseControl) {
                 Vector2 mouseDelta = GetMouseDelta();
-                orbitYaw += mouseDelta.x * 0.003f;
-                // CORRECCIÓN: Invertir el movimiento vertical para que sea más intuitivo
-                orbitPitch += mouseDelta.y * 0.003f; // Cambiado de - a +
+                orbitYaw -= mouseDelta.x * 0.003f;
+                orbitPitch -= mouseDelta.y * 0.003f; // Cambiado de - a +
                 orbitPitch = Clamp(orbitPitch, -1.49f, 1.49f);
             }
             
-            // Calcular dirección de la cámara
             Vector3 forward = {
                 sinf(orbitYaw) * cosf(orbitPitch),
                 sinf(orbitPitch),
