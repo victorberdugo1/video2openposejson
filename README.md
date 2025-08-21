@@ -8,6 +8,8 @@ REQUIREMENTS
 - Python 3.10 or higher
 - pip
 
+Tested on Python 3.12.3
+
 CREATE VIRTUAL ENVIRONMENT
 --------------------------
 
@@ -47,13 +49,17 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 REQUIREMENTS IN requirements.txt:
-  diffusers==0.14.0
-  opencv-python
-  ffmpeg-python
-  moviepy
-  controlnet_aux
-  mediapipe
-
+```
+diffusers==0.14.0
+opencv-python
+ffmpeg-python
+moviepy==1.0.3
+imageio
+imageio-ffmpeg
+controlnet_aux
+mediapipe
+gradio
+```
 RUN THE PROJECT
 ---------------
 Once the environment is activated and packages installed:
