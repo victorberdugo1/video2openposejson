@@ -18,12 +18,22 @@ OBJ = $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/%.o, $(SRCS))
 RAYLIB_DIR = raylib
 RAYLIB_LIB = libraylib.a
 
-# Compilador y flags
-CC = cc
-CFLAGS = -Wall -Wextra -Werror -I$(INC_DIR) -I$(RAYLIB_DIR)/src -g -fsanitize=address -fsanitize=leak
-LDFLAGS = -L. -lraylib -lm -ldl -lpthread -lGL -lX11
+ifeq ($(OS),Windows_NT)
+	# Windows (MSYS2 / MinGW)
+	CC = gcc
+	# No AddressSanitizer on MinGW; keep -g for debug
+	CFLAGS = -Wall -Wextra -Werror -I$(INC_DIR) -I$(RAYLIB_DIR)/src -g
+	# Windows linking (Win32 libs)
+	LDFLAGS = -L. -lraylib -lopengl32 -lgdi32 -lwinmm -lole32 -lws2_32 -lm
+	RAYLIB_MAKE = $(MAKE)
+else
+	CC = cc
+	CFLAGS = -Wall -Wextra -Werror -I$(INC_DIR) -I$(RAYLIB_DIR)/src -g -fsanitize=address -fsanitize=leak
+	LDFLAGS = -L. -lraylib -lm -ldl -lpthread -lGL -lX11
+	RAYLIB_MAKE = $(MAKE)
+endif
 
-# Colores
+# Colores (pueden mostrarse como texto literal en algunos shells)
 GREEN = \033[0;32m
 RED = \033[0;91m
 RESET = \033[0m
@@ -37,7 +47,7 @@ $(RAYLIB_LIB):
 		git clone https://github.com/raysan5/raylib.git $(RAYLIB_DIR); \
 	fi
 	@echo "$(RESET)Building raylib..."; \
-	$(MAKE) -C $(RAYLIB_DIR)/src PLATFORM=PLATFORM_DESKTOP RAYLIB_LIBTYPE=STATIC; \
+	$(RAYLIB_MAKE) -C $(RAYLIB_DIR)/src PLATFORM=PLATFORM_DESKTOP RAYLIB_LIBTYPE=STATIC; \
 	cp $(RAYLIB_DIR)/src/$(RAYLIB_LIB) .
 
 $(NAME): $(RAYLIB_LIB) $(OBJ)
@@ -64,4 +74,3 @@ fclean: clean
 re: fclean all
 
 .PHONY: all clean fclean re
-
