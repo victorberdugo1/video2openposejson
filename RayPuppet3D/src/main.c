@@ -7,6 +7,10 @@
 #include "bonetile.h"
 #include "bones3d.h"
 
+// Tamaño base para diseño responsive
+#define BASE_WIDTH 1920
+#define BASE_HEIGHT 1080
+
 static Rectangle SrcFromLogical(Texture2D tex, int logicalCol, int logicalRow,
                                 int physCols, int physRows,
                                 bool mirrored, bool *outMirrored)
@@ -105,11 +109,20 @@ void CalculateBoneRenderData(Vector3 bonePos, Camera camera,
     }
 }
 
+// Función para escalar valores según el tamaño de la pantalla
+float ScaleValue(float value, int screenDimension, int baseDimension) {
+    return value * ((float)screenDimension / (float)baseDimension);
+}
+
+// Función para escalar fuentes
+int ScaleFontSize(int baseSize, int screenHeight) {
+    return (int)(baseSize * ((float)screenHeight / BASE_HEIGHT));
+}
+
 int main(void) {
-    const int screenW = 2056;
-    const int screenH = 1504;
-    
-    InitWindow(screenW, screenH, "Bones3D - Bonetiles System");
+    // Inicializar ventana en tamaño base pero permitir redimensionamiento
+    InitWindow(BASE_WIDTH, BASE_HEIGHT, "Bones3D - Bonetiles System");
+    SetWindowState(FLAG_WINDOW_RESIZABLE);
     SetTargetFPS(60);
     
     // Configurar cámara
@@ -140,12 +153,9 @@ int main(void) {
     if (result != BONES_SUCCESS) {
         TraceLog(LOG_WARNING, "No se pudo cargar test_data.json: %s", BonesGetErrorString(result));
         TraceLog(LOG_INFO, "Usando posiciones hardcodeadas como fallback");
-        
-        // Fallback: usar posiciones hardcodeadas como antes
-        // (mantenemos compatibilidad con tu código original)
     } else {
         TraceLog(LOG_INFO, "Bones3D cargado exitosamente: %d frames", BonesGetFrameCount(&animation));
-        BonesSetFrame(&animation, 0); // Usar primer frame
+        BonesSetFrame(&animation, 0);
     }
     
     // Configurar renderizado
@@ -212,6 +222,8 @@ int main(void) {
     // ========================================================================
     while (!WindowShouldClose()) {
         float dt = GetFrameTime();
+        int currentScreenWidth = GetScreenWidth();
+        int currentScreenHeight = GetScreenHeight();
         
         // Cambio de modo de cámara
         if (IsKeyPressed(KEY_ONE)) camMode = 1;
@@ -223,7 +235,6 @@ int main(void) {
         bool neckValid = false, noseValid = false;
         
         if (usingBones3D) {
-            // Usar sistema Bones3D
             BonesError neckResult = BonesGetBonePosition(&animation, BonesGetCurrentFrame(&animation), 
                                                         "person_0", "Neck", &neckPos);
             BonesError noseResult = BonesGetBonePosition(&animation, BonesGetCurrentFrame(&animation), 
@@ -360,21 +371,28 @@ int main(void) {
             EndMode3D();
             
             // ================================================================
-            // UI OVERLAY - ATLAS GRID
+            // UI OVERLAY - ATLAS GRID (Responsive)
             // ================================================================
             const int gridCols = ATLAS_COLS, gridRows = ATLAS_ROWS;
-            const int cellW = 220, cellH = 28, margin = 6;
-            const int startX = screenW - (cellW + 20);
-            const int startY = 20;
+            const int cellW = ScaleValue(220, currentScreenWidth, BASE_WIDTH);
+            const int cellH = ScaleValue(28, currentScreenHeight, BASE_HEIGHT);
+            const int margin = ScaleValue(6, currentScreenWidth, BASE_WIDTH);
+            const int startX = currentScreenWidth - (cellW + ScaleValue(20, currentScreenWidth, BASE_WIDTH));
+            const int startY = ScaleValue(20, currentScreenHeight, BASE_HEIGHT);
             
-            DrawText("Atlas logical 4x4", startX, startY - 20, 20, DARKGRAY);
+            // Título del atlas
+            int titleFontSize = ScaleFontSize(20, currentScreenHeight);
+            DrawText("Atlas logical 4x4", startX, startY - ScaleValue(20, currentScreenHeight, BASE_HEIGHT), 
+                    titleFontSize, DARKGRAY);
             
+            // Dibujar cuadrícula del atlas
             for (int r = 0; r < gridRows; r++) {
                 for (int c = 0; c < gridCols; c++) {
                     int idx = r * gridCols + c;
                     int xcell = startX + c * ((cellW / gridCols) + margin);
                     int ycell = startY + r * (cellH + margin);
-                    Rectangle rcell = { (float)xcell, (float)ycell, (float)(cellW / gridCols - 6), (float)cellH };
+                    Rectangle rcell = { (float)xcell, (float)ycell, 
+                                       (float)(cellW / gridCols - margin), (float)cellH };
                     
                     Color bg = LIGHTGRAY;
                     if (neckValid && idx == chosenIndexN) { 
@@ -389,32 +407,54 @@ int main(void) {
             }
             
             // ================================================================
-            // INFORMACIÓN DE DEBUG
+            // INFORMACIÓN DE DEBUG (Responsive)
             // ================================================================
-            DrawText("BONES3D SYSTEM", 20, 20, 20, DARKGREEN);
+            int baseFontSize = ScaleFontSize(16, currentScreenHeight);
+            int titleDebugSize = ScaleFontSize(20, currentScreenHeight);
+            
+            // Título del sistema
+            DrawText("BONES3D SYSTEM", 
+                    ScaleValue(20, currentScreenWidth, BASE_WIDTH), 
+                    ScaleValue(20, currentScreenHeight, BASE_HEIGHT), 
+                    titleDebugSize, DARKGREEN);
             
             // Estado del sistema
             const char* systemStatus = usingBones3D ? "LOADED from JSON" : "FALLBACK (hardcoded)";
             Color statusColor = usingBones3D ? DARKGREEN : ORANGE;
-            DrawText(TextFormat("Data Source: %s", systemStatus), 20, 50, 16, statusColor);
+            DrawText(TextFormat("Data Source: %s", systemStatus), 
+                    ScaleValue(20, currentScreenWidth, BASE_WIDTH), 
+                    ScaleValue(50, currentScreenHeight, BASE_HEIGHT), 
+                    baseFontSize, statusColor);
             
             if (usingBones3D) {
                 DrawText(TextFormat("Frames: %d | Current: %d", 
                         BonesGetFrameCount(&animation), BonesGetCurrentFrame(&animation)), 
-                        20, 70, 16, DARKGRAY);
+                        ScaleValue(20, currentScreenWidth, BASE_WIDTH), 
+                        ScaleValue(70, currentScreenHeight, BASE_HEIGHT), 
+                        baseFontSize, DARKGRAY);
             }
             
             // Info de bones
             DrawText(TextFormat("Neck: idx %02d rot %.1f mirror %s", 
                                chosenIndexN, rotNeck, finalMirrNeck ? "YES" : "NO"),
-                     20, screenH - 80, 16, RED);
+                     ScaleValue(20, currentScreenWidth, BASE_WIDTH), 
+                     currentScreenHeight - ScaleValue(80, currentScreenHeight, BASE_HEIGHT), 
+                     baseFontSize, RED);
             DrawText(TextFormat("Nose: idx %02d rot %.1f mirror %s", 
                                chosenIndexO, rotNose, finalMirrNose ? "YES" : "NO"),
-                     20, screenH - 60, 16, BLUE);
+                     ScaleValue(20, currentScreenWidth, BASE_WIDTH), 
+                     currentScreenHeight - ScaleValue(60, currentScreenHeight, BASE_HEIGHT), 
+                     baseFontSize, BLUE);
             
             // Controles
-            DrawText("Controls: 1=Orbit Camera | 2=Free Camera | Mouse+WASD", 20, screenH - 40, 14, DARKGRAY);
-            DrawText(TextFormat("Camera Mode: %s", camMode == 1 ? "ORBIT" : "FREE"), 20, screenH - 20, 14, DARKGRAY);
+            DrawText("Controls: 1=Orbit Camera | 2=Free Camera | Mouse+WASD", 
+                    ScaleValue(20, currentScreenWidth, BASE_WIDTH), 
+                    currentScreenHeight - ScaleValue(40, currentScreenHeight, BASE_HEIGHT), 
+                    ScaleFontSize(14, currentScreenHeight), DARKGRAY);
+            DrawText(TextFormat("Camera Mode: %s", camMode == 1 ? "ORBIT" : "FREE"), 
+                    ScaleValue(20, currentScreenWidth, BASE_WIDTH), 
+                    currentScreenHeight - ScaleValue(20, currentScreenHeight, BASE_HEIGHT), 
+                    ScaleFontSize(14, currentScreenHeight), DARKGRAY);
             
         EndDrawing();
     }
