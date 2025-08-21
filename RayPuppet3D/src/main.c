@@ -122,7 +122,20 @@ int ScaleFontSize(int baseSize, int screenHeight) {
 int main(void) {
     // Inicializar ventana en tamaño base pero permitir redimensionamiento
     InitWindow(BASE_WIDTH, BASE_HEIGHT, "Bones3D - Bonetiles System");
+    
+    // Configurar ventana para que sea redimensionable y maximizada
     SetWindowState(FLAG_WINDOW_RESIZABLE);
+    
+    // Intentar maximizar la ventana (compatible con Linux)
+    #if defined(__linux__)
+        // En Linux, necesitamos esperar un poco antes de maximizar
+        // para asegurarnos de que la ventana esté completamente creada
+        for (int i = 0; i < 10; i++) {
+            PollInputEvents();
+        }
+    #endif
+    
+    MaximizeWindow();
     SetTargetFPS(60);
     
     // Configurar cámara
