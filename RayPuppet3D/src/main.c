@@ -126,11 +126,10 @@ int main(void) {
     // Configurar ventana para que sea redimensionable y maximizada
     SetWindowState(FLAG_WINDOW_RESIZABLE);
     
-    // Intentar maximizar la ventana (compatible con Linux)
+    // Solución específica para Linux - maximizar después de un breve retraso
     #if defined(__linux__)
-        // En Linux, necesitamos esperar un poco antes de maximizar
-        // para asegurarnos de que la ventana esté completamente creada
-        for (int i = 0; i < 10; i++) {
+        // Pequeña espera para asegurar que la ventana esté completamente inicializada
+        for (int i = 0; i < 5; i++) {
             PollInputEvents();
         }
     #endif
@@ -148,6 +147,13 @@ int main(void) {
     
     int camMode = 1;
     float orbitYaw = 0.0f, orbitPitch = -0.2f, orbitRadius = 2.5f;
+    
+    // Variables para control de cámara mejorado
+    bool cameraMouseControl = false;
+    
+    // Variables para información de bones
+    bool neckValid = false, noseValid = false;
+    Vector3 neckPos = {0}, nosePos = {0};
     
     // ========================================================================
     // INICIALIZAR SISTEMA BONES3D
@@ -216,7 +222,6 @@ int main(void) {
     
     // Variables para información
     bool usingBones3D = animation.isLoaded;
-    Vector3 neckPos = {0}, nosePos = {0};
     
     // Fallback hardcodeado (compatibilidad)
     Vector3 fallbackNeckPos = {
@@ -238,14 +243,43 @@ int main(void) {
         int currentScreenWidth = GetScreenWidth();
         int currentScreenHeight = GetScreenHeight();
         
-        // Cambio de modo de cámara
-        if (IsKeyPressed(KEY_ONE)) camMode = 1;
-        if (IsKeyPressed(KEY_TWO)) camMode = 2;
+        // Cambio de modo de cámara con mejoras
+        if (IsKeyPressed(KEY_ONE)) {
+            camMode = 1;
+            cameraMouseControl = false;
+            EnableCursor();
+        }
+        if (IsKeyPressed(KEY_TWO)) {
+            camMode = 2;
+            cameraMouseControl = true;
+            DisableCursor();
+            
+            // Posicionar la cámara para que mire hacia el centro del personaje
+            Vector3 target = neckValid ? neckPos : fallbackNeckPos;
+            camera.position = (Vector3){target.x, target.y + 0.5f, target.z + 2.0f};
+            camera.target = target;
+            
+            // Calcular ángulos iniciales para la cámara
+            Vector3 direction = Vector3Subtract(target, camera.position);
+            orbitYaw = atan2f(direction.x, direction.z);
+            orbitPitch = atan2f(direction.y, sqrtf(direction.x*direction.x + direction.z*direction.z));
+        }
+        
+        // Alternar control de ratón con la tecla M
+        if (IsKeyPressed(KEY_M)) {
+            cameraMouseControl = !cameraMouseControl;
+            if (cameraMouseControl) {
+                DisableCursor();
+            } else {
+                EnableCursor();
+            }
+        }
         
         // ====================================================================
         // OBTENER POSICIONES DE BONES
         // ====================================================================
-        bool neckValid = false, noseValid = false;
+        neckValid = false;
+        noseValid = false;
         
         if (usingBones3D) {
             BonesError neckResult = BonesGetBonePosition(&animation, BonesGetCurrentFrame(&animation), 
@@ -268,14 +302,14 @@ int main(void) {
         }
         
         // ====================================================================
-        // CONTROL DE CÁMARA
+        // CONTROL DE CÁMARA MEJORADO
         // ====================================================================
         if (camMode == 1) {
-            // Modo órbita alrededor del cuello
-            Vector2 md = GetMouseDelta();
+            // Modo órbita alrededor del cuello - control mejorado
             if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
-                orbitYaw   += md.x * 0.01f;
-                orbitPitch += -md.y * 0.01f;
+                Vector2 mouseDelta = GetMouseDelta();
+                orbitYaw += mouseDelta.x * 0.01f;
+                orbitPitch += -mouseDelta.y * 0.01f;
                 orbitPitch = Clamp(orbitPitch, -1.4f, 1.4f);
             }
             
@@ -285,7 +319,7 @@ int main(void) {
                 orbitRadius = Clamp(orbitRadius, 0.5f, 10.0f);
             }
             
-            Vector3 target = neckPos;
+            Vector3 target = neckValid ? neckPos : fallbackNeckPos;
             float x = orbitRadius * cosf(orbitPitch) * sinf(orbitYaw);
             float y = orbitRadius * sinf(orbitPitch);
             float z = orbitRadius * cosf(orbitPitch) * cosf(orbitYaw);
@@ -293,29 +327,44 @@ int main(void) {
             camera.position = (Vector3){ target.x + x, target.y + y, target.z + z };
             camera.target = target;
         } else {
-            // Modo vuelo libre
-            Vector2 md = GetMouseDelta();
-            if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) {
-                orbitYaw += md.x * 0.002f;
-                orbitPitch += -md.y * 0.002f;
+            // Modo vuelo libre - control FPS mejorado
+            if (cameraMouseControl) {
+                Vector2 mouseDelta = GetMouseDelta();
+                orbitYaw += mouseDelta.x * 0.003f;
+                // CORRECCIÓN: Invertir el movimiento vertical para que sea más intuitivo
+                orbitPitch += mouseDelta.y * 0.003f; // Cambiado de - a +
                 orbitPitch = Clamp(orbitPitch, -1.49f, 1.49f);
             }
             
-            Vector3 forwardDir = { 
-                sinf(orbitYaw) * cosf(orbitPitch), 
-                sinf(orbitPitch), 
-                cosf(orbitYaw) * cosf(orbitPitch) 
+            // Calcular dirección de la cámara
+            Vector3 forward = {
+                sinf(orbitYaw) * cosf(orbitPitch),
+                sinf(orbitPitch),
+                cosf(orbitYaw) * cosf(orbitPitch)
             };
-            forwardDir = Vector3Normalize(forwardDir);
-            Vector3 rightDir = Vector3Normalize(Vector3CrossProduct((Vector3){0,1,0}, forwardDir));
+            forward = Vector3Normalize(forward);
             
+            Vector3 right = {
+                sinf(orbitYaw - PI/2),
+                0,
+                cosf(orbitYaw - PI/2)
+            };
+            right = Vector3Normalize(right);
+            
+            // Movimiento de la cámara
             float speed = IsKeyDown(KEY_LEFT_SHIFT) ? 6.0f : 2.5f;
-            if (IsKeyDown(KEY_W)) camera.position = Vector3Add(camera.position, Vector3Scale(forwardDir, speed*dt));
-            if (IsKeyDown(KEY_S)) camera.position = Vector3Subtract(camera.position, Vector3Scale(forwardDir, speed*dt));
-            if (IsKeyDown(KEY_A)) camera.position = Vector3Subtract(camera.position, Vector3Scale(rightDir, speed*dt));
-            if (IsKeyDown(KEY_D)) camera.position = Vector3Add(camera.position, Vector3Scale(rightDir, speed*dt));
+            if (IsKeyDown(KEY_W)) camera.position = Vector3Add(camera.position, Vector3Scale(forward, speed*dt));
+            if (IsKeyDown(KEY_S)) camera.position = Vector3Subtract(camera.position, Vector3Scale(forward, speed*dt));
+            if (IsKeyDown(KEY_A)) camera.position = Vector3Subtract(camera.position, Vector3Scale(right, speed*dt));
+            if (IsKeyDown(KEY_D)) camera.position = Vector3Add(camera.position, Vector3Scale(right, speed*dt));
             
-            camera.target = Vector3Add(camera.position, forwardDir);
+            // Movimiento vertical
+            if (IsKeyDown(KEY_SPACE)) camera.position.y += speed * dt;
+            if (IsKeyDown(KEY_LEFT_CONTROL)) camera.position.y -= speed * dt;
+            
+            // La cámara siempre mira hacia adelante en modo FPS
+            camera.target = Vector3Add(camera.position, forward);
+
         }
         
         // ====================================================================
@@ -460,11 +509,11 @@ int main(void) {
                      baseFontSize, BLUE);
             
             // Controles
-            DrawText("Controls: 1=Orbit Camera | 2=Free Camera | Mouse+WASD", 
+            DrawText("Controls: 1=Orbit Camera | 2=FPS Camera | M=Toggle Mouse", 
                     ScaleValue(20, currentScreenWidth, BASE_WIDTH), 
                     currentScreenHeight - ScaleValue(40, currentScreenHeight, BASE_HEIGHT), 
                     ScaleFontSize(14, currentScreenHeight), DARKGRAY);
-            DrawText(TextFormat("Camera Mode: %s", camMode == 1 ? "ORBIT" : "FREE"), 
+            DrawText("WASD=Move | SPACE=Up | CTRL=Down | SHIFT=Sprint | Mouse=Look", 
                     ScaleValue(20, currentScreenWidth, BASE_WIDTH), 
                     currentScreenHeight - ScaleValue(20, currentScreenHeight, BASE_HEIGHT), 
                     ScaleFontSize(14, currentScreenHeight), DARKGRAY);
