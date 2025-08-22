@@ -14,6 +14,48 @@
 #define MAX_BONES_PER_PERSON 32
 #define MAX_FRAMES 10000
 #define MAX_PERSONS 10
+#define MAX_FILE_PATH_LENGTH 512
+
+// Configuración simple por bone
+typedef struct {
+    char boneName[MAX_BONE_NAME_LENGTH];
+    char texturePath[MAX_FILE_PATH_LENGTH];
+    bool visible;
+    float size;
+} BoneTextureConfig;
+
+// Sistema de configuración simple
+typedef struct {
+    BoneTextureConfig* configs;
+    int configCount;
+    int configCapacity;
+    bool loaded;
+    time_t lastModified;  // Para cache
+} SimpleTextureSystem;
+
+// Estructura para configuración permanente de huesos
+typedef struct {
+    char boneName[MAX_BONE_NAME_LENGTH];
+    char texturePath[MAX_FILE_PATH_LENGTH];
+    bool visible;
+    float size;
+    bool valid;
+} BoneConfig;
+
+// Estructura para datos de renderizado de un bone
+typedef struct {
+    Vector3 position;
+    int atlasIndex;
+    float rotation;
+    bool mirrored;
+    float distance;
+    char boneName[MAX_BONE_NAME_LENGTH];
+    char personId[16];
+    char texturePath[MAX_FILE_PATH_LENGTH];
+    bool visible;
+    float size;
+    bool valid;
+} BoneRenderData;
 
 // Códigos de error
 typedef enum {

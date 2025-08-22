@@ -13,49 +13,6 @@
 #define BASE_WIDTH 1920
 #define BASE_HEIGHT 1080
 
-// Longitud máxima para paths de archivo
-#define MAX_FILE_PATH_LENGTH 256
-
-// Configuración simple por bone
-typedef struct {
-    char boneName[MAX_BONE_NAME_LENGTH];
-    char texturePath[MAX_FILE_PATH_LENGTH];
-    bool visible;
-    float size;
-} BoneTextureConfig;
-
-// Sistema de configuración simple
-typedef struct {
-    BoneTextureConfig* configs;
-    int configCount;
-    int configCapacity;
-    bool loaded;
-    time_t lastModified;  // Para cache
-} SimpleTextureSystem;
-
-// Estructura para configuración permanente de huesos
-typedef struct {
-    char boneName[MAX_BONE_NAME_LENGTH];
-    char texturePath[MAX_FILE_PATH_LENGTH];
-    bool visible;
-    float size;
-    bool valid;
-} BoneConfig;
-
-// Estructura para datos de renderizado de un bone
-typedef struct {
-    Vector3 position;
-    int atlasIndex;
-    float rotation;
-    bool mirrored;
-    float distance;
-    char boneName[MAX_BONE_NAME_LENGTH];
-    char personId[16];
-    char texturePath[MAX_FILE_PATH_LENGTH];
-    bool visible;
-    float size;
-    bool valid;
-} BoneRenderData;
 
 // Variables globales
 static BoneRenderData* renderBones = NULL;
@@ -71,10 +28,6 @@ static int boneConfigCount = 0;
 
 // Función para verificar MAX_BONE_NAME_LENGTH
 void CheckBoneNameLength() {
-#ifndef MAX_BONE_NAME_LENGTH
-#define MAX_BONE_NAME_LENGTH 32
-#endif
-
     if (MAX_BONE_NAME_LENGTH < 32) {
         TraceLog(LOG_ERROR, "MAX_BONE_NAME_LENGTH debe ser al menos 32 bytes");
     }
