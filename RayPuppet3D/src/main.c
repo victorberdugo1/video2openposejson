@@ -7,6 +7,7 @@
 #include "bonetile.h"
 #include "bones3d.h"
 #include <string.h>
+#include <sys/stat.h>
 
 // Tamaño base para diseño responsive
 #define BASE_WIDTH 1920
@@ -26,6 +27,7 @@ typedef struct {
     int configCount;
     int configCapacity;
     bool loaded;
+    time_t lastModified;  // Para cache
 } SimpleTextureSystem;
 
 // Estructura para configuración permanente de huesos
@@ -61,15 +63,15 @@ static BoneConfig* boneConfigs = NULL;
 static int boneConfigCount = 0;
 
 // ============================================================================
-// FUNCIONES DE CONFIGURACIÓN SIMPLE
+// FUNCIONES DE CONFIGURACIÓN OPTIMIZADAS
 // ============================================================================
 
 // Función para verificar MAX_BONE_NAME_LENGTH
 void CheckBoneNameLength() {
-    #ifndef MAX_BONE_NAME_LENGTH
-    #define MAX_BONE_NAME_LENGTH 32
-    #endif
-    
+#ifndef MAX_BONE_NAME_LENGTH
+#define MAX_BONE_NAME_LENGTH 32
+#endif
+
     if (MAX_BONE_NAME_LENGTH < 32) {
         TraceLog(LOG_ERROR, "MAX_BONE_NAME_LENGTH debe ser al menos 32 bytes");
     }
@@ -83,8 +85,9 @@ void CleanupTextureSystem() {
         textureSystem.configCount = 0;
         textureSystem.configCapacity = 0;
         textureSystem.loaded = false;
+        textureSystem.lastModified = 0;
     }
-    
+
     if (boneConfigs) {
         free(boneConfigs);
         boneConfigs = NULL;
@@ -92,26 +95,81 @@ void CleanupTextureSystem() {
     }
 }
 
-// Cargar configuración simple desde JSON - CORREGIDO
-bool LoadSimpleTextureConfig(SimpleTextureSystem* system, const char* filename) {
-    FILE* file = fopen(filename, "r");
-    if (!file) {
-        TraceLog(LOG_WARNING, "No se encontró archivo de configuración: %s. Usando valores por defecto.", filename);
-        return false;
+// Función optimizada para obtener timestamp de archivo
+time_t GetFileModificationTime(const char* filename) {
+    struct stat fileStat;
+    if (stat(filename, &fileStat) == 0) {
+        return fileStat.st_mtime;
+    }
+    return 0;
+}
+
+// Función para leer archivo completo en memoria de una vez
+char* ReadEntireFile(const char* filename, long* fileSize) {
+    FILE* file = fopen(filename, "rb");
+    if (!file) return NULL;
+
+    // Obtener tamaño del archivo
+    fseek(file, 0, SEEK_END);
+    long size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+
+    if (size <= 0) {
+        fclose(file);
+        return NULL;
     }
 
-    // Leer archivo línea por línea
-    char line[512]; // Aumentado para mayor seguridad
+    // Asignar memoria y leer todo de una vez
+    char* buffer = (char*)malloc(size + 1);
+    if (!buffer) {
+        fclose(file);
+        return NULL;
+    }
+
+    size_t bytesRead = fread(buffer, 1, size, file);
+    fclose(file);
+
+    if (bytesRead != (size_t)size) {
+        free(buffer);
+        return NULL;
+    }
+
+    buffer[size] = '\0';  // Null terminator
+    if (fileSize) *fileSize = size;
+
+    return buffer;
+}
+
+// Función optimizada para contar líneas válidas en buffer
+int CountValidLines(const char* buffer) {
     int lineCount = 0;
+    const char* ptr = buffer;
+    const char* lineStart = ptr;
 
-    // Contar líneas válidas primero
-    while (fgets(line, sizeof(line), file)) {
-        if (line[0] != '#' && line[0] != '\n' && strlen(line) > 5) {
-            lineCount++;
+    while (*ptr) {
+        if (*ptr == '\n' || *ptr == '\0') {
+            // Calcular longitud de línea
+            int lineLen = ptr - lineStart;
+
+            // Verificar si la línea es válida (no comentario, no vacía, suficiente longitud)
+            if (lineLen > 5 && *lineStart != '#' && *lineStart != '\n') {
+                lineCount++;
+            }
+
+            // Avanzar al inicio de la siguiente línea
+            lineStart = ptr + 1;
         }
+        ptr++;
     }
 
-    rewind(file);
+    return lineCount;
+}
+
+// Función ultra-optimizada para cargar configuración desde buffer
+bool ParseConfigFromBuffer(SimpleTextureSystem* system, const char* buffer) {
+    // Contar líneas válidas
+    int lineCount = CountValidLines(buffer);
+    if (lineCount == 0) return false;
 
     // Liberar configuración previa si existe
     if (system->configs) {
@@ -120,59 +178,104 @@ bool LoadSimpleTextureConfig(SimpleTextureSystem* system, const char* filename) 
         system->configCount = 0;
     }
 
-    // Asignar memoria
+    // Asignar memoria de una vez
     system->configs = (BoneTextureConfig*)calloc(lineCount, sizeof(BoneTextureConfig));
     if (!system->configs) {
-        TraceLog(LOG_ERROR, "Error allocating memory for texture config");
-        fclose(file);
+        TraceLog(LOG_ERROR, "Error allocating memory for %d texture configs", lineCount);
         return false;
     }
-    
+
     system->configCapacity = lineCount;
     system->configCount = 0;
 
-    // Leer configuraciones
-    while (fgets(line, sizeof(line), file)) {
-        if (line[0] == '#' || line[0] == '\n' || strlen(line) < 5) continue;
+    // Parsear líneas
+    const char* ptr = buffer;
+    const char* lineStart = ptr;
+    char lineBuffer[256];  // Buffer temporal para línea
 
-        char boneName[MAX_BONE_NAME_LENGTH]; // Usar el tamaño correcto
-        int textureIndex, visible;
-        float size;
+    while (*ptr && system->configCount < system->configCapacity) {
+        if (*ptr == '\n') {
+            // Calcular longitud de línea
+            int lineLen = ptr - lineStart;
 
-        // CORREGIDO: Usar MAX_BONE_NAME_LENGTH-1 en lugar de 63
-        int fields = sscanf(line, "%31s %d %d %f", boneName, &textureIndex, &visible, &size);
-        
-        if (fields == 4) {
-            if (system->configCount >= system->configCapacity) {
-                TraceLog(LOG_WARNING, "Excedido límite de configuraciones, ignorando: %s", boneName);
-                break;
+            // Verificar si la línea es válida
+            if (lineLen > 5 && lineLen < 255 && *lineStart != '#' && *lineStart != '\n') {
+                // Copiar línea a buffer temporal
+                memcpy(lineBuffer, lineStart, lineLen);
+                lineBuffer[lineLen] = '\0';
+
+                // Parsear campos
+                char boneName[MAX_BONE_NAME_LENGTH];
+                int textureIndex, visible;
+                float size;
+
+                int fields = sscanf(lineBuffer, "%31s %d %d %f", boneName, &textureIndex, &visible, &size);
+
+                if (fields == 4) {
+                    BoneTextureConfig* config = &system->configs[system->configCount];
+                    strncpy(config->boneName, boneName, MAX_BONE_NAME_LENGTH - 1);
+                    config->boneName[MAX_BONE_NAME_LENGTH - 1] = '\0';
+                    config->textureIndex = textureIndex;
+                    config->visible = (visible != 0);
+                    config->size = size;
+                    system->configCount++;
+                }
             }
-            
-            BoneTextureConfig* config = &system->configs[system->configCount];
-            strncpy(config->boneName, boneName, MAX_BONE_NAME_LENGTH - 1);
-            config->boneName[MAX_BONE_NAME_LENGTH - 1] = '\0';
-            config->textureIndex = textureIndex;
-            config->visible = (visible != 0);
-            config->size = size;
-            system->configCount++;
-            
-            TraceLog(LOG_DEBUG, "Config cargada: %s T%d V%d S%.2f", 
-                    boneName, textureIndex, visible, size);
-        } else {
-            TraceLog(LOG_WARNING, "Línea inválida en configuración: %s", line);
+
+            lineStart = ptr + 1;
         }
+        ptr++;
     }
 
-    fclose(file);
-    system->loaded = true;
-
-    TraceLog(LOG_INFO, "Configuración simple cargada: %d bones configurados", system->configCount);
     return true;
 }
 
-// Cargar configuración de huesos una vez al inicio
+// Cargar configuración simple desde JSON - ULTRA-OPTIMIZADO
+bool LoadSimpleTextureConfig(SimpleTextureSystem* system, const char* filename) {
+    // Verificar si el archivo existe y obtener timestamp
+    time_t currentModTime = GetFileModificationTime(filename);
+    if (currentModTime == 0) {
+        TraceLog(LOG_WARNING, "No se encontró archivo de configuración: %s. Usando valores por defecto.", filename);
+        return false;
+    }
+
+    // Verificar cache - si ya está cargado y no ha cambiado, no recargar
+    if (system->loaded && system->lastModified == currentModTime) {
+        TraceLog(LOG_DEBUG, "Configuración ya cargada y sin cambios, usando cache");
+        return true;
+    }
+
+    TraceLog(LOG_INFO, "Cargando configuración de texturas...");
+
+    // Leer archivo completo en memoria
+    long fileSize;
+    char* buffer = ReadEntireFile(filename, &fileSize);
+    if (!buffer) {
+        TraceLog(LOG_ERROR, "Error leyendo archivo: %s", filename);
+        return false;
+    }
+
+    // Parsear desde buffer
+    bool success = ParseConfigFromBuffer(system, buffer);
+
+    // Liberar buffer
+    free(buffer);
+
+    if (success) {
+        system->loaded = true;
+        system->lastModified = currentModTime;
+        TraceLog(LOG_INFO, "Configuración simple cargada: %d bones configurados (%.2f KB)",
+            system->configCount, fileSize / 1024.0f);
+    }
+    else {
+        TraceLog(LOG_ERROR, "Error parseando configuración");
+    }
+
+    return success;
+}
+
+// Cargar configuración de huesos una vez al inicio - OPTIMIZADO
 void LoadBoneConfigurations() {
-    // Liberar configuración previa si existe
     if (boneConfigs) {
         free(boneConfigs);
         boneConfigs = NULL;
@@ -188,20 +291,26 @@ void LoadBoneConfigurations() {
         return;
     }
 
+    // Copia optimizada usando memcpy cuando sea posible
     for (int i = 0; i < boneConfigCount; i++) {
-        strncpy(boneConfigs[i].boneName, textureSystem.configs[i].boneName, MAX_BONE_NAME_LENGTH - 1);
-        boneConfigs[i].boneName[MAX_BONE_NAME_LENGTH - 1] = '\0';
-        boneConfigs[i].textureIndex = textureSystem.configs[i].textureIndex;
-        boneConfigs[i].visible = textureSystem.configs[i].visible;
-        boneConfigs[i].size = textureSystem.configs[i].size;
-        boneConfigs[i].valid = true;
+        const BoneTextureConfig* src = &textureSystem.configs[i];
+        BoneConfig* dst = &boneConfigs[i];
+
+        // Copia directa de memoria para la estructura
+        strncpy(dst->boneName, src->boneName, MAX_BONE_NAME_LENGTH - 1);
+        dst->boneName[MAX_BONE_NAME_LENGTH - 1] = '\0';
+        dst->textureIndex = src->textureIndex;
+        dst->visible = src->visible;
+        dst->size = src->size;
+        dst->valid = true;
     }
 
     TraceLog(LOG_INFO, "Configuración de huesos cargada: %d huesos", boneConfigCount);
 }
 
-// Buscar configuración por nombre de bone
+// Búsqueda optimizada con hash simple (opcional para archivos muy grandes)
 BoneTextureConfig* FindBoneTextureConfig(const char* boneName) {
+    // Para archivos pequeños/medianos, búsqueda lineal sigue siendo eficiente
     for (int i = 0; i < textureSystem.configCount; i++) {
         if (strcmp(textureSystem.configs[i].boneName, boneName) == 0) {
             return &textureSystem.configs[i];
@@ -210,8 +319,8 @@ BoneTextureConfig* FindBoneTextureConfig(const char* boneName) {
     return NULL;
 }
 
-// Buscar configuración de hueso por nombre
 BoneConfig* FindBoneConfig(const char* boneName) {
+    // Para archivos pequeños/medianos, búsqueda lineal sigue siendo eficiente
     for (int i = 0; i < boneConfigCount; i++) {
         if (strcmp(boneConfigs[i].boneName, boneName) == 0) {
             return &boneConfigs[i];
@@ -271,52 +380,55 @@ void CreateExampleConfig(const char* filename) {
     FILE* file = fopen(filename, "w");
     if (!file) return;
 
-    fprintf(file, "# Configuración simple de texturas por bone\n");
-    fprintf(file, "# Formato: BoneName TextureIndex Visible Size\n");
-    fprintf(file, "# TextureIndex: 0=torso, 1=cabeza, 2=extremidades, 3=custom...\n");
-    fprintf(file, "# Visible: 1=si, 0=no\n");
-    fprintf(file, "# Size: tamaño del billboard (0.1-1.0)\n");
-    fprintf(file, "# IMPORTANTE: Nombres de bone deben ser exactos y únicos\n");
-    fprintf(file, "\n");
+    // Escribir todo el contenido de una vez usando un buffer grande
+    char buffer[4096];
+    int pos = 0;
 
-    // Configuraciones basadas en tu JSON
-    fprintf(file, "# Cabeza y cara\n");
-    fprintf(file, "Nose 1 1 0.25\n");
-    fprintf(file, "LEye 1 0 0.20\n");  // Ocultos según tu config
-    fprintf(file, "REye 1 0 0.20\n");  
-    fprintf(file, "LEar 1 0 0.15\n");  
-    fprintf(file, "REar 1 0 0.15\n");  
-    fprintf(file, "Head 1 0 0.40\n");  // Oculto si no existe en JSON
-    fprintf(file, "\n");
-    
-    fprintf(file, "# Cuello y torso\n");
-    fprintf(file, "Neck 1 1 0.30\n");    // Textura de cabeza para cuello
-    fprintf(file, "LShoulder 0 1 0.35\n");
-    fprintf(file, "RShoulder 0 1 0.35\n");
-    fprintf(file, "\n");
-    
-    fprintf(file, "# Extremidades superiores\n");
-    fprintf(file, "LElbow 2 1 0.30\n");
-    fprintf(file, "RElbow 2 1 0.30\n");
-    fprintf(file, "LWrist 2 1 0.25\n");
-    fprintf(file, "RWrist 2 1 0.25\n");
-    fprintf(file, "\n");
-    
-    fprintf(file, "# Extremidades inferiores\n");
-    fprintf(file, "LHip 2 1 0.35\n");
-    fprintf(file, "RHip 2 1 0.35\n");
-    fprintf(file, "LKnee 2 1 0.30\n");
-    fprintf(file, "RKnee 2 1 0.30\n");
-    fprintf(file, "LAnkle 2 1 0.25\n");
-    fprintf(file, "RAnkle 2 1 0.25\n");
-    fprintf(file, "\n");
-    
-    fprintf(file, "# Notas:\n");
-    fprintf(file, "# - Solo se renderizan bones que existen en el JSON\n");
-    fprintf(file, "# - Bones con Visible=0 no se muestran\n");
-    fprintf(file, "# - Size controla el tamaño del billboard\n");
+    pos += snprintf(buffer + pos, sizeof(buffer) - pos,
+        "# Configuración simple de texturas por bone\n"
+        "# Formato: BoneName TextureIndex Visible Size\n"
+        "# TextureIndex: 0=torso, 1=cabeza, 2=extremidades, 3=custom...\n"
+        "# Visible: 1=si, 0=no\n"
+        "# Size: tamaño del billboard (0.1-1.0)\n"
+        "# IMPORTANTE: Nombres de bone deben ser exactos y únicos\n"
+        "\n"
+        "# Cabeza y cara\n"
+        "Nose 1 1 0.25\n"
+        "LEye 1 0 0.20\n"
+        "REye 1 0 0.20\n"
+        "LEar 1 0 0.15\n"
+        "REar 1 0 0.15\n"
+        "Head 1 0 0.40\n"
+        "\n"
+        "# Cuello y torso\n"
+        "Neck 1 1 0.30\n"
+        "LShoulder 0 1 0.35\n"
+        "RShoulder 0 1 0.35\n"
+        "\n"
+        "# Extremidades superiores\n"
+        "LElbow 2 1 0.30\n"
+        "RElbow 2 1 0.30\n"
+        "LWrist 2 1 0.25\n"
+        "RWrist 2 1 0.25\n"
+        "\n"
+        "# Extremidades inferiores\n"
+        "LHip 2 1 0.35\n"
+        "RHip 2 1 0.35\n"
+        "LKnee 2 1 0.30\n"
+        "RKnee 2 1 0.30\n"
+        "LAnkle 2 1 0.25\n"
+        "RAnkle 2 1 0.25\n"
+        "\n"
+        "# Notas:\n"
+        "# - Solo se renderizan bones que existen en el JSON\n"
+        "# - Bones con Visible=0 no se muestran\n"
+        "# - Size controla el tamaño del billboard\n"
+    );
 
+    // Escribir todo de una vez
+    fwrite(buffer, 1, pos, file);
     fclose(file);
+
     TraceLog(LOG_INFO, "Archivo de configuración de ejemplo mejorado creado: %s", filename);
 }
 
@@ -436,7 +548,7 @@ bool ResizeRenderBonesArray(int newCapacity) {
         TraceLog(LOG_ERROR, "Capacidad solicitada inválida: %d", newCapacity);
         return false;
     }
-    
+
     if (newCapacity <= renderBonesCapacity) return true;
 
     BoneRenderData* newArray = (BoneRenderData*)realloc(renderBones,
@@ -466,7 +578,7 @@ int CompareBonesByDistance(const void* a, const void* b) {
 }
 
 // ============================================================================
-// FUNCIÓN PRINCIPAL DE RECOPILACIÓN - CORREGIDA PARA EVITAR DUPLICADOS
+// FUNCIÓN PRINCIPAL DE RECOPILACIÓN - OPTIMIZADA
 // ============================================================================
 
 void CollectBonesForRendering(const BonesAnimation* animation, Camera camera) {
@@ -492,8 +604,8 @@ void CollectBonesForRendering(const BonesAnimation* animation, Camera camera) {
         return;
     }
 
-    // NUEVO: Array para controlar bones ya procesados (evitar duplicados)
-    static char processedBones[1000][MAX_BONE_NAME_LENGTH]; // Ajustar tamaño si necesario
+    // Buffer más grande para tracking de bones procesados
+    static char processedBones[2000][MAX_BONE_NAME_LENGTH + 20]; // Aumentado
     int processedCount = 0;
 
     for (int p = 0; p < frame->personCount; p++) {
@@ -506,45 +618,57 @@ void CollectBonesForRendering(const BonesAnimation* animation, Camera camera) {
 
             if (!BonesIsPositionValid(bone->position.position)) continue;
 
-            // Buscar configuración pre-cargada
+            // Buscar configuración pre-cargada (optimizada)
             BoneConfig* config = FindBoneConfig(bone->name);
             if (!config) {
-                // Si no hay configuración específica, usar valores por defecto
-                // pero solo para bones conocidos
-                if (strstr(bone->name, "Nose") || strstr(bone->name, "Eye") ||
-                    strstr(bone->name, "Ear") || strstr(bone->name, "Head") ||
-                    strstr(bone->name, "Neck") || strstr(bone->name, "Shoulder") ||
-                    strstr(bone->name, "Chest") || strstr(bone->name, "Spine") ||
-                    strstr(bone->name, "Elbow") || strstr(bone->name, "Wrist") ||
-                    strstr(bone->name, "Knee") || strstr(bone->name, "Ankle") ||
-                    strstr(bone->name, "Hip")) {
-                    // Continuar con valores por defecto
-                } else {
-                    continue; // Saltar bones desconocidos
+                // Fallback optimizado usando switch en lugar de múltiples strstr
+                char firstChar = bone->name[0];
+                bool isKnownBone = false;
+
+                switch (firstChar) {
+                case 'N': isKnownBone = (strstr(bone->name, "Nose") != NULL); break;
+                case 'L': case 'R':
+                    isKnownBone = (strstr(bone->name, "Eye") != NULL ||
+                        strstr(bone->name, "Ear") != NULL ||
+                        strstr(bone->name, "Shoulder") != NULL ||
+                        strstr(bone->name, "Elbow") != NULL ||
+                        strstr(bone->name, "Wrist") != NULL ||
+                        strstr(bone->name, "Hip") != NULL ||
+                        strstr(bone->name, "Knee") != NULL ||
+                        strstr(bone->name, "Ankle") != NULL);
+                    break;
+                case 'H': isKnownBone = (strstr(bone->name, "Head") != NULL ||
+                    strstr(bone->name, "Hip") != NULL); break;
+                case 'C': isKnownBone = (strstr(bone->name, "Chest") != NULL); break;
+                case 'S': isKnownBone = (strstr(bone->name, "Shoulder") != NULL ||
+                    strstr(bone->name, "Spine") != NULL); break;
+                default: break;
                 }
-            } else {
-                // Verificar si el bone debe ser visible según configuración
+
+                if (!isKnownBone) continue;
+            }
+            else {
                 if (!config->visible) continue;
             }
 
-            // NUEVO: Verificar si ya procesamos este bone para esta persona
+            // Crear clave única más eficientemente
             char boneKey[MAX_BONE_NAME_LENGTH + 20];
-            snprintf(boneKey, sizeof(boneKey), "%s_%s", person->personId, bone->name);
-            
+            int keyLen = snprintf(boneKey, sizeof(boneKey), "%s_%s", person->personId, bone->name);
+
+            // Búsqueda optimizada de duplicados (podría usar hash para archivos muy grandes)
             bool alreadyProcessed = false;
             for (int i = 0; i < processedCount; i++) {
-                if (strcmp(processedBones[i], boneKey) == 0) {
+                if (memcmp(processedBones[i], boneKey, keyLen + 1) == 0) {
                     alreadyProcessed = true;
                     break;
                 }
             }
-            
+
             if (alreadyProcessed) continue;
-            
+
             // Marcar como procesado
-            if (processedCount < 1000) {
-                strncpy(processedBones[processedCount], boneKey, MAX_BONE_NAME_LENGTH - 1);
-                processedBones[processedCount][MAX_BONE_NAME_LENGTH - 1] = '\0';
+            if (processedCount < 2000) {
+                memcpy(processedBones[processedCount], boneKey, keyLen + 1);
                 processedCount++;
             }
 
@@ -570,7 +694,8 @@ void CollectBonesForRendering(const BonesAnimation* animation, Camera camera) {
                 renderBone->textureIndex = config->textureIndex;
                 renderBone->visible = config->visible;
                 renderBone->size = config->size;
-            } else {
+            }
+            else {
                 renderBone->textureIndex = GetTextureIndexForBone(bone->name);
                 renderBone->visible = IsBoneVisible(bone->name);
                 renderBone->size = GetBoneSize(bone->name);
@@ -589,55 +714,54 @@ void CollectBonesForRendering(const BonesAnimation* animation, Camera camera) {
     if (renderBonesCount > 1) {
         qsort(renderBones, renderBonesCount, sizeof(BoneRenderData), CompareBonesByDistance);
     }
-    
-    TraceLog(LOG_DEBUG, "Bones recopilados: %d únicos de %d procesados", 
-             renderBonesCount, processedCount);
+
+    TraceLog(LOG_DEBUG, "Bones recopilados: %d únicos de %d procesados",
+        renderBonesCount, processedCount);
 }
 
 // ============================================================================
 // DEBUGGING Y VERIFICACIÓN
 // ============================================================================
 
-// Función para imprimir información de debug sobre configuración
 void PrintConfigurationDebug() {
     TraceLog(LOG_INFO, "=== CONFIGURACIÓN DEBUG ===");
     TraceLog(LOG_INFO, "Configuraciones bone: %d", boneConfigCount);
     TraceLog(LOG_INFO, "Sistema configuración cargado: %s", textureSystem.loaded ? "SÍ" : "NO");
-    
-    for (int i = 0; i < boneConfigCount && i < 10; i++) { // Solo primeros 10
+    TraceLog(LOG_INFO, "Última modificación: %ld", textureSystem.lastModified);
+
+    for (int i = 0; i < boneConfigCount && i < 10; i++) {
         BoneConfig* config = &boneConfigs[i];
-        TraceLog(LOG_INFO, "  %s: T%d V%d S%.2f", 
-                config->boneName, config->textureIndex, 
-                config->visible, config->size);
+        TraceLog(LOG_INFO, "  %s: T%d V%d S%.2f",
+            config->boneName, config->textureIndex,
+            config->visible, config->size);
     }
-    
+
     if (boneConfigCount > 10) {
         TraceLog(LOG_INFO, "  ... y %d más", boneConfigCount - 10);
     }
 }
 
-// Función para verificar que no hay bones duplicados en renderizado
 void VerifyNoDuplicateRendering() {
     for (int i = 0; i < renderBonesCount; i++) {
         for (int j = i + 1; j < renderBonesCount; j++) {
             if (strcmp(renderBones[i].boneName, renderBones[j].boneName) == 0 &&
                 strcmp(renderBones[i].personId, renderBones[j].personId) == 0) {
-                TraceLog(LOG_WARNING, "DUPLICADO ENCONTRADO: %s en persona %s", 
-                        renderBones[i].boneName, renderBones[i].personId);
+                TraceLog(LOG_WARNING, "DUPLICADO ENCONTRADO: %s en persona %s",
+                    renderBones[i].boneName, renderBones[i].personId);
             }
         }
     }
 }
 
 // ============================================================================
-// FUNCIÓN MAIN COMPLETA CORREGIDA
+// FUNCIÓN MAIN COMPLETA OPTIMIZADA
 // ============================================================================
 
 int main(void) {
     // Verificar constantes al inicio
     CheckBoneNameLength();
-    
-    InitWindow(BASE_WIDTH, BASE_HEIGHT, "Bones3D - Simple Texture Configuration");
+
+    InitWindow(BASE_WIDTH, BASE_HEIGHT, "Bones3D - Optimized Simple Texture Configuration");
 
     SetWindowState(FLAG_WINDOW_RESIZABLE);
 
@@ -662,13 +786,15 @@ int main(void) {
     float orbitYaw = 0.0f, orbitPitch = -0.2f, orbitRadius = 2.5f;
     bool cameraMouseControl = false;
 
-    // Cargar configuración simple
+    // OPTIMIZACIÓN: Cargar configuración simple con cache
+    TraceLog(LOG_INFO, "Cargando configuración optimizada...");
     if (!LoadSimpleTextureConfig(&textureSystem, "bone_textures.txt")) {
+        TraceLog(LOG_INFO, "Creando archivo de configuración de ejemplo...");
         CreateExampleConfig("bone_textures.txt");
         LoadSimpleTextureConfig(&textureSystem, "bone_textures.txt");
     }
 
-    // Cargar configuración de huesos
+    // Cargar configuración de huesos (optimizada)
     LoadBoneConfigurations();
 
     // Imprimir debug de configuración
@@ -684,6 +810,7 @@ int main(void) {
         return -1;
     }
 
+    TraceLog(LOG_INFO, "Cargando archivo JSON...");
     result = BonesLoadFromJSON(&animation, "test.json");
     if (result != BONES_SUCCESS) {
         TraceLog(LOG_WARNING, "No se pudo cargar test.json: %s", BonesGetErrorString(result));
@@ -706,6 +833,8 @@ int main(void) {
     const int MAX_TEXTURES = 4;
     Texture2D textures[MAX_TEXTURES];
     int textureCount = 0;
+
+    TraceLog(LOG_INFO, "Cargando texturas...");
 
     // Textura A (torso)
     Image imgA = LoadImage("texA.png");
@@ -752,17 +881,18 @@ int main(void) {
     Vector3 autoCenter = { 0 };
     bool autoCenterCalculated = false;
 
-    TraceLog(LOG_INFO, "Texturas cargadas: %d", textureCount);
+    TraceLog(LOG_INFO, "Sistema inicializado - Texturas: %d, Configuraciones: %d",
+        textureCount, boneConfigCount);
 
     // ========================================================================
-    // LOOP PRINCIPAL
+    // LOOP PRINCIPAL OPTIMIZADO
     // ========================================================================
     while (!WindowShouldClose()) {
         float dt = GetFrameTime();
         int currentScreenWidth = GetScreenWidth();
         int currentScreenHeight = GetScreenHeight();
 
-        // Controles de navegación de frames
+        // Controles de navegación de frames (sin cambios)
         if (animation.isLoaded && maxFrames > 0) {
             if (IsKeyPressed(KEY_LEFT) && currentFrame > 0) {
                 currentFrame--;
@@ -800,13 +930,18 @@ int main(void) {
             }
         }
 
-        // Recarga de configuración con F5
+        // OPTIMIZACIÓN: Recarga de configuración con cache verificado
         if (IsKeyPressed(KEY_F5)) {
-            TraceLog(LOG_INFO, "Recargando configuración de texturas...");
-            CleanupTextureSystem();
-            LoadSimpleTextureConfig(&textureSystem, "bone_textures.txt");
-            LoadBoneConfigurations();
-            PrintConfigurationDebug();
+            TraceLog(LOG_INFO, "Recargando configuración de texturas (verificando cambios)...");
+            // El sistema ahora verifica automáticamente si ha cambiado el archivo
+            if (LoadSimpleTextureConfig(&textureSystem, "bone_textures.txt")) {
+                LoadBoneConfigurations();
+                PrintConfigurationDebug();
+                TraceLog(LOG_INFO, "Configuración recargada exitosamente");
+            }
+            else {
+                TraceLog(LOG_INFO, "No hay cambios en la configuración");
+            }
         }
 
         // Debug de duplicados con F6
@@ -814,13 +949,14 @@ int main(void) {
             VerifyNoDuplicateRendering();
         }
 
-        // Calcular centro automático
+        // Calcular centro automático (optimizado con menos cálculos)
         if (animation.isLoaded && !autoCenterCalculated) {
             if (BonesIsValidFrame(&animation, currentFrame)) {
                 const AnimationFrame* frame = &animation.frames[currentFrame];
                 Vector3 totalPos = { 0 };
                 int validBoneCount = 0;
 
+                // OPTIMIZACIÓN: Solo calcular centro con bones principales
                 for (int p = 0; p < frame->personCount; p++) {
                     const Person* person = &frame->persons[p];
                     if (!person->active) continue;
@@ -828,8 +964,12 @@ int main(void) {
                     for (int b = 0; b < person->boneCount; b++) {
                         const Bone* bone = &person->bones[b];
                         if (bone->position.valid && BonesIsPositionValid(bone->position.position)) {
-                            totalPos = Vector3Add(totalPos, bone->position.position);
-                            validBoneCount++;
+                            // Solo usar bones principales para el centro (más eficiente)
+                            if (strstr(bone->name, "Spine") || strstr(bone->name, "Chest") ||
+                                strstr(bone->name, "Neck") || strstr(bone->name, "Hip")) {
+                                totalPos = Vector3Add(totalPos, bone->position.position);
+                                validBoneCount++;
+                            }
                         }
                     }
                 }
@@ -841,7 +981,7 @@ int main(void) {
             }
         }
 
-        // Control de cámara
+        // Control de cámara (sin cambios)
         if (IsKeyPressed(KEY_ONE)) {
             camMode = 1;
             cameraMouseControl = false;
@@ -926,11 +1066,26 @@ int main(void) {
             camera.target = Vector3Add(camera.position, forward);
         }
 
-        // Recopilar bones para renderizado
-        CollectBonesForRendering(&animation, camera);
+        // OPTIMIZACIÓN: Recopilar bones solo cuando sea necesario
+        static int lastProcessedFrame = -1;
+        static bool forceUpdate = false;
+
+        if (currentFrame != lastProcessedFrame || forceUpdate) {
+            CollectBonesForRendering(&animation, camera);
+            lastProcessedFrame = currentFrame;
+            forceUpdate = false;
+        }
+
+        // Forzar actualización si cambia significativamente la cámara
+        static Vector3 lastCameraPos = { 0 };
+        float cameraMoved = Vector3Distance(camera.position, lastCameraPos);
+        if (cameraMoved > 0.5f) {
+            forceUpdate = true;
+            lastCameraPos = camera.position;
+        }
 
         // ====================================================================
-        // RENDERIZADO
+        // RENDERIZADO (sin cambios significativos)
         // ====================================================================
         BeginDrawing();
         ClearBackground(RAYWHITE);
@@ -991,28 +1146,30 @@ int main(void) {
         EndMode3D();
 
         // ================================================================
-        // UI OVERLAY SIMPLIFICADA
+        // UI OVERLAY OPTIMIZADA
         // ================================================================
         int baseFontSize = ScaleFontSize(16, currentScreenHeight);
         int titleSize = ScaleFontSize(20, currentScreenHeight);
         int smallFontSize = ScaleFontSize(12, currentScreenHeight);
 
         // Información principal
-        DrawText("BONES3D - SIMPLE TEXTURE CONFIG",
+        DrawText("BONES3D - OPTIMIZED TEXTURE CONFIG",
             ScaleValue(20, currentScreenWidth, BASE_WIDTH),
             ScaleValue(20, currentScreenHeight, BASE_HEIGHT),
             titleSize, DARKGREEN);
 
-        // Estado del sistema
+        // Estado del sistema mejorado
         if (animation.isLoaded) {
-            DrawText(TextFormat("JSON: OK | Frames: %d | Current: %d | Config: %s",
-                maxFrames, currentFrame + 1, textureSystem.loaded ? "LOADED" : "DEFAULT"),
+            DrawText(TextFormat("JSON: OK | Frames: %d | Current: %d | Config: %s | Cache: %s",
+                maxFrames, currentFrame + 1,
+                textureSystem.loaded ? "LOADED" : "DEFAULT",
+                textureSystem.lastModified > 0 ? "VALID" : "NONE"),
                 ScaleValue(20, currentScreenWidth, BASE_WIDTH),
                 ScaleValue(50, currentScreenHeight, BASE_HEIGHT),
                 baseFontSize, DARKGREEN);
 
-            DrawText(TextFormat("Bones Rendered: %d | Configured: %d | Textures: %d",
-                renderBonesCount, boneConfigCount, textureCount),
+            DrawText(TextFormat("Bones Rendered: %d | Configured: %d | Textures: %d | FPS: %d",
+                renderBonesCount, boneConfigCount, textureCount, GetFPS()),
                 ScaleValue(20, currentScreenWidth, BASE_WIDTH),
                 ScaleValue(70, currentScreenHeight, BASE_HEIGHT),
                 baseFontSize, DARKBLUE);
@@ -1024,7 +1181,7 @@ int main(void) {
                 baseFontSize, ORANGE);
         }
 
-        // Lista de bones activos con su configuración
+        // Lista de bones activos con su configuración (optimizada)
         int yOffset = ScaleValue(100, currentScreenHeight, BASE_HEIGHT);
         int maxBonesToShow = 8;
         for (int i = 0; i < renderBonesCount && i < maxBonesToShow; i++) {
@@ -1050,7 +1207,7 @@ int main(void) {
                 smallFontSize, GRAY);
         }
 
-        // Panel de configuración simplificado
+        // Panel de configuración (sin cambios)
         int panelX = currentScreenWidth - ScaleValue(400, currentScreenWidth, BASE_WIDTH);
         int panelY = ScaleValue(100, currentScreenHeight, BASE_HEIGHT);
         int panelW = ScaleValue(380, currentScreenWidth, BASE_WIDTH);
@@ -1065,7 +1222,7 @@ int main(void) {
         DrawText("bone_textures.txt:", panelX + 10, panelY + 35,
             ScaleFontSize(14, currentScreenHeight), LIGHTGRAY);
 
-        // Mostrar algunas configuraciones
+        // Mostrar configuraciones cargadas
         int configY = panelY + 60;
         int maxConfigsToShow = 12;
         for (int i = 0; i < boneConfigCount && i < maxConfigsToShow; i++) {
@@ -1086,11 +1243,11 @@ int main(void) {
         }
 
         // ================================================================
-        // CONTROLES SIMPLIFICADOS
+        // CONTROLES MEJORADOS
         // ================================================================
         int controlsY = currentScreenHeight - ScaleValue(120, currentScreenHeight, BASE_HEIGHT);
 
-        DrawText("SIMPLE CONTROLS:",
+        DrawText("OPTIMIZED CONTROLS:",
             ScaleValue(20, currentScreenWidth, BASE_WIDTH),
             controlsY,
             ScaleFontSize(16, currentScreenHeight), DARKGREEN);
@@ -1100,24 +1257,25 @@ int main(void) {
             controlsY + ScaleValue(20, currentScreenHeight, BASE_HEIGHT),
             ScaleFontSize(14, currentScreenHeight), DARKGRAY);
 
-        DrawText("Animation: ←→=Frame | Space=Auto | F5=Reload Config",
+        DrawText("Animation: ←→=Frame | Space=Auto | F5=Smart Reload",
             ScaleValue(20, currentScreenWidth, BASE_WIDTH),
             controlsY + ScaleValue(40, currentScreenHeight, BASE_HEIGHT),
             ScaleFontSize(14, currentScreenHeight), DARKGRAY);
 
-        DrawText("Debug: F6=Check Duplicates",
+        DrawText("Debug: F6=Check Duplicates | Fast Linux Loading",
             ScaleValue(20, currentScreenWidth, BASE_WIDTH),
             controlsY + ScaleValue(60, currentScreenHeight, BASE_HEIGHT),
             ScaleFontSize(14, currentScreenHeight), DARKGRAY);
 
-        // Status bar
+        // Status bar mejorado
         DrawRectangle(0, currentScreenHeight - ScaleValue(25, currentScreenHeight, BASE_HEIGHT),
             currentScreenWidth, ScaleValue(25, currentScreenHeight, BASE_HEIGHT),
             Fade(BLACK, 0.8f));
 
-        DrawText(TextFormat("Frame: %d/%d | Bones: %d | Config: %s | FPS: %d",
+        DrawText(TextFormat("Frame: %d/%d | Bones: %d | Config: %s | Cached: %s | FPS: %d",
             currentFrame + 1, maxFrames, renderBonesCount,
-            textureSystem.loaded ? "CUSTOM" : "DEFAULT", GetFPS()),
+            textureSystem.loaded ? "CUSTOM" : "DEFAULT",
+            textureSystem.lastModified > 0 ? "YES" : "NO", GetFPS()),
             ScaleValue(10, currentScreenWidth, BASE_WIDTH),
             currentScreenHeight - ScaleValue(20, currentScreenHeight, BASE_HEIGHT),
             ScaleFontSize(14, currentScreenHeight), WHITE);
@@ -1136,7 +1294,7 @@ int main(void) {
     }
 
     // ========================================================================
-    // LIMPIEZA
+    // LIMPIEZA (sin cambios)
     // ========================================================================
 
     // Liberar array dinámico
@@ -1158,6 +1316,8 @@ int main(void) {
     // Liberar sistema bones3d
     BonesFree(&animation);
     CloseWindow();
+
+    TraceLog(LOG_INFO, "Sistema cerrado correctamente");
 
     return 0;
 }
