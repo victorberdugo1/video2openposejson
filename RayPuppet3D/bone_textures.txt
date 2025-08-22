@@ -1,0 +1,25 @@
+# Configuración simple de texturas por bone
+# Formato: BoneName TextureIndex Visible Size
+# TextureIndex: 0=torso, 1=cabeza, 2=extremidades, 3=custom...
+# Visible: 1=si, 0=no
+# Size: tamaño del billboard (0.1-1.0)
+
+Nose 1 1 0.25
+LEye 1 0 0.20
+REye 1 0 0.20
+LEar 1 0 0.15
+REar 1 0 0.15
+Head 1 0 0.40
+Neck 1 1 0.30
+LShoulder 0 1 0.35
+RShoulder 0 1 0.35
+LElbow 2 1 0.30
+RElbow 2 1 0.30
+LWrist 2 1 0.25
+RWrist 2 1 0.25
+LHip 2 1 0.35
+RHip 2 1 0.35
+LKnee 2 1 0.30
+RKnee 2 1 0.30
+LAnkle 2 1 0.25
+RAnkle 2 1 0.25
