@@ -13,10 +13,13 @@
 #define BASE_WIDTH 1920
 #define BASE_HEIGHT 1080
 
+// Longitud máxima para paths de archivo
+#define MAX_FILE_PATH_LENGTH 256
+
 // Configuración simple por bone
 typedef struct {
     char boneName[MAX_BONE_NAME_LENGTH];
-    int textureIndex;
+    char texturePath[MAX_FILE_PATH_LENGTH];
     bool visible;
     float size;
 } BoneTextureConfig;
@@ -33,7 +36,7 @@ typedef struct {
 // Estructura para configuración permanente de huesos
 typedef struct {
     char boneName[MAX_BONE_NAME_LENGTH];
-    int textureIndex;
+    char texturePath[MAX_FILE_PATH_LENGTH];
     bool visible;
     float size;
     bool valid;
@@ -48,7 +51,7 @@ typedef struct {
     float distance;
     char boneName[MAX_BONE_NAME_LENGTH];
     char personId[16];
-    int textureIndex;
+    char texturePath[MAX_FILE_PATH_LENGTH];
     bool visible;
     float size;
     bool valid;
@@ -191,7 +194,7 @@ bool ParseConfigFromBuffer(SimpleTextureSystem* system, const char* buffer) {
     // Parsear líneas
     const char* ptr = buffer;
     const char* lineStart = ptr;
-    char lineBuffer[256];  // Buffer temporal para línea
+    char lineBuffer[512];  // Buffer temporal para línea (más grande para paths)
 
     while (*ptr && system->configCount < system->configCapacity) {
         if (*ptr == '\n') {
@@ -199,23 +202,28 @@ bool ParseConfigFromBuffer(SimpleTextureSystem* system, const char* buffer) {
             int lineLen = ptr - lineStart;
 
             // Verificar si la línea es válida
-            if (lineLen > 5 && lineLen < 255 && *lineStart != '#' && *lineStart != '\n') {
+            if (lineLen > 5 && lineLen < 511 && *lineStart != '#' && *lineStart != '\n') {
                 // Copiar línea a buffer temporal
                 memcpy(lineBuffer, lineStart, lineLen);
                 lineBuffer[lineLen] = '\0';
 
-                // Parsear campos
+                // Parsear campos (ahora con path)
                 char boneName[MAX_BONE_NAME_LENGTH];
-                int textureIndex, visible;
+                char texturePath[MAX_FILE_PATH_LENGTH];
+                int visible;
                 float size;
 
-                int fields = sscanf(lineBuffer, "%31s %d %d %f", boneName, &textureIndex, &visible, &size);
+                int fields = sscanf(lineBuffer, "%31s %255s %d %f", boneName, texturePath, &visible, &size);
 
                 if (fields == 4) {
                     BoneTextureConfig* config = &system->configs[system->configCount];
                     strncpy(config->boneName, boneName, MAX_BONE_NAME_LENGTH - 1);
                     config->boneName[MAX_BONE_NAME_LENGTH - 1] = '\0';
-                    config->textureIndex = textureIndex;
+
+                    // Copiar path en lugar de índice
+                    strncpy(config->texturePath, texturePath, MAX_FILE_PATH_LENGTH - 1);
+                    config->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
+
                     config->visible = (visible != 0);
                     config->size = size;
                     system->configCount++;
@@ -274,7 +282,7 @@ bool LoadSimpleTextureConfig(SimpleTextureSystem* system, const char* filename) 
     return success;
 }
 
-// Cargar configuración de huesos una vez al inicio - OPTIMIZADO
+// Cargar configuración de huesos una vez al inicio
 void LoadBoneConfigurations() {
     if (boneConfigs) {
         free(boneConfigs);
@@ -299,24 +307,17 @@ void LoadBoneConfigurations() {
         // Copia directa de memoria para la estructura
         strncpy(dst->boneName, src->boneName, MAX_BONE_NAME_LENGTH - 1);
         dst->boneName[MAX_BONE_NAME_LENGTH - 1] = '\0';
-        dst->textureIndex = src->textureIndex;
+
+        // Copiar path en lugar de índice
+        strncpy(dst->texturePath, src->texturePath, MAX_FILE_PATH_LENGTH - 1);
+        dst->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
+
         dst->visible = src->visible;
         dst->size = src->size;
         dst->valid = true;
     }
 
     TraceLog(LOG_INFO, "Configuración de huesos cargada: %d huesos", boneConfigCount);
-}
-
-// Búsqueda optimizada con hash simple (opcional para archivos muy grandes)
-BoneTextureConfig* FindBoneTextureConfig(const char* boneName) {
-    // Para archivos pequeños/medianos, búsqueda lineal sigue siendo eficiente
-    for (int i = 0; i < textureSystem.configCount; i++) {
-        if (strcmp(textureSystem.configs[i].boneName, boneName) == 0) {
-            return &textureSystem.configs[i];
-        }
-    }
-    return NULL;
 }
 
 BoneConfig* FindBoneConfig(const char* boneName) {
@@ -329,32 +330,32 @@ BoneConfig* FindBoneConfig(const char* boneName) {
     return NULL;
 }
 
-// Obtener índice de textura para un bone (con fallback inteligente)
-int GetTextureIndexForBone(const char* boneName) {
+// Obtener path de textura para un bone (con fallback inteligente)
+const char* GetTexturePathForBone(const char* boneName) {
     // Buscar configuración específica
     BoneConfig* config = FindBoneConfig(boneName);
     if (config) {
-        return config->textureIndex;
+        return config->texturePath;
     }
 
     // Fallback por patrón de nombre (mantener tu lógica original)
     if (strstr(boneName, "Nose") || strstr(boneName, "Eye") ||
         strstr(boneName, "Ear") || strstr(boneName, "Head")) {
-        return 1; // textura de cabeza
+        return "texA.png"; // textura de cabeza
     }
 
     if (strstr(boneName, "Neck") || strstr(boneName, "Shoulder") ||
         strstr(boneName, "Chest") || strstr(boneName, "Spine")) {
-        return 0; // textura de torso
+        return "texA.png"; // textura de torso
     }
 
     if (strstr(boneName, "Elbow") || strstr(boneName, "Wrist") ||
         strstr(boneName, "Knee") || strstr(boneName, "Ankle") ||
         strstr(boneName, "Hip")) {
-        return 2; // textura de extremidades
+        return "texB.png"; // textura de extremidades
     }
 
-    return 0; // por defecto
+    return "texC.png"; // por defecto
 }
 
 // Verificar si un bone debe ser visible
@@ -375,62 +376,6 @@ float GetBoneSize(const char* boneName) {
     return 0.35f; // tamaño por defecto
 }
 
-// Crear archivo de configuración de ejemplo - MEJORADO
-void CreateExampleConfig(const char* filename) {
-    FILE* file = fopen(filename, "w");
-    if (!file) return;
-
-    // Escribir todo el contenido de una vez usando un buffer grande
-    char buffer[4096];
-    int pos = 0;
-
-    pos += snprintf(buffer + pos, sizeof(buffer) - pos,
-        "# Configuración simple de texturas por bone\n"
-        "# Formato: BoneName TextureIndex Visible Size\n"
-        "# TextureIndex: 0=torso, 1=cabeza, 2=extremidades, 3=custom...\n"
-        "# Visible: 1=si, 0=no\n"
-        "# Size: tamaño del billboard (0.1-1.0)\n"
-        "# IMPORTANTE: Nombres de bone deben ser exactos y únicos\n"
-        "\n"
-        "# Cabeza y cara\n"
-        "Nose 1 1 0.25\n"
-        "LEye 1 0 0.20\n"
-        "REye 1 0 0.20\n"
-        "LEar 1 0 0.15\n"
-        "REar 1 0 0.15\n"
-        "Head 1 0 0.40\n"
-        "\n"
-        "# Cuello y torso\n"
-        "Neck 1 1 0.30\n"
-        "LShoulder 0 1 0.35\n"
-        "RShoulder 0 1 0.35\n"
-        "\n"
-        "# Extremidades superiores\n"
-        "LElbow 2 1 0.30\n"
-        "RElbow 2 1 0.30\n"
-        "LWrist 2 1 0.25\n"
-        "RWrist 2 1 0.25\n"
-        "\n"
-        "# Extremidades inferiores\n"
-        "LHip 2 1 0.35\n"
-        "RHip 2 1 0.35\n"
-        "LKnee 2 1 0.30\n"
-        "RKnee 2 1 0.30\n"
-        "LAnkle 2 1 0.25\n"
-        "RAnkle 2 1 0.25\n"
-        "\n"
-        "# Notas:\n"
-        "# - Solo se renderizan bones que existen en el JSON\n"
-        "# - Bones con Visible=0 no se muestran\n"
-        "# - Size controla el tamaño del billboard\n"
-    );
-
-    // Escribir todo de una vez
-    fwrite(buffer, 1, pos, file);
-    fclose(file);
-
-    TraceLog(LOG_INFO, "Archivo de configuración de ejemplo mejorado creado: %s", filename);
-}
 
 // ============================================================================
 // FUNCIONES AUXILIARES (mantener las originales)
@@ -691,12 +636,15 @@ void CollectBonesForRendering(const BonesAnimation* animation, Camera camera) {
 
             // Usar configuración si existe, sino valores por defecto
             if (config) {
-                renderBone->textureIndex = config->textureIndex;
+                strncpy(renderBone->texturePath, config->texturePath, MAX_FILE_PATH_LENGTH - 1);
+                renderBone->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
                 renderBone->visible = config->visible;
                 renderBone->size = config->size;
             }
             else {
-                renderBone->textureIndex = GetTextureIndexForBone(bone->name);
+                const char* defaultPath = GetTexturePathForBone(bone->name);
+                strncpy(renderBone->texturePath, defaultPath, MAX_FILE_PATH_LENGTH - 1);
+                renderBone->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
                 renderBone->visible = IsBoneVisible(bone->name);
                 renderBone->size = GetBoneSize(bone->name);
             }
@@ -731,9 +679,9 @@ void PrintConfigurationDebug() {
 
     for (int i = 0; i < boneConfigCount && i < 10; i++) {
         BoneConfig* config = &boneConfigs[i];
-        TraceLog(LOG_INFO, "  %s: T%d V%d S%.2f",
-            config->boneName, config->textureIndex,
-            config->visible, config->size);
+        TraceLog(LOG_INFO, "  %s: %s %s %.2f",
+            config->boneName, config->texturePath,
+            config->visible ? "V" : "H", config->size);
     }
 
     if (boneConfigCount > 10) {
@@ -790,7 +738,6 @@ int main(void) {
     TraceLog(LOG_INFO, "Cargando configuración optimizada...");
     if (!LoadSimpleTextureConfig(&textureSystem, "bone_textures.txt")) {
         TraceLog(LOG_INFO, "Creando archivo de configuración de ejemplo...");
-        CreateExampleConfig("bone_textures.txt");
         LoadSimpleTextureConfig(&textureSystem, "bone_textures.txt");
     }
 
@@ -829,45 +776,46 @@ int main(void) {
     config.enableDepthSorting = true;
     BonesSetRenderConfig(&config);
 
-    // Cargar texturas
-    const int MAX_TEXTURES = 4;
+    // Sistema de gestión de texturas dinámico
+#define MAX_TEXTURES 10
     Texture2D textures[MAX_TEXTURES];
+    char texturePaths[MAX_TEXTURES][MAX_FILE_PATH_LENGTH];
     int textureCount = 0;
 
-    TraceLog(LOG_INFO, "Cargando texturas...");
+    // Función para cargar/obtener textura por path
+    int GetTextureIndex(const char* path) {
+        // Buscar textura ya cargada
+        for (int i = 0; i < textureCount; i++) {
+            if (strcmp(texturePaths[i], path) == 0) {
+                return i;
+            }
+        }
 
-    // Textura A (torso)
-    Image imgA = LoadImage("texA.png");
-    if (imgA.data == NULL) {
-        imgA = GenImageColor(1024, 1024, CLITERAL(Color){60, 120, 220, 255});
-        ImageDrawText(&imgA, "TORSO", 8, 8, 128, WHITE);
-    }
-    textures[0] = LoadTextureFromImage(imgA);
-    UnloadImage(imgA);
-    SetTextureFilter(textures[0], TEXTURE_FILTER_POINT);
-    textureCount++;
+        // Límite de texturas alcanzado
+        if (textureCount >= MAX_TEXTURES) {
+            TraceLog(LOG_WARNING, "Límite de texturas alcanzado, no se puede cargar: %s", path);
+            return 0; // Fallback a la primera textura
+        }
 
-    // Textura B (cabeza)
-    Image imgB = LoadImage("texB.png");
-    if (imgB.data == NULL) {
-        imgB = GenImageColor(1024, 1024, CLITERAL(Color){120, 200, 80, 255});
-        ImageDrawText(&imgB, "HEAD", 8, 8, 128, BLACK);
-    }
-    textures[1] = LoadTextureFromImage(imgB);
-    UnloadImage(imgB);
-    SetTextureFilter(textures[1], TEXTURE_FILTER_POINT);
-    textureCount++;
+        // Cargar nueva textura
+        Image img = LoadImage(path);
+        if (img.data == NULL) {
+            // Crear textura por defecto si no existe
+            img = GenImageColor(1024, 1024, CLITERAL(Color){60, 120, 220, 255});
+            ImageDrawText(&img, path, 8, 8, 128, WHITE);
+            TraceLog(LOG_WARNING, "Textura no encontrada: %s, creando por defecto", path);
+        }
 
-    // Textura C (extremidades)
-    Image imgC = LoadImage("texC.png");
-    if (imgC.data == NULL) {
-        imgC = GenImageColor(1024, 1024, CLITERAL(Color){220, 80, 120, 255});
-        ImageDrawText(&imgC, "LIMBS", 8, 8, 128, WHITE);
+        textures[textureCount] = LoadTextureFromImage(img);
+        UnloadImage(img);
+        SetTextureFilter(textures[textureCount], TEXTURE_FILTER_POINT);
+
+        strncpy(texturePaths[textureCount], path, MAX_FILE_PATH_LENGTH - 1);
+        texturePaths[textureCount][MAX_FILE_PATH_LENGTH - 1] = '\0';
+
+        TraceLog(LOG_INFO, "Textura cargada: %s (ID: %d)", path, textureCount);
+        return textureCount++;
     }
-    textures[2] = LoadTextureFromImage(imgC);
-    UnloadImage(imgC);
-    SetTextureFilter(textures[2], TEXTURE_FILTER_POINT);
-    textureCount++;
 
     const int physCols = 8, physRows = 8;
 
@@ -1085,7 +1033,7 @@ int main(void) {
         }
 
         // ====================================================================
-        // RENDERIZADO (sin cambios significativos)
+        // RENDERIZADO (modificado para usar paths)
         // ====================================================================
         BeginDrawing();
         ClearBackground(RAYWHITE);
@@ -1106,9 +1054,8 @@ int main(void) {
                 const BoneRenderData* bone = &renderBones[i];
                 if (!bone->valid || !bone->visible) continue;
 
-                // Seleccionar textura
-                int texIndex = bone->textureIndex;
-                if (texIndex >= textureCount) texIndex = 0;
+                // Obtener índice de textura basado en el path
+                int texIndex = GetTextureIndex(bone->texturePath);
                 Texture2D currentTex = textures[texIndex];
 
                 // Calcular tamaño del mundo
@@ -1188,13 +1135,11 @@ int main(void) {
             const BoneRenderData* bone = &renderBones[i];
             BoneConfig* config = FindBoneConfig(bone->boneName);
 
-            Color boneColor = (bone->textureIndex == 0) ? RED :
-                (bone->textureIndex == 1) ? BLUE :
-                (bone->textureIndex == 2) ? PURPLE : GREEN;
+            Color boneColor = WHITE; // Color por defecto
 
-            const char* configStr = config ? "CFG" : "DEF";
-            DrawText(TextFormat("%s[%s]: T%d S%.2f %s",
-                bone->boneName, bone->personId, bone->textureIndex, bone->size, configStr),
+            DrawText(TextFormat("%s[%s]: %s S%.2f %s",
+                bone->boneName, bone->personId, bone->texturePath, bone->size,
+                config ? "CFG" : "DEF"),
                 ScaleValue(20, currentScreenWidth, BASE_WIDTH),
                 yOffset + i * ScaleValue(18, currentScreenHeight, BASE_HEIGHT),
                 smallFontSize, boneColor);
@@ -1207,7 +1152,7 @@ int main(void) {
                 smallFontSize, GRAY);
         }
 
-        // Panel de configuración (sin cambios)
+        // Panel de configuración (modificado para paths)
         int panelX = currentScreenWidth - ScaleValue(400, currentScreenWidth, BASE_WIDTH);
         int panelY = ScaleValue(100, currentScreenHeight, BASE_HEIGHT);
         int panelW = ScaleValue(380, currentScreenWidth, BASE_WIDTH);
@@ -1229,8 +1174,8 @@ int main(void) {
             BoneConfig* config = &boneConfigs[i];
             Color textColor = config->visible ? WHITE : GRAY;
 
-            DrawText(TextFormat("%s T%d %s %.2f",
-                config->boneName, config->textureIndex,
+            DrawText(TextFormat("%s %s %s %.2f",
+                config->boneName, config->texturePath,
                 config->visible ? "V" : "H", config->size),
                 panelX + 10, configY + i * 16,
                 ScaleFontSize(12, currentScreenHeight), textColor);
