@@ -22,13 +22,13 @@ ifeq ($(OS),Windows_NT)
 	# Windows (MSYS2 / MinGW)
 	CC = gcc
 	# No AddressSanitizer on MinGW; keep -g for debug
-	CFLAGS = -Wall -Wextra -Werror -I$(INC_DIR) -I$(RAYLIB_DIR)/src -g
+	CFLAGS = -Wall -Wextra -Werror -I$(INC_DIR) -I$(RAYLIB_DIR)/src -g -MMD -MP
 	# Windows linking (Win32 libs)
 	LDFLAGS = -L. -lraylib -lopengl32 -lgdi32 -lwinmm -lole32 -lws2_32 -lm
 	RAYLIB_MAKE = $(MAKE)
 else
 	CC = cc
-	CFLAGS = -Wall -Wextra -Werror -I$(INC_DIR) -I$(RAYLIB_DIR)/src -g -fsanitize=address -fsanitize=leak
+	CFLAGS = -Wall -Wextra -Werror -I$(INC_DIR) -I$(RAYLIB_DIR)/src -g -fsanitize=address -fsanitize=leak -MMD -MP
 	LDFLAGS = -L. -lraylib -lm -ldl -lpthread -lGL -lX11
 	RAYLIB_MAKE = $(MAKE)
 endif
@@ -74,3 +74,6 @@ fclean: clean
 re: fclean all
 
 .PHONY: all clean fclean re
+
+# Incluir dependencias generadas automáticamente
+-include $(OBJ:.o=.d)

@@ -447,6 +447,8 @@ void BonesPrintFrameInfo(const BonesAnimation* animation, int frameNumber) {
 
 void BonesPrintPersonInfo(const Person* person) {
     if (!IsValidPointer(person)) return;
+
+    //int validBones = BonesCountValidBones(person);
 }
 
 void BonesPrintBoneInfo(const Bone* bone) {
@@ -844,16 +846,21 @@ void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, Bo
             float distance = Vector3Distance(camera.position, bone->position.position);
             if (distance > 50.0f) continue;
 
-            int atlasIndex;
-            float rotation;
-            bool mirrored;
-            CalculateBoneRenderData(bone->position.position, camera, &atlasIndex, &rotation, &mirrored);
+            // CAMBIO PRINCIPAL: Usar CalculateBoneMorphData en lugar de CalculateBoneRenderData
+            BoneMorphData morphData;
+            CalculateBoneMorphData(bone->position.position, camera, &morphData);
 
             BoneRenderData* renderBone = &(*renderBones)[*renderBonesCount];
             renderBone->position = bone->position.position;
-            renderBone->atlasIndex = atlasIndex;
-            renderBone->rotation = rotation;
-            renderBone->mirrored = mirrored;
+
+            // Guardar los datos de morphing
+            renderBone->morphData = morphData;
+
+            // Mantener compatibilidad con código existente
+            renderBone->atlasIndex = morphData.primaryIndex;
+            renderBone->rotation = morphData.rotation;
+            renderBone->mirrored = morphData.mirrored;
+
             renderBone->distance = distance;
             renderBone->valid = true;
 

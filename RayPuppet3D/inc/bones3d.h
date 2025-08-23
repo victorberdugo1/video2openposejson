@@ -2,15 +2,21 @@
 #define BONES3D_H
 
 #include "raylib.h"
+#include "rlgl.h"
 #include "raymath.h"
 #include <stdbool.h>
 #include <time.h>
+#include <math.h>
+#include <stddef.h>
+#include "bonetile.h"  // Ahora BoneMorphData está definido en bonetile.h
 
 #define MAX_BONE_NAME_LENGTH 32
 #define MAX_BONES_PER_PERSON 32
 #define MAX_FRAMES 10000
 #define MAX_PERSONS 10
 #define MAX_FILE_PATH_LENGTH 512
+
+// REMOVER BoneMorphData de aquí - ahora está en bonetile.h
 
 typedef struct {
     char boneName[MAX_BONE_NAME_LENGTH];
@@ -37,6 +43,7 @@ typedef struct {
 
 typedef struct {
     Vector3 position;
+    BoneMorphData morphData;  // Ahora definido en bonetile.h
     int atlasIndex;
     float rotation;
     bool mirrored;
@@ -111,6 +118,7 @@ typedef struct {
     bool showInvalidBones;
 } BonesRenderConfig;
 
+// Declaraciones de funciones...
 BonesError BonesInit(BonesAnimation* animation, int maxFrames);
 void BonesFree(BonesAnimation* animation);
 BonesError BonesLoadFromJSON(BonesAnimation* animation, const char* jsonFilePath);
