@@ -7,575 +7,15 @@
 #include "bonetile.h"
 #include "bones3d.h"
 #include <string.h>
-#include <sys/stat.h>
 
 #define BASE_WIDTH 1920
 #define BASE_HEIGHT 1080
-
-static BoneRenderData* renderBones = NULL;
-static int renderBonesCount = 0;
-static int renderBonesCapacity = 0;
-static SimpleTextureSystem textureSystem = { 0 };
-static BoneConfig* boneConfigs = NULL;
-static int boneConfigCount = 0;
-
-void CheckBoneNameLength() {
-    if (MAX_BONE_NAME_LENGTH < 32) {
-        TraceLog(LOG_ERROR, "MAX_BONE_NAME_LENGTH debe ser al menos 32 bytes");
-    }
-}
-
-void CleanupTextureSystem() {
-    if (textureSystem.configs) {
-        free(textureSystem.configs);
-        textureSystem.configs = NULL;
-        textureSystem.configCount = 0;
-        textureSystem.configCapacity = 0;
-        textureSystem.loaded = false;
-        textureSystem.lastModified = 0;
-    }
-
-    if (boneConfigs) {
-        free(boneConfigs);
-        boneConfigs = NULL;
-        boneConfigCount = 0;
-    }
-}
-
-time_t GetFileModificationTime(const char* filename) {
-    struct stat fileStat;
-    if (stat(filename, &fileStat) == 0) {
-        return fileStat.st_mtime;
-    }
-    return 0;
-}
-
-char* ReadEntireFile(const char* filename, long* fileSize) {
-    FILE* file = fopen(filename, "rb");
-    if (!file) return NULL;
-
-    fseek(file, 0, SEEK_END);
-    long size = ftell(file);
-    fseek(file, 0, SEEK_SET);
-
-    if (size <= 0) {
-        fclose(file);
-        return NULL;
-    }
-
-    char* buffer = (char*)malloc(size + 1);
-    if (!buffer) {
-        fclose(file);
-        return NULL;
-    }
-
-    size_t bytesRead = fread(buffer, 1, size, file);
-    fclose(file);
-
-    if (bytesRead != (size_t)size) {
-        free(buffer);
-        return NULL;
-    }
-
-    buffer[size] = '\0';
-    if (fileSize) *fileSize = size;
-
-    return buffer;
-}
-
-int CountValidLines(const char* buffer) {
-    int lineCount = 0;
-    const char* ptr = buffer;
-    const char* lineStart = ptr;
-
-    while (*ptr) {
-        if (*ptr == '\n' || *ptr == '\0') {
-            int lineLen = ptr - lineStart;
-
-            if (lineLen > 5 && *lineStart != '#' && *lineStart != '\n') {
-                lineCount++;
-            }
-
-            lineStart = ptr + 1;
-        }
-        ptr++;
-    }
-
-    return lineCount;
-}
-
-bool ParseConfigFromBuffer(SimpleTextureSystem* system, const char* buffer) {
-    int lineCount = CountValidLines(buffer);
-    if (lineCount == 0) return false;
-
-    if (system->configs) {
-        free(system->configs);
-        system->configs = NULL;
-        system->configCount = 0;
-    }
-
-    system->configs = (BoneTextureConfig*)calloc(lineCount, sizeof(BoneTextureConfig));
-    if (!system->configs) {
-        TraceLog(LOG_ERROR, "Error allocating memory for %d texture configs", lineCount);
-        return false;
-    }
-
-    system->configCapacity = lineCount;
-    system->configCount = 0;
-
-    const char* ptr = buffer;
-    const char* lineStart = ptr;
-    char lineBuffer[512];
-
-    while (*ptr && system->configCount < system->configCapacity) {
-        if (*ptr == '\n') {
-            int lineLen = ptr - lineStart;
-
-            if (lineLen > 5 && lineLen < 511 && *lineStart != '#' && *lineStart != '\n') {
-                memcpy(lineBuffer, lineStart, lineLen);
-                lineBuffer[lineLen] = '\0';
-
-                char boneName[MAX_BONE_NAME_LENGTH];
-                char texturePath[MAX_FILE_PATH_LENGTH];
-                int visible;
-                float size;
-
-                int fields = sscanf(lineBuffer, "%31s %255s %d %f", boneName, texturePath, &visible, &size);
-
-                if (fields == 4) {
-                    BoneTextureConfig* config = &system->configs[system->configCount];
-                    strncpy(config->boneName, boneName, MAX_BONE_NAME_LENGTH - 1);
-                    config->boneName[MAX_BONE_NAME_LENGTH - 1] = '\0';
-
-                    strncpy(config->texturePath, texturePath, MAX_FILE_PATH_LENGTH - 1);
-                    config->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
-
-                    config->visible = (visible != 0);
-                    config->size = size;
-                    system->configCount++;
-                }
-            }
-
-            lineStart = ptr + 1;
-        }
-        ptr++;
-    }
-
-    return true;
-}
-
-bool LoadSimpleTextureConfig(SimpleTextureSystem* system, const char* filename) {
-    time_t currentModTime = GetFileModificationTime(filename);
-    if (currentModTime == 0) {
-        TraceLog(LOG_WARNING, "No se encontró archivo de configuración: %s. Usando valores por defecto.", filename);
-        return false;
-    }
-
-    if (system->loaded && system->lastModified == currentModTime) {
-        TraceLog(LOG_DEBUG, "Configuración ya cargada y sin cambios, usando cache");
-        return true;
-    }
-
-    TraceLog(LOG_INFO, "Cargando configuración de texturas...");
-
-    long fileSize;
-    char* buffer = ReadEntireFile(filename, &fileSize);
-    if (!buffer) {
-        TraceLog(LOG_ERROR, "Error leyendo archivo: %s", filename);
-        return false;
-    }
-
-    bool success = ParseConfigFromBuffer(system, buffer);
-
-    free(buffer);
-
-    if (success) {
-        system->loaded = true;
-        system->lastModified = currentModTime;
-        TraceLog(LOG_INFO, "Configuración simple cargada: %d bones configurados (%.2f KB)",
-            system->configCount, fileSize / 1024.0f);
-    }
-    else {
-        TraceLog(LOG_ERROR, "Error parseando configuración");
-    }
-
-    return success;
-}
-
-void LoadBoneConfigurations() {
-    if (boneConfigs) {
-        free(boneConfigs);
-        boneConfigs = NULL;
-        boneConfigCount = 0;
-    }
-
-    if (!textureSystem.loaded || textureSystem.configCount == 0) return;
-
-    boneConfigCount = textureSystem.configCount;
-    boneConfigs = (BoneConfig*)calloc(boneConfigCount, sizeof(BoneConfig));
-    if (!boneConfigs) {
-        TraceLog(LOG_ERROR, "Error allocating memory for bone configs");
-        return;
-    }
-
-    for (int i = 0; i < boneConfigCount; i++) {
-        const BoneTextureConfig* src = &textureSystem.configs[i];
-        BoneConfig* dst = &boneConfigs[i];
-
-        strncpy(dst->boneName, src->boneName, MAX_BONE_NAME_LENGTH - 1);
-        dst->boneName[MAX_BONE_NAME_LENGTH - 1] = '\0';
-
-        strncpy(dst->texturePath, src->texturePath, MAX_FILE_PATH_LENGTH - 1);
-        dst->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
-
-        dst->visible = src->visible;
-        dst->size = src->size;
-        dst->valid = true;
-    }
-
-    TraceLog(LOG_INFO, "Configuración de huesos cargada: %d huesos", boneConfigCount);
-}
-
-BoneConfig* FindBoneConfig(const char* boneName) {
-    for (int i = 0; i < boneConfigCount; i++) {
-        if (strcmp(boneConfigs[i].boneName, boneName) == 0) {
-            return &boneConfigs[i];
-        }
-    }
-    return NULL;
-}
-
-const char* GetTexturePathForBone(const char* boneName) {
-    BoneConfig* config = FindBoneConfig(boneName);
-    if (config) {
-        return config->texturePath;
-    }
-    return config->texturePath;
-}
-
-bool IsBoneVisible(const char* boneName) {
-    BoneConfig* config = FindBoneConfig(boneName);
-    if (config) {
-        return config->visible;
-    }
-    return true;
-}
-
-float GetBoneSize(const char* boneName) {
-    BoneConfig* config = FindBoneConfig(boneName);
-    if (config) {
-        return config->size;
-    }
-    return 0.35f;
-}
-
-static Rectangle SrcFromLogical(Texture2D tex, int logicalCol, int logicalRow,
-    int physCols, int physRows,
-    bool mirrored, bool* outMirrored)
-{
-    if (logicalCol < 0) logicalCol = 0;
-    if (logicalCol >= ATLAS_COLS) logicalCol = ATLAS_COLS - 1;
-    if (logicalRow < 0) logicalRow = 0;
-    if (logicalRow >= ATLAS_ROWS) logicalRow = ATLAS_ROWS - 1;
-
-    float physCellW = (float)tex.width / (float)physCols;
-    float physCellH = (float)tex.height / (float)physRows;
-
-    int blockW = physCols / ATLAS_COLS;
-    int blockH = physRows / ATLAS_ROWS;
-
-    int physCol = logicalCol * blockW;
-    int physRow = logicalRow * blockH;
-
-    float srcX = physCol * physCellW;
-    float srcY = physRow * physCellH;
-    float srcW = physCellW * blockW;
-    float srcH = physCellH * blockH;
-
-    if (outMirrored) *outMirrored = mirrored;
-    return (Rectangle) { srcX, srcY, srcW, srcH };
-}
-
-void CalculateBoneRenderData(Vector3 bonePos, Camera camera,
-    int* outChosenIndex, float* outRotation, bool* outMirrored)
-{
-    const int indices[3][8] = {
-        {  0,  4,  5,  6,  7,  6,  5,  4 },
-        {  2, 12, 13, 14, 15, 14, 13, 12 },
-        {  1,  8,  9, 10, 11, 10,  9,  8 }
-    };
-    const int topdownIndex = 3;
-    const float sectorAngles[8] = { 0,45,90,135,180,225,270,315 };
-    const float TOPDOWN_ANGLE = 70.0f;
-    const float HIGH_THRESHOLD = 22.5f;
-    const float MAIN_THRESHOLD = -22.5f;
-
-    Vector3 camDir = Vector3Subtract(camera.position, bonePos);
-    float yaw = atan2f(camDir.x, camDir.z);
-    if (yaw < 0.0f) yaw += 2.0f * PI;
-    float yawDeg = yaw * RAD2DEG;
-
-    float horiz = sqrtf(camDir.x * camDir.x + camDir.z * camDir.z);
-    float pitch = atan2f(camDir.y, horiz);
-    float pitchDeg = pitch * RAD2DEG;
-
-    int chosenRow = -1;
-    bool useTopdown = false;
-    bool isTopView = false;
-
-    if (pitchDeg >= TOPDOWN_ANGLE) {
-        useTopdown = true;
-        isTopView = true;
-    }
-    else if (pitchDeg >= HIGH_THRESHOLD) {
-        chosenRow = 2;
-    }
-    else if (pitchDeg >= MAIN_THRESHOLD) {
-        chosenRow = 0;
-    }
-    else if (pitchDeg >= -TOPDOWN_ANGLE) {
-        chosenRow = 1;
-    }
-    else {
-        useTopdown = true;
-        isTopView = false;
-    }
-
-    int sector = 0;
-    float minDiff = 360.0f;
-    for (int i = 0; i < 8; i++) {
-        float diff = fabsf(yawDeg - sectorAngles[i]);
-        if (diff > 180.0f) diff = 360.0f - diff;
-        if (diff < minDiff) { minDiff = diff; sector = i; }
-    }
-
-    if (useTopdown) {
-        *outChosenIndex = topdownIndex;
-        if (isTopView) {
-            *outRotation = sectorAngles[sector] + 180.0f;
-            *outMirrored = false;
-        }
-        else {
-            *outRotation = 360.0f - sectorAngles[sector];
-            *outMirrored = true;
-        }
-    }
-    else {
-        *outChosenIndex = indices[chosenRow][sector];
-        *outRotation = 0.0f;
-        *outMirrored = !(sector >= 5 && sector <= 7);
-    }
-}
-
-float ScaleValue(float value, int screenDimension, int baseDimension) {
-    return value * ((float)screenDimension / (float)baseDimension);
-}
-
-int ScaleFontSize(int baseSize, int screenHeight) {
-    return (int)(baseSize * ((float)screenHeight / BASE_HEIGHT));
-}
-
-bool ResizeRenderBonesArray(int newCapacity) {
-    if (newCapacity <= 0 || newCapacity > 10000) {
-        TraceLog(LOG_ERROR, "Capacidad solicitada inválida: %d", newCapacity);
-        return false;
-    }
-
-    if (newCapacity <= renderBonesCapacity) return true;
-
-    BoneRenderData* newArray = (BoneRenderData*)realloc(renderBones,
-        sizeof(BoneRenderData) * newCapacity);
-    if (!newArray) {
-        TraceLog(LOG_ERROR, "Error reallocating memory for %d bones", newCapacity);
-        return false;
-    }
-
-    for (int i = renderBonesCapacity; i < newCapacity; i++) {
-        memset(&newArray[i], 0, sizeof(BoneRenderData));
-    }
-
-    renderBones = newArray;
-    renderBonesCapacity = newCapacity;
-    return true;
-}
-
-int CompareBonesByDistance(const void* a, const void* b) {
-    const BoneRenderData* boneA = (const BoneRenderData*)a;
-    const BoneRenderData* boneB = (const BoneRenderData*)b;
-
-    if (boneA->distance > boneB->distance) return -1;
-    if (boneA->distance < boneB->distance) return 1;
-    return 0;
-}
-
-void CollectBonesForRendering(const BonesAnimation* animation, Camera camera) {
-    renderBonesCount = 0;
-
-    if (!animation->isLoaded) return;
-
-    int currentFrame = BonesGetCurrentFrame(animation);
-    if (!BonesIsValidFrame(animation, currentFrame)) return;
-
-    const AnimationFrame* frame = &animation->frames[currentFrame];
-
-    int estimatedBones = 0;
-    for (int p = 0; p < frame->personCount; p++) {
-        if (frame->persons[p].active) {
-            estimatedBones += frame->persons[p].boneCount;
-        }
-    }
-
-    if (!ResizeRenderBonesArray(estimatedBones + 10)) {
-        TraceLog(LOG_ERROR, "No se pudo redimensionar array de render bones");
-        return;
-    }
-
-    static char processedBones[2000][MAX_BONE_NAME_LENGTH + 20];
-    int processedCount = 0;
-
-    for (int p = 0; p < frame->personCount; p++) {
-        const Person* person = &frame->persons[p];
-        if (!person->active) continue;
-
-        for (int b = 0; b < person->boneCount; b++) {
-            const Bone* bone = &person->bones[b];
-            if (!bone->position.valid || !bone->visible) continue;
-
-            if (!BonesIsPositionValid(bone->position.position)) continue;
-
-            BoneConfig* config = FindBoneConfig(bone->name);
-            if (!config) {
-                char firstChar = bone->name[0];
-                bool isKnownBone = false;
-
-                switch (firstChar) {
-                case 'N': isKnownBone = (strstr(bone->name, "Nose") != NULL); break;
-                case 'L': case 'R':
-                    isKnownBone = (strstr(bone->name, "Eye") != NULL ||
-                        strstr(bone->name, "Ear") != NULL ||
-                        strstr(bone->name, "Shoulder") != NULL ||
-                        strstr(bone->name, "Elbow") != NULL ||
-                        strstr(bone->name, "Wrist") != NULL ||
-                        strstr(bone->name, "Hip") != NULL ||
-                        strstr(bone->name, "Knee") != NULL ||
-                        strstr(bone->name, "Ankle") != NULL);
-                    break;
-                case 'H': isKnownBone = (strstr(bone->name, "Head") != NULL ||
-                    strstr(bone->name, "Hip") != NULL); break;
-                case 'C': isKnownBone = (strstr(bone->name, "Chest") != NULL); break;
-                case 'S': isKnownBone = (strstr(bone->name, "Shoulder") != NULL ||
-                    strstr(bone->name, "Spine") != NULL); break;
-                default: break;
-                }
-
-                if (!isKnownBone) continue;
-            }
-            else {
-                if (!config->visible) continue;
-            }
-
-            char boneKey[MAX_BONE_NAME_LENGTH + 20];
-            int keyLen = snprintf(boneKey, sizeof(boneKey), "%s_%s", person->personId, bone->name);
-
-            bool alreadyProcessed = false;
-            for (int i = 0; i < processedCount; i++) {
-                if (memcmp(processedBones[i], boneKey, keyLen + 1) == 0) {
-                    alreadyProcessed = true;
-                    break;
-                }
-            }
-
-            if (alreadyProcessed) continue;
-
-            if (processedCount < 2000) {
-                memcpy(processedBones[processedCount], boneKey, keyLen + 1);
-                processedCount++;
-            }
-
-            float distance = Vector3Distance(camera.position, bone->position.position);
-            if (distance > 50.0f) continue;
-
-            int atlasIndex;
-            float rotation;
-            bool mirrored;
-            CalculateBoneRenderData(bone->position.position, camera,
-                &atlasIndex, &rotation, &mirrored);
-
-            BoneRenderData* renderBone = &renderBones[renderBonesCount];
-            renderBone->position = bone->position.position;
-            renderBone->atlasIndex = atlasIndex;
-            renderBone->rotation = rotation;
-            renderBone->mirrored = mirrored;
-            renderBone->distance = distance;
-            renderBone->valid = true;
-
-            if (config) {
-                strncpy(renderBone->texturePath, config->texturePath, MAX_FILE_PATH_LENGTH - 1);
-                renderBone->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
-                renderBone->visible = config->visible;
-                renderBone->size = config->size;
-            }
-            else {
-                const char* defaultPath = GetTexturePathForBone(bone->name);
-                strncpy(renderBone->texturePath, defaultPath, MAX_FILE_PATH_LENGTH - 1);
-                renderBone->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
-                renderBone->visible = IsBoneVisible(bone->name);
-                renderBone->size = GetBoneSize(bone->name);
-            }
-
-            strncpy(renderBone->boneName, bone->name, MAX_BONE_NAME_LENGTH - 1);
-            renderBone->boneName[MAX_BONE_NAME_LENGTH - 1] = '\0';
-
-            strncpy(renderBone->personId, person->personId, 15);
-            renderBone->personId[15] = '\0';
-
-            renderBonesCount++;
-        }
-    }
-
-    if (renderBonesCount > 1) {
-        qsort(renderBones, renderBonesCount, sizeof(BoneRenderData), CompareBonesByDistance);
-    }
-
-    TraceLog(LOG_DEBUG, "Bones recopilados: %d únicos de %d procesados",
-        renderBonesCount, processedCount);
-}
-
-void PrintConfigurationDebug() {
-    TraceLog(LOG_INFO, "=== CONFIGURACIÓN DEBUG ===");
-    TraceLog(LOG_INFO, "Configuraciones bone: %d", boneConfigCount);
-    TraceLog(LOG_INFO, "Sistema configuración cargado: %s", textureSystem.loaded ? "SÍ" : "NO");
-    TraceLog(LOG_INFO, "Última modificación: %ld", textureSystem.lastModified);
-
-    for (int i = 0; i < boneConfigCount && i < 10; i++) {
-        BoneConfig* config = &boneConfigs[i];
-        TraceLog(LOG_INFO, "  %s: %s %s %.2f",
-            config->boneName, config->texturePath,
-            config->visible ? "V" : "H", config->size);
-    }
-
-    if (boneConfigCount > 10) {
-        TraceLog(LOG_INFO, "  ... y %d más", boneConfigCount - 10);
-    }
-}
-
-void VerifyNoDuplicateRendering() {
-    for (int i = 0; i < renderBonesCount; i++) {
-        for (int j = i + 1; j < renderBonesCount; j++) {
-            if (strcmp(renderBones[i].boneName, renderBones[j].boneName) == 0 &&
-                strcmp(renderBones[i].personId, renderBones[j].personId) == 0) {
-                TraceLog(LOG_WARNING, "DUPLICADO ENCONTRADO: %s en persona %s",
-                    renderBones[i].boneName, renderBones[i].personId);
-            }
-        }
-    }
-}
+#define MAX_TEXTURES 10
 
 int main(void) {
     CheckBoneNameLength();
 
-    InitWindow(BASE_WIDTH, BASE_HEIGHT, "Bones3D - Optimized Simple Texture Configuration");
-
+    InitWindow(BASE_WIDTH, BASE_HEIGHT, "Bones3D - System");
     SetWindowState(FLAG_WINDOW_RESIZABLE);
 
 #if defined(__linux__)
@@ -598,36 +38,28 @@ int main(void) {
     float orbitYaw = 0.0f, orbitPitch = -0.2f, orbitRadius = 2.5f;
     bool cameraMouseControl = false;
 
-    TraceLog(LOG_INFO, "Cargando configuración optimizada...");
+    SimpleTextureSystem textureSystem = { 0 };
+    BoneConfig* boneConfigs = NULL;
+    int boneConfigCount = 0;
+    BoneRenderData* renderBones = NULL;
+    int renderBonesCount = 0;
+    int renderBonesCapacity = 0;
+
     if (!LoadSimpleTextureConfig(&textureSystem, "bone_textures.txt")) {
-        TraceLog(LOG_INFO, "Creando archivo de configuración de ejemplo...");
         LoadSimpleTextureConfig(&textureSystem, "bone_textures.txt");
     }
 
-    LoadBoneConfigurations();
-
-    PrintConfigurationDebug();
+    LoadBoneConfigurations(&textureSystem, &boneConfigs, &boneConfigCount);
 
     BonesAnimation animation;
     BonesError result = BonesInit(&animation, 1000);
 
     if (result != BONES_SUCCESS) {
-        TraceLog(LOG_ERROR, "Error inicializando Bones3D: %s", BonesGetErrorString(result));
         CloseWindow();
         return -1;
     }
 
-    TraceLog(LOG_INFO, "Cargando archivo JSON...");
     result = BonesLoadFromJSON(&animation, "test.json");
-    if (result != BONES_SUCCESS) {
-        TraceLog(LOG_WARNING, "No se pudo cargar test.json: %s", BonesGetErrorString(result));
-        TraceLog(LOG_INFO, "Sistema funcionará sin datos de bones");
-    }
-    else {
-        TraceLog(LOG_INFO, "Bones3D cargado exitosamente: %d frames", BonesGetFrameCount(&animation));
-        BonesSetFrame(&animation, 0);
-        BonesPrintFrameInfo(&animation, 0);
-    }
 
     BonesRenderConfig config = BonesGetDefaultRenderConfig();
     config.drawDebugSpheres = true;
@@ -636,7 +68,6 @@ int main(void) {
     config.enableDepthSorting = true;
     BonesSetRenderConfig(&config);
 
-#define MAX_TEXTURES 10
     Texture2D textures[MAX_TEXTURES];
     char texturePaths[MAX_TEXTURES][MAX_FILE_PATH_LENGTH];
     int textureCount = 0;
@@ -649,7 +80,6 @@ int main(void) {
         }
 
         if (textureCount >= MAX_TEXTURES) {
-            TraceLog(LOG_WARNING, "Límite de texturas alcanzado, no se puede cargar: %s", path);
             return 0;
         }
 
@@ -657,7 +87,6 @@ int main(void) {
         if (img.data == NULL) {
             img = GenImageColor(1024, 1024, CLITERAL(Color){60, 120, 220, 255});
             ImageDrawText(&img, path, 8, 8, 128, WHITE);
-            TraceLog(LOG_WARNING, "Textura no encontrada: %s, creando por defecto", path);
         }
 
         textures[textureCount] = LoadTextureFromImage(img);
@@ -667,7 +96,6 @@ int main(void) {
         strncpy(texturePaths[textureCount], path, MAX_FILE_PATH_LENGTH - 1);
         texturePaths[textureCount][MAX_FILE_PATH_LENGTH - 1] = '\0';
 
-        TraceLog(LOG_INFO, "Textura cargada: %s (ID: %d)", path, textureCount);
         return textureCount++;
     }
 
@@ -682,13 +110,8 @@ int main(void) {
     Vector3 autoCenter = { 0 };
     bool autoCenterCalculated = false;
 
-    TraceLog(LOG_INFO, "Sistema inicializado - Texturas: %d, Configuraciones: %d",
-        textureCount, boneConfigCount);
-
     while (!WindowShouldClose()) {
         float dt = GetFrameTime();
-        int currentScreenWidth = GetScreenWidth();
-        int currentScreenHeight = GetScreenHeight();
 
         if (animation.isLoaded && maxFrames > 0) {
             if (IsKeyPressed(KEY_LEFT) && currentFrame > 0) {
@@ -727,19 +150,9 @@ int main(void) {
         }
 
         if (IsKeyPressed(KEY_F5)) {
-            TraceLog(LOG_INFO, "Recargando configuración de texturas (verificando cambios)...");
             if (LoadSimpleTextureConfig(&textureSystem, "bone_textures.txt")) {
-                LoadBoneConfigurations();
-                PrintConfigurationDebug();
-                TraceLog(LOG_INFO, "Configuración recargada exitosamente");
+                LoadBoneConfigurations(&textureSystem, &boneConfigs, &boneConfigCount);
             }
-            else {
-                TraceLog(LOG_INFO, "No hay cambios en la configuración");
-            }
-        }
-
-        if (IsKeyPressed(KEY_F6)) {
-            VerifyNoDuplicateRendering();
         }
 
         if (animation.isLoaded && !autoCenterCalculated) {
@@ -859,7 +272,7 @@ int main(void) {
         static bool forceUpdate = false;
 
         if (currentFrame != lastProcessedFrame || forceUpdate) {
-            CollectBonesForRendering(&animation, camera);
+            CollectBonesForRendering(&animation, camera, &renderBones, &renderBonesCount, &renderBonesCapacity, boneConfigs, boneConfigCount);
             lastProcessedFrame = currentFrame;
             forceUpdate = false;
         }
@@ -922,147 +335,14 @@ int main(void) {
 
         EndMode3D();
 
-        int baseFontSize = ScaleFontSize(16, currentScreenHeight);
-        int titleSize = ScaleFontSize(20, currentScreenHeight);
-        int smallFontSize = ScaleFontSize(12, currentScreenHeight);
-
-        DrawText("BONES3D - OPTIMIZED TEXTURE CONFIG",
-            ScaleValue(20, currentScreenWidth, BASE_WIDTH),
-            ScaleValue(20, currentScreenHeight, BASE_HEIGHT),
-            titleSize, DARKGREEN);
-
-        if (animation.isLoaded) {
-            DrawText(TextFormat("JSON: OK | Frames: %d | Current: %d | Config: %s | Cache: %s",
-                maxFrames, currentFrame + 1,
-                textureSystem.loaded ? "LOADED" : "DEFAULT",
-                textureSystem.lastModified > 0 ? "VALID" : "NONE"),
-                ScaleValue(20, currentScreenWidth, BASE_WIDTH),
-                ScaleValue(50, currentScreenHeight, BASE_HEIGHT),
-                baseFontSize, DARKGREEN);
-
-            DrawText(TextFormat("Bones Rendered: %d | Configured: %d | Textures: %d | FPS: %d",
-                renderBonesCount, boneConfigCount, textureCount, GetFPS()),
-                ScaleValue(20, currentScreenWidth, BASE_WIDTH),
-                ScaleValue(70, currentScreenHeight, BASE_HEIGHT),
-                baseFontSize, DARKBLUE);
-        }
-        else {
-            DrawText("NO ANIMATION DATA LOADED",
-                ScaleValue(20, currentScreenWidth, BASE_WIDTH),
-                ScaleValue(50, currentScreenHeight, BASE_HEIGHT),
-                baseFontSize, ORANGE);
-        }
-
-        int yOffset = ScaleValue(100, currentScreenHeight, BASE_HEIGHT);
-        int maxBonesToShow = 8;
-        for (int i = 0; i < renderBonesCount && i < maxBonesToShow; i++) {
-            const BoneRenderData* bone = &renderBones[i];
-            BoneConfig* config = FindBoneConfig(bone->boneName);
-
-            Color boneColor = WHITE;
-
-            DrawText(TextFormat("%s[%s]: %s S%.2f %s",
-                bone->boneName, bone->personId, bone->texturePath, bone->size,
-                config ? "CFG" : "DEF"),
-                ScaleValue(20, currentScreenWidth, BASE_WIDTH),
-                yOffset + i * ScaleValue(18, currentScreenHeight, BASE_HEIGHT),
-                smallFontSize, boneColor);
-        }
-
-        if (renderBonesCount > maxBonesToShow) {
-            DrawText(TextFormat("... and %d more bones", renderBonesCount - maxBonesToShow),
-                ScaleValue(20, currentScreenWidth, BASE_WIDTH),
-                yOffset + maxBonesToShow * ScaleValue(18, currentScreenHeight, BASE_HEIGHT),
-                smallFontSize, GRAY);
-        }
-
-        int panelX = currentScreenWidth - ScaleValue(400, currentScreenWidth, BASE_WIDTH);
-        int panelY = ScaleValue(100, currentScreenHeight, BASE_HEIGHT);
-        int panelW = ScaleValue(380, currentScreenWidth, BASE_WIDTH);
-        int panelH = ScaleValue(300, currentScreenHeight, BASE_HEIGHT);
-
-        DrawRectangle(panelX, panelY, panelW, panelH, Fade(BLACK, 0.7f));
-        DrawRectangleLines(panelX, panelY, panelW, panelH, WHITE);
-
-        DrawText("TEXTURE CONFIG", panelX + 10, panelY + 10,
-            ScaleFontSize(16, currentScreenHeight), WHITE);
-
-        DrawText("bone_textures.txt:", panelX + 10, panelY + 35,
-            ScaleFontSize(14, currentScreenHeight), LIGHTGRAY);
-
-        int configY = panelY + 60;
-        int maxConfigsToShow = 12;
-        for (int i = 0; i < boneConfigCount && i < maxConfigsToShow; i++) {
-            BoneConfig* config = &boneConfigs[i];
-            Color textColor = config->visible ? WHITE : GRAY;
-
-            DrawText(TextFormat("%s %s %s %.2f",
-                config->boneName, config->texturePath,
-                config->visible ? "V" : "H", config->size),
-                panelX + 10, configY + i * 16,
-                ScaleFontSize(12, currentScreenHeight), textColor);
-        }
-
-        if (boneConfigCount > maxConfigsToShow) {
-            DrawText(TextFormat("... and %d more", boneConfigCount - maxConfigsToShow),
-                panelX + 10, configY + maxConfigsToShow * 16,
-                ScaleFontSize(12, currentScreenHeight), DARKGRAY);
-        }
-
-        int controlsY = currentScreenHeight - ScaleValue(120, currentScreenHeight, BASE_HEIGHT);
-
-        DrawText("OPTIMIZED CONTROLS:",
-            ScaleValue(20, currentScreenWidth, BASE_WIDTH),
-            controlsY,
-            ScaleFontSize(16, currentScreenHeight), DARKGREEN);
-
-        DrawText("Camera: 1=Orbit | 2=FPS | M=Mouse | WASD=Move",
-            ScaleValue(20, currentScreenWidth, BASE_WIDTH),
-            controlsY + ScaleValue(20, currentScreenHeight, BASE_HEIGHT),
-            ScaleFontSize(14, currentScreenHeight), DARKGRAY);
-
-        DrawText("Animation: ←→=Frame | Space=Auto | F5=Smart Reload",
-            ScaleValue(20, currentScreenWidth, BASE_WIDTH),
-            controlsY + ScaleValue(40, currentScreenHeight, BASE_HEIGHT),
-            ScaleFontSize(14, currentScreenHeight), DARKGRAY);
-
-        DrawText("Debug: F6=Check Duplicates | Fast Linux Loading",
-            ScaleValue(20, currentScreenWidth, BASE_WIDTH),
-            controlsY + ScaleValue(60, currentScreenHeight, BASE_HEIGHT),
-            ScaleFontSize(14, currentScreenHeight), DARKGRAY);
-
-        DrawRectangle(0, currentScreenHeight - ScaleValue(25, currentScreenHeight, BASE_HEIGHT),
-            currentScreenWidth, ScaleValue(25, currentScreenHeight, BASE_HEIGHT),
-            Fade(BLACK, 0.8f));
-
-        DrawText(TextFormat("Frame: %d/%d | Bones: %d | Config: %s | Cached: %s | FPS: %d",
-            currentFrame + 1, maxFrames, renderBonesCount,
-            textureSystem.loaded ? "CUSTOM" : "DEFAULT",
-            textureSystem.lastModified > 0 ? "YES" : "NO", GetFPS()),
-            ScaleValue(10, currentScreenWidth, BASE_WIDTH),
-            currentScreenHeight - ScaleValue(20, currentScreenHeight, BASE_HEIGHT),
-            ScaleFontSize(14, currentScreenHeight), WHITE);
-
-        if (autoPlay) {
-            const char* playText = "AUTO-PLAY";
-            int playTextWidth = MeasureText(playText, ScaleFontSize(14, currentScreenHeight));
-            DrawText(playText,
-                currentScreenWidth - playTextWidth - ScaleValue(10, currentScreenWidth, BASE_WIDTH),
-                currentScreenHeight - ScaleValue(20, currentScreenHeight, BASE_HEIGHT),
-                ScaleFontSize(14, currentScreenHeight), LIME);
-        }
-
         EndDrawing();
     }
 
     if (renderBones) {
         free(renderBones);
-        renderBones = NULL;
-        renderBonesCount = 0;
-        renderBonesCapacity = 0;
     }
 
-    CleanupTextureSystem();
+    CleanupTextureSystem(&textureSystem, &boneConfigs, &boneConfigCount);
 
     for (int i = 0; i < textureCount; i++) {
         UnloadTexture(textures[i]);
@@ -1070,8 +350,6 @@ int main(void) {
 
     BonesFree(&animation);
     CloseWindow();
-
-    TraceLog(LOG_INFO, "Sistema cerrado correctamente");
 
     return 0;
 }
