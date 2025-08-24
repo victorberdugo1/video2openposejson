@@ -16,8 +16,6 @@
 #define MAX_PERSONS 10
 #define MAX_FILE_PATH_LENGTH 512
 
-// REMOVER BoneMorphData de aquí - ahora está en bonetile.h
-
 typedef struct {
     char boneName[MAX_BONE_NAME_LENGTH];
     char texturePath[MAX_FILE_PATH_LENGTH];

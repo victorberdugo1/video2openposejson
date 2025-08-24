@@ -436,18 +436,23 @@ static void App_Draw(AppState* app) {
             float logicalCellH = physCellH * (app->physRows / ATLAS_ROWS);
             float aspect = logicalCellW / logicalCellH;
             Vector2 worldSize = (Vector2){ bone->size * aspect, bone->size };
-
             if (app->useMorphing) {
                 // MÉTODO NUEVO: Usar morphing
                 DrawBonetileWithMorphing(currentTex, app->camera, bone->morphData, bone->position, worldSize, app->physCols, app->physRows);
             }
             else {
-                // MÉTODO CLÁSICO: Sin morphing
-                int logicalCol = bone->atlasIndex % ATLAS_COLS;
-                int logicalRow = bone->atlasIndex / ATLAS_COLS;
+                // MÉTODO CLÁSICO: Sin morphing - recalcular datos en tiempo real
+                int outChosenIndex;
+                float outRotation;
+                bool outMirrored;
+
+                CalculateBoneRenderData(bone->position, app->camera, &outChosenIndex, &outRotation, &outMirrored);
+
+                int logicalCol = outChosenIndex % ATLAS_COLS;
+                int logicalRow = outChosenIndex / ATLAS_COLS;
                 bool finalMirror = false;
-                Rectangle src = SrcFromLogical(currentTex, logicalCol, logicalRow, app->physCols, app->physRows, bone->mirrored, &finalMirror);
-                DrawBonetileCustom(currentTex, app->camera, src, bone->position, worldSize, bone->rotation, finalMirror);
+                Rectangle src = SrcFromLogical(currentTex, logicalCol, logicalRow, app->physCols, app->physRows, outMirrored, &finalMirror);
+                DrawBonetileCustom(currentTex, app->camera, src, bone->position, worldSize, outRotation, finalMirror);
             }
 
             if (app->renderConfig.drawDebugSpheres) {
