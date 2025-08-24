@@ -12,6 +12,7 @@ typedef struct {
     int primaryIndex;      // Índice principal del atlas
     int secondaryIndex;    // Índice secundario para blend
     float blendFactor;     // 0.0 = solo primary, 1.0 = solo secondary
+    int effectType;
     float rotation;        // Rotación en grados
     bool mirrored;         // Si está espejado
 } BoneMorphData;

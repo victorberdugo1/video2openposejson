@@ -49,7 +49,7 @@ void DrawBonetileCustom(Texture2D tex, Camera camera, Rectangle src, Vector3 pos
     float u_left = src.x / texW;
     float u_right = (src.x + src.width) / texW;
     float v_top = src.y / texH;
-    float v_bottom = (src.y + src.height) / texH;
+    float v_bottom = (src.y + src.height) / texW;
 
     if (src.width < 0) { float tmp = u_left; u_left = u_right; u_right = tmp; }
     if (src.height < 0) { float tmp = v_top; v_top = v_bottom; v_bottom = tmp; }
@@ -192,24 +192,22 @@ Rectangle SrcFromLogical(Texture2D tex, int logicalCol, int logicalRow, int phys
     return (Rectangle) { srcX, srcY, srcW, srcH };
 }
 
-// bonetile.c
-
-
 // Helper con alpha personalizado
-static void DrawQuadTextured3DWithAlpha(Texture2D tex, Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3, 
-                                        float u0, float v0t, float u1, float v1t, unsigned char alpha) {
+static void DrawQuadTextured3DWithAlpha(Texture2D tex, Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3,
+    float u0, float v0t, float u1, float v1t, float alpha) {
     rlSetTexture(tex.id);
     rlBegin(RL_QUADS);
-        rlColor4ub(255, 255, 255, alpha);
-        rlTexCoord2f(u0, v0t); rlVertex3f(v0.x, v0.y, v0.z);
-        rlTexCoord2f(u1, v0t); rlVertex3f(v1.x, v1.y, v1.z);
-        rlTexCoord2f(u1, v1t); rlVertex3f(v2.x, v2.y, v2.z);
-        rlTexCoord2f(u0, v1t); rlVertex3f(v3.x, v3.y, v3.z);
+    unsigned char alphaValue = (unsigned char)(alpha * 255.0f);
+    rlColor4ub(255, 255, 255, alphaValue);
+    rlTexCoord2f(u0, v0t); rlVertex3f(v0.x, v0.y, v0.z);
+    rlTexCoord2f(u1, v0t); rlVertex3f(v1.x, v1.y, v1.z);
+    rlTexCoord2f(u1, v1t); rlVertex3f(v2.x, v2.y, v2.z);
+    rlTexCoord2f(u0, v1t); rlVertex3f(v3.x, v3.y, v3.z);
     rlEnd();
     rlSetTexture(0);
 }
 
-// Nueva función para calcular datos de morphing
+// Nueva función para calcular datos de morphing MÁS AGRESIVA
 void CalculateBoneMorphData(Vector3 bonePos, Camera camera, BoneMorphData* outMorphData) {
     const int indices[3][8] = {
         {  0,  4,  5,  6,  7,  6,  5,  4 },
@@ -221,7 +219,6 @@ void CalculateBoneMorphData(Vector3 bonePos, Camera camera, BoneMorphData* outMo
     const float TOPDOWN_ANGLE = 70.0f;
     const float HIGH_THRESHOLD = 22.5f;
     const float MAIN_THRESHOLD = -22.5f;
-    const float MORPH_ZONE = 15.0f; // Zona de morphing en grados
 
     Vector3 camDir = Vector3Subtract(camera.position, bonePos);
     float yaw = atan2f(camDir.x, camDir.z);
@@ -232,11 +229,11 @@ void CalculateBoneMorphData(Vector3 bonePos, Camera camera, BoneMorphData* outMo
     float pitch = atan2f(camDir.y, horiz);
     float pitchDeg = pitch * RAD2DEG;
 
+    // Determinar fila
     int chosenRow = -1;
     bool useTopdown = false;
     bool isTopView = false;
 
-    // Determinar fila igual que antes
     if (pitchDeg >= TOPDOWN_ANGLE) {
         useTopdown = true;
         isTopView = true;
@@ -255,48 +252,59 @@ void CalculateBoneMorphData(Vector3 bonePos, Camera camera, BoneMorphData* outMo
         isTopView = false;
     }
 
-    // Encontrar sector principal y calcular blend
+    // Encontrar sector principal
     int primarySector = 0;
-    int secondarySector = 0;
-    float minDiff = 360.0f;
-
-    // Encontrar el sector más cercano
+    float minDistance = 360.0f;
     for (int i = 0; i < 8; i++) {
-        float diff = fabsf(yawDeg - sectorAngles[i]);
-        if (diff > 180.0f) diff = 360.0f - diff;
+        float angleDiff = fabsf(yawDeg - sectorAngles[i]);
+        if (angleDiff > 180.0f) angleDiff = 360.0f - angleDiff;
 
-        if (diff < minDiff) {
-            minDiff = diff;
+        if (angleDiff < minDistance) {
+            minDistance = angleDiff;
             primarySector = i;
         }
     }
 
-    // Encontrar el sector secundario (el siguiente más cercano)
-    float secondMinDiff = 360.0f;
-    for (int i = 0; i < 8; i++) {
-        if (i == primarySector) continue;
-
-        float diff = fabsf(yawDeg - sectorAngles[i]);
-        if (diff > 180.0f) diff = 360.0f - diff;
-
-        if (diff < secondMinDiff) {
-            secondMinDiff = diff;
-            secondarySector = i;
-        }
-    }
-
-    // Calcular factor de blend basado en la distancia al sector principal
+    // Encontrar sector secundario (adyacente)
+    int secondarySector = primarySector;
     float blendFactor = 0.0f;
-    if (minDiff > MORPH_ZONE * 0.2f && minDiff < MORPH_ZONE) {
-        blendFactor = (minDiff - MORPH_ZONE * 0.2f) / (MORPH_ZONE * 0.8f);
-        blendFactor = Clamp(blendFactor, 0.0f, 1.0f);
-        // Suavizar la transición con una curva smoothstep
-        blendFactor = blendFactor * blendFactor * (3.0f - 2.0f * blendFactor);
+
+    if (!useTopdown) {
+        // Calcular qué tan cerca estamos del borde entre sectores
+        float halfSector = 22.5f; // 45/2 grados
+
+        if (minDistance > 5.0f) { // Solo hacer blend si no estamos muy centrados
+            // Encontrar el sector adyacente más cercano
+            int leftSector = (primarySector - 1 + 8) % 8;
+            int rightSector = (primarySector + 1) % 8;
+
+            float leftDiff = fabsf(yawDeg - sectorAngles[leftSector]);
+            if (leftDiff > 180.0f) leftDiff = 360.0f - leftDiff;
+
+            float rightDiff = fabsf(yawDeg - sectorAngles[rightSector]);
+            if (rightDiff > 180.0f) rightDiff = 360.0f - rightDiff;
+
+            // Elegir el sector adyacente más cercano
+            if (leftDiff < rightDiff) {
+                secondarySector = leftSector;
+            }
+            else {
+                secondarySector = rightSector;
+            }
+
+            // Calcular factor de blend más agresivo
+            if (minDistance < halfSector) {
+                blendFactor = minDistance / halfSector;
+                // Hacer el blend más visible
+                blendFactor = powf(blendFactor, 0.7f); // Curva que da más blend
+                blendFactor = Clamp(blendFactor, 0.0f, 0.85f); // Más blend máximo
+            }
+        }
     }
 
     if (useTopdown) {
         outMorphData->primaryIndex = topdownIndex;
-        outMorphData->secondaryIndex = topdownIndex; // No hay blend en topdown por simplicidad
+        outMorphData->secondaryIndex = topdownIndex;
         outMorphData->blendFactor = 0.0f;
 
         if (isTopView) {
@@ -314,14 +322,20 @@ void CalculateBoneMorphData(Vector3 bonePos, Camera camera, BoneMorphData* outMo
         outMorphData->blendFactor = blendFactor;
         outMorphData->rotation = 0.0f;
         outMorphData->mirrored = !(primarySector >= 5 && primarySector <= 7);
+
+        // Validar que son diferentes
+        if (outMorphData->primaryIndex == outMorphData->secondaryIndex) {
+            outMorphData->blendFactor = 0.0f;
+        }
     }
 }
-// Nueva función para dibujar con morphing
+
+// Función para dibujar con morphing MÁS VISIBLE
 void DrawBonetileWithMorphing(Texture2D tex, Camera camera, BoneMorphData morphData,
     Vector3 pos, Vector2 size, int physCols, int physRows) {
 
-    // Si no hay blend, usar renderizado normal optimizado
-    if (morphData.blendFactor <= 0.001f) {
+    // Solo renderizar normal si realmente no hay blend
+    if (morphData.blendFactor <= 0.1f) {
         int logicalCol = morphData.primaryIndex % ATLAS_COLS;
         int logicalRow = morphData.primaryIndex / ATLAS_COLS;
 
@@ -331,7 +345,7 @@ void DrawBonetileWithMorphing(Texture2D tex, Camera camera, BoneMorphData morphD
         return;
     }
 
-    // Calcular geometría común una sola vez
+    // Calcular geometría común
     Vector3 camForward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
     Vector3 right = Vector3Normalize(Vector3CrossProduct(camForward, camera.up));
     Vector3 up = Vector3Normalize(Vector3CrossProduct(right, camForward));
@@ -354,7 +368,7 @@ void DrawBonetileWithMorphing(Texture2D tex, Camera camera, BoneMorphData morphD
     float texW = (float)tex.width;
     float texH = (float)tex.height;
 
-    // HABILITAR BLENDING ANTES DE DIBUJAR
+    // Habilitar blending
     rlSetBlendMode(BLEND_ALPHA);
     rlEnableColorBlend();
 
@@ -380,13 +394,13 @@ void DrawBonetileWithMorphing(Texture2D tex, Camera camera, BoneMorphData morphD
             float tmp = u_left; u_left = u_right; u_right = tmp;
         }
 
-        float primaryAlpha = 1.0f - morphData.blendFactor;
-        DrawQuadTextured3DWithAlpha(tex, p0, p1, p2, p3, u_left, v0t, u_right, v1t,
-            (unsigned char)(primaryAlpha * 255));
+        // Alpha más agresivo para la textura primaria
+        float primaryAlpha = 1.0f - (morphData.blendFactor * 0.9f);
+        DrawQuadTextured3DWithAlpha(tex, p0, p1, p2, p3, u_left, v0t, u_right, v1t, primaryAlpha);
     }
 
-    // Dibujar textura secundaria solo si hay blend significativo
-    if (morphData.blendFactor > 0.001f) {
+    // Dibujar textura secundaria con más visibilidad
+    if (morphData.blendFactor > 0.01f && morphData.secondaryIndex != morphData.primaryIndex) {
         int logicalCol = morphData.secondaryIndex % ATLAS_COLS;
         int logicalRow = morphData.secondaryIndex / ATLAS_COLS;
         Rectangle src = SrcFromLogical(tex, logicalCol, logicalRow, physCols, physRows,
@@ -407,8 +421,8 @@ void DrawBonetileWithMorphing(Texture2D tex, Camera camera, BoneMorphData morphD
             float tmp = u_left; u_left = u_right; u_right = tmp;
         }
 
-        float secondaryAlpha = morphData.blendFactor;
-        DrawQuadTextured3DWithAlpha(tex, p0, p1, p2, p3, u_left, v0t, u_right, v1t,
-            (unsigned char)(secondaryAlpha * 255));
+        // Alpha más visible para la textura secundaria
+        float secondaryAlpha = morphData.blendFactor * 0.8f;
+        DrawQuadTextured3DWithAlpha(tex, p0, p1, p2, p3, u_left, v0t, u_right, v1t, secondaryAlpha);
     }
 }
