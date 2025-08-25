@@ -7,6 +7,7 @@
 #include "raymath.h"
 #include "bonetile.h"
 #include "bones3d.h"
+#include "head_billboard.h"
 
 #define BASE_WIDTH 1920
 #define BASE_HEIGHT 1080
@@ -23,6 +24,13 @@ typedef struct {
     BoneRenderData* renderBones;
     int renderBonesCount;
     int renderBonesCapacity;
+
+    // Sistema de cabezas
+    HeadRenderData* renderHeads;
+    int renderHeadsCount;
+    int renderHeadsCapacity;
+    bool renderHeadBillboards;
+
     BonesAnimation animation;
     BonesRenderConfig renderConfig;
     Texture2D textures[MAX_TEXTURES];
@@ -50,6 +58,7 @@ static void App_HandleInput(AppState* app, float dt);
 static void App_UpdateCamera(AppState* app, float dt);
 static void App_UpdateAutoCenter(AppState* app);
 static void App_PrepareRenderBones(AppState* app);
+static void App_PrepareRenderHeads(AppState* app);
 static void App_Draw(AppState* app);
 
 /* ---------- Implementations ---------- */
@@ -69,7 +78,7 @@ static bool App_Init(AppState* app) {
     if (!app) return false;
     memset(app, 0, sizeof(*app));
     CheckBoneNameLength();
-    InitWindow(BASE_WIDTH, BASE_HEIGHT, "Bones3D - System with Morphing");
+    InitWindow(BASE_WIDTH, BASE_HEIGHT, "Bones3D - System with Morphing & Head Billboards");
     SetWindowState(FLAG_WINDOW_RESIZABLE);
 #if defined(__linux__)
     for (int i = 0; i < 5; i++) PollInputEvents();
@@ -90,6 +99,13 @@ static bool App_Init(AppState* app) {
     app->renderBones = NULL;
     app->renderBonesCount = 0;
     app->renderBonesCapacity = 0;
+
+    // Inicializar sistema de cabezas
+    app->renderHeads = NULL;
+    app->renderHeadsCount = 0;
+    app->renderHeadsCapacity = 0;
+    app->renderHeadBillboards = true;  // Activado por defecto
+
     app->textureCount = 0;
     app->physCols = 8; app->physRows = 8;
     app->useMorphing = false; // INICIALIZAR EN FALSE (método clásico por defecto)
@@ -134,6 +150,7 @@ static bool App_Init(AppState* app) {
 static void App_Shutdown(AppState* app) {
     if (!app) return;
     if (app->renderBones) free(app->renderBones);
+    if (app->renderHeads) free(app->renderHeads);  // Liberar memoria de cabezas
     CleanupTextureSystem(&app->textureSystem, &app->boneConfigs, &app->boneConfigCount);
     for (int i = 0; i < app->textureCount; i++) UnloadTexture(app->textures[i]);
     BonesFree(&app->animation);
@@ -179,6 +196,7 @@ static int App_GetTextureIndex(AppState* app, const char* path) {
 /*   * Reload texture configuration (F5).                                      */
 /*   * Switch camera modes and toggle mouse/keyboard control (1,2,C).          */
 /*   * Toggle morphing mode (M).                                               */
+/*   * Toggle head billboards (H).                                             */
 /* - Side effects: modifies app->currentFrame, app->autoPlay, etc.             */
 /* ************************************************************************** */
 static void App_HandleInput(AppState* app, float dt) {
@@ -251,13 +269,17 @@ static void App_HandleInput(AppState* app, float dt) {
         if (app->cameraMouseControl) DisableCursor(); else EnableCursor();
     }
 
-    // NUEVO: Toggle morphing con la tecla M
+    // Toggle morphing con la tecla M
     if (IsKeyPressed(KEY_M)) {
         app->useMorphing = !app->useMorphing;
         app->forceUpdate = true; // Forzar recálculo de render data
-
-        // Mostrar mensaje en consola para debug
         TraceLog(LOG_INFO, "Morphing %s", app->useMorphing ? "ENABLED" : "DISABLED");
+    }
+
+    // Toggle head billboards con la tecla H
+    if (IsKeyPressed(KEY_H)) {
+        app->renderHeadBillboards = !app->renderHeadBillboards;
+        TraceLog(LOG_INFO, "Head Billboards %s", app->renderHeadBillboards ? "ENABLED" : "DISABLED");
     }
 }
 
@@ -332,6 +354,11 @@ static void App_UpdateAutoCenter(AppState* app) {
     for (int p = 0; p < frame->personCount; p++) {
         const Person* person = &frame->persons[p];
         if (!person->active) continue;
+
+        // Calcular posición de cabeza para incluir en el centrado
+        Vector3 headPos = CalculateHeadPosition(person);
+        bool hasValidHead = Vector3Length(headPos) > 0.01f;
+
         for (int b = 0; b < person->boneCount; b++) {
             const Bone* bone = &person->bones[b];
             if (bone->position.valid && BonesIsPositionValid(bone->position.position)) {
@@ -342,13 +369,18 @@ static void App_UpdateAutoCenter(AppState* app) {
                 }
             }
         }
+
+        // NUEVO: Incluir posición de cabeza en el cálculo del centro
+        if (hasValidHead) {
+            totalPos = Vector3Add(totalPos, headPos);
+            validBoneCount++;
+        }
     }
 
     if (validBoneCount > 0) {
         Vector3 newCenter = Vector3Scale(totalPos, 1.0f / validBoneCount);
 
         if (app->camMode == 1 && app->autoPlay && app->autoCenterCalculated) {
-
             float lerpFactor = 0.15f;
             app->autoCenter = Vector3Lerp(app->autoCenter, newCenter, lerpFactor);
         }
@@ -385,6 +417,32 @@ static void App_PrepareRenderBones(AppState* app) {
 }
 
 /* ************************************************************************** */
+/* Prepare list of heads to render                                             */
+/* - Parameters: AppState* app                                                */
+/* - Returns: void                                                             */
+/* - Actions:                                                                  */
+/*   * If head rendering is disabled, sets count to 0 and returns.            */
+/*   * If frame changed or forced update, collects head render data.          */
+/* - Note: heads are processed separately from bones for modularity.          */
+/* ************************************************************************** */
+static void App_PrepareRenderHeads(AppState* app) {
+    if (!app || !app->renderHeadBillboards) {
+        if (app) app->renderHeadsCount = 0;
+        return;
+    }
+
+    // CAMBIO: Actualizar cabezas siempre que el frame sea válido
+    // No depender de forceUpdate para las cabezas
+    if (app->currentFrame != app->lastProcessedFrame || app->forceUpdate || true) {
+        CollectHeadsForRendering(&app->animation, &app->renderHeads,
+            &app->renderHeadsCount, &app->renderHeadsCapacity,
+            app->boneConfigs, app->boneConfigCount);
+    }
+
+    app->forceUpdate = false;
+}
+
+/* ************************************************************************** */
 /* Main drawing                                                                */
 /* - Parameters: AppState* app                                                */
 /* - Returns: void                                                             */
@@ -392,7 +450,8 @@ static void App_PrepareRenderBones(AppState* app) {
 /*   * Clears screen, sets 3D mode and draws grid and center sphere.          */
 /*   * Shows UI with current mode and controls.                               */
 /*   * Iterates app->renderBones and draws each bone using selected method.   */
-/*   * Optionally draws debug spheres around each bone.                       */
+/*   * Iterates app->renderHeads and draws each head billboard.               */
+/*   * Optionally draws debug spheres around each bone/head.                  */
 /* - Note: manages blend mode and depth test for correct rendering.          */
 /* ************************************************************************** */
 static void App_Draw(AppState* app) {
@@ -402,7 +461,7 @@ static void App_Draw(AppState* app) {
 
     // Mostrar el estado actual en pantalla
     const char* modeText = app->useMorphing ? "MORPHING MODE" : "CLASSIC MODE";
-    const char* controlsText = "M: Toggle Morphing | C: Mouse Control | 1/2: Camera Mode | Space: Play/Pause";
+    const char* controlsText = "M: Toggle Morphing | H: Toggle Heads | C: Mouse Control | 1/2: Camera Mode | Space: Play/Pause";
     DrawText(modeText, 10, 10, 20, app->useMorphing ? GREEN : BLUE);
     DrawText(controlsText, 10, 35, 16, DARKGRAY);
 
@@ -410,19 +469,21 @@ static void App_Draw(AppState* app) {
     snprintf(frameText, sizeof(frameText), "Frame: %d/%d %s", app->currentFrame + 1, app->maxFrames, app->autoPlay ? "(Playing)" : "(Paused)");
     DrawText(frameText, 10, 55, 16, DARKGRAY);
 
-    char statsText[128];
-    snprintf(statsText, sizeof(statsText), "Bones: %d | Camera Mode: %d | Mouse Control: %s",
-        app->renderBonesCount, app->camMode, app->cameraMouseControl ? "ON" : "OFF");
+    char statsText[256];
+    snprintf(statsText, sizeof(statsText), "Bones: %d | Heads: %s (%d) | Camera Mode: %d | Mouse Control: %s",
+        app->renderBonesCount, app->renderHeadBillboards ? "ON" : "OFF", app->renderHeadsCount,
+        app->camMode, app->cameraMouseControl ? "ON" : "OFF");
     DrawText(statsText, 10, 75, 16, DARKGRAY);
 
     BeginMode3D(app->camera);
     DrawGrid(24, 0.5f);
     if (app->autoCenterCalculated) DrawSphereWires(app->autoCenter, 0.05f, 8, 8, ORANGE);
 
-    if (app->renderBonesCount > 0) {
+    if (app->renderBonesCount > 0 || app->renderHeadsCount > 0) {
         rlDisableDepthTest();
         BeginBlendMode(BLEND_ALPHA);
 
+        // Renderizar huesos
         for (int i = 0; i < app->renderBonesCount; i++) {
             const BoneRenderData* bone = &app->renderBones[i];
             if (!bone->valid || !bone->visible) continue;
@@ -436,6 +497,7 @@ static void App_Draw(AppState* app) {
             float logicalCellH = physCellH * (app->physRows / ATLAS_ROWS);
             float aspect = logicalCellW / logicalCellH;
             Vector2 worldSize = (Vector2){ bone->size * aspect, bone->size };
+
             if (app->useMorphing) {
                 // MÉTODO NUEVO: Usar morphing
                 DrawBonetileWithMorphing(currentTex, app->camera, bone->morphData, bone->position, worldSize, app->physCols, app->physRows);
@@ -458,6 +520,35 @@ static void App_Draw(AppState* app) {
             if (app->renderConfig.drawDebugSpheres) {
                 Color debugCol = (texIndex == 0) ? RED : (texIndex == 1) ? BLUE : (texIndex == 2) ? PURPLE : GREEN;
                 DrawSphereWires(bone->position, app->renderConfig.debugSphereRadius, 8, 8, debugCol);
+            }
+        }
+
+        // Renderizar cabezas
+        if (app->renderHeadBillboards && app->renderHeadsCount > 0) {
+            for (int i = 0; i < app->renderHeadsCount; i++) {
+                const HeadRenderData* head = &app->renderHeads[i];
+                if (!head->valid || !head->visible) continue;
+
+                int texIndex = App_GetTextureIndex(app, head->texturePath);
+                Texture2D currentTex = app->textures[texIndex];
+
+                DrawHeadBillboard(currentTex, app->camera, head, app->physCols, app->physRows);
+
+                // Debug: Mostrar esfera en la posición de la cabeza si están activadas las esferas de debug
+                if (app->renderConfig.drawDebugSpheres) {
+                    DrawSphereWires(head->position, 0.05f, 8, 8, ORANGE);
+
+                    // Mostrar vectores de orientación
+                    if (head->orientation.valid) {
+                        Vector3 forwardEnd = Vector3Add(head->position, Vector3Scale(head->orientation.forward, 0.1f));
+                        Vector3 upEnd = Vector3Add(head->position, Vector3Scale(head->orientation.up, 0.1f));
+                        Vector3 rightEnd = Vector3Add(head->position, Vector3Scale(head->orientation.right, 0.1f));
+
+                        DrawLine3D(head->position, forwardEnd, BLUE);   // Forward = Azul
+                        DrawLine3D(head->position, upEnd, GREEN);       // Up = Verde
+                        DrawLine3D(head->position, rightEnd, RED);      // Right = Rojo
+                    }
+                }
             }
         }
 
@@ -485,6 +576,7 @@ int main(void) {
         App_UpdateCamera(&app, dt);
         App_UpdateAutoCenter(&app);
         App_PrepareRenderBones(&app);
+        App_PrepareRenderHeads(&app);  // Preparar cabezas
         App_Draw(&app);
     }
     App_Shutdown(&app);

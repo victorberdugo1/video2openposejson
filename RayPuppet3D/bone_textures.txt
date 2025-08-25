@@ -4,12 +4,13 @@
 # Visible: 1=si, 0=no
 # Size: tamaño del billboard (0.1-1.0)
 
-Nose tex/Head.png 1 0.25
-LEye tex/texA.png 0 0.20
-REye tex/texA.png 0 0.20
-LEar tex/texA.png 0 0.15
-REar tex/texA.png 0 0.15
-Neck tex/texC.png 1 0.30
+Nose tex/Head.png 0 0.25
+Head tex/Head1.png 1 0.30
+LEye tex/texC.png 0 0.20
+REye tex/texC.png 0 0.20
+LEar tex/texC.png 0 0.15
+REar tex/texC.png 0 0.15
+Neck tex/texA.png 1 0.30
 LShoulder tex/texA.png 1 0.35
 RShoulder tex/texA.png 1 0.35
 LElbow tex/texB.png 1 0.30
