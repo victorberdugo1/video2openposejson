@@ -433,27 +433,6 @@ BonesError BonesDrawBone(const Bone* bone, Camera camera, Texture2D texture, con
     return BONES_SUCCESS;
 }
 
-void BonesPrintFrameInfo(const BonesAnimation* animation, int frameNumber) {
-    if (!BonesIsValidFrame(animation, frameNumber)) {
-        return;
-    }
-
-    const AnimationFrame* frame = &animation->frames[frameNumber];
-
-    for (int i = 0; i < frame->personCount; i++) {
-        BonesPrintPersonInfo(&frame->persons[i]);
-    }
-}
-
-void BonesPrintPersonInfo(const Person* person) {
-    if (!IsValidPointer(person)) return;
-
-    //int validBones = BonesCountValidBones(person);
-}
-
-void BonesPrintBoneInfo(const Bone* bone) {
-    if (!IsValidPointer(bone)) return;
-}
 
 int BonesCountValidBones(const Person* person) {
     if (!IsValidPointer(person)) return 0;
@@ -487,11 +466,6 @@ Vector3 BonesCalculatePersonCenter(const Person* person) {
     }
 
     return (Vector3) { 0, 0, 0 };
-}
-
-Vector3 BonesInterpolatePosition(Vector3 pos1, Vector3 pos2, float t) {
-    t = Clamp(t, 0.0f, 1.0f);
-    return Vector3Lerp(pos1, pos2, t);
 }
 
 void CheckBoneNameLength(void) {

@@ -39,7 +39,7 @@ typedef struct {
     int lastProcessedFrame;
     bool forceUpdate;
     Vector3 lastCameraPos;
-    bool useMorphing; // NUEVO CAMPO PARA TOGGLE
+    bool useMorphing;
 } AppState;
 
 /* ---------- Prototypes ---------- */
