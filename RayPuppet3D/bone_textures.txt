@@ -13,10 +13,12 @@ REar tex/texC.png 0 0.15
 Neck tex/texA.png 1 0.30
 LShoulder tex/texA.png 1 0.35
 RShoulder tex/texA.png 1 0.35
+Chest tex/Head1.png 1 0.35
 LElbow tex/texB.png 1 0.30
 RElbow tex/texB.png 1 0.30
 LWrist tex/texB.png 1 0.25
 RWrist tex/texB.png 1 0.25
+Hip tex/Head1.png 1 0.25
 LHip tex/texC.png 1 0.35
 RHip tex/texC.png 1 0.35
 LKnee tex/texC.png 1 0.30

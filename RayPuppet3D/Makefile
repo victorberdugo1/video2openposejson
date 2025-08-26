@@ -6,7 +6,7 @@ SRC_DIR = src
 OBJ_DIR = obj
 
 # Archivos fuente
-SRC = main.c bonetile.c bones3d.c head_billboard.c
+SRC = main.c bonetile.c bones3d.c head_billboard.c torso_billboard.c
 
 # Rutas completas de los fuentes
 SRCS = $(addprefix $(SRC_DIR)/, $(SRC))

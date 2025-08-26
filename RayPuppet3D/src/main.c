@@ -8,6 +8,7 @@
 #include "bonetile.h"
 #include "bones3d.h"
 #include "head_billboard.h"
+#include "torso_billboard.h"  // Nueva inclusión
 
 #define BASE_WIDTH 1920
 #define BASE_HEIGHT 1080
@@ -30,6 +31,12 @@ typedef struct {
     int renderHeadsCount;
     int renderHeadsCapacity;
     bool renderHeadBillboards;
+
+    // Sistema de torsos
+    TorsoRenderData* renderTorsos;
+    int renderTorsosCount;
+    int renderTorsosCapacity;
+    bool renderTorsoBillboards;
 
     BonesAnimation animation;
     BonesRenderConfig renderConfig;
@@ -59,6 +66,7 @@ static void App_UpdateCamera(AppState* app, float dt);
 static void App_UpdateAutoCenter(AppState* app);
 static void App_PrepareRenderBones(AppState* app);
 static void App_PrepareRenderHeads(AppState* app);
+static void App_PrepareRenderTorsos(AppState* app);  // Nueva función
 static void App_Draw(AppState* app);
 
 /* ---------- Implementations ---------- */
@@ -78,7 +86,7 @@ static bool App_Init(AppState* app) {
     if (!app) return false;
     memset(app, 0, sizeof(*app));
     CheckBoneNameLength();
-    InitWindow(BASE_WIDTH, BASE_HEIGHT, "Bones3D - System with Morphing & Head Billboards");
+    InitWindow(BASE_WIDTH, BASE_HEIGHT, "Bones3D - System with Morphing, Head & Torso Billboards");
     SetWindowState(FLAG_WINDOW_RESIZABLE);
 #if defined(__linux__)
     for (int i = 0; i < 5; i++) PollInputEvents();
@@ -105,6 +113,12 @@ static bool App_Init(AppState* app) {
     app->renderHeadsCount = 0;
     app->renderHeadsCapacity = 0;
     app->renderHeadBillboards = true;  // Activado por defecto
+
+    // Inicializar sistema de torsos
+    app->renderTorsos = NULL;
+    app->renderTorsosCount = 0;
+    app->renderTorsosCapacity = 0;
+    app->renderTorsoBillboards = true;  // Activado por defecto
 
     app->textureCount = 0;
     app->physCols = 8; app->physRows = 8;
@@ -151,6 +165,7 @@ static void App_Shutdown(AppState* app) {
     if (!app) return;
     if (app->renderBones) free(app->renderBones);
     if (app->renderHeads) free(app->renderHeads);  // Liberar memoria de cabezas
+    if (app->renderTorsos) free(app->renderTorsos);  // Liberar memoria de torsos
     CleanupTextureSystem(&app->textureSystem, &app->boneConfigs, &app->boneConfigCount);
     for (int i = 0; i < app->textureCount; i++) UnloadTexture(app->textures[i]);
     BonesFree(&app->animation);
@@ -197,6 +212,7 @@ static int App_GetTextureIndex(AppState* app, const char* path) {
 /*   * Switch camera modes and toggle mouse/keyboard control (1,2,C).          */
 /*   * Toggle morphing mode (M).                                               */
 /*   * Toggle head billboards (H).                                             */
+/*   * Toggle torso billboards (T).                                            */
 /* - Side effects: modifies app->currentFrame, app->autoPlay, etc.             */
 /* ************************************************************************** */
 static void App_HandleInput(AppState* app, float dt) {
@@ -281,6 +297,12 @@ static void App_HandleInput(AppState* app, float dt) {
         app->renderHeadBillboards = !app->renderHeadBillboards;
         TraceLog(LOG_INFO, "Head Billboards %s", app->renderHeadBillboards ? "ENABLED" : "DISABLED");
     }
+
+    // Toggle torso billboards con la tecla T
+    if (IsKeyPressed(KEY_T)) {
+        app->renderTorsoBillboards = !app->renderTorsoBillboards;
+        TraceLog(LOG_INFO, "Torso Billboards %s", app->renderTorsoBillboards ? "ENABLED" : "DISABLED");
+    }
 }
 
 /* ************************************************************************** */
@@ -339,6 +361,7 @@ static void App_UpdateCamera(AppState* app, float dt) {
 /* - Actions:                                                                  */
 /*   * Iterates bones in current frame and averages reference positions       */
 /*     (Spine, Chest, Neck, Hip) to center the view.                          */
+/*   * Includes head and torso positions in the calculation.                  */
 /*   * Marks app->autoCenterCalculated when computed.                         */
 /* - Note: does not recalculate if already computed or frame invalid.         */
 /* ************************************************************************** */
@@ -359,6 +382,12 @@ static void App_UpdateAutoCenter(AppState* app) {
         Vector3 headPos = CalculateHeadPosition(person);
         bool hasValidHead = Vector3Length(headPos) > 0.01f;
 
+        // Calcular posiciones de torso para incluir en el centrado
+        Vector3 chestPos = CalculateChestPosition(person);
+        Vector3 hipPos = CalculateHipPosition(person);
+        bool hasValidChest = Vector3Length(chestPos) > 0.01f;
+        bool hasValidHip = Vector3Length(hipPos) > 0.01f;
+
         for (int b = 0; b < person->boneCount; b++) {
             const Bone* bone = &person->bones[b];
             if (bone->position.valid && BonesIsPositionValid(bone->position.position)) {
@@ -370,9 +399,19 @@ static void App_UpdateAutoCenter(AppState* app) {
             }
         }
 
-        // NUEVO: Incluir posición de cabeza en el cálculo del centro
+        // Incluir posición de cabeza en el cálculo del centro
         if (hasValidHead) {
             totalPos = Vector3Add(totalPos, headPos);
+            validBoneCount++;
+        }
+
+        // Incluir posiciones de torso en el cálculo del centro
+        if (hasValidChest) {
+            totalPos = Vector3Add(totalPos, chestPos);
+            validBoneCount++;
+        }
+        if (hasValidHip) {
+            totalPos = Vector3Add(totalPos, hipPos);
             validBoneCount++;
         }
     }
@@ -443,6 +482,29 @@ static void App_PrepareRenderHeads(AppState* app) {
 }
 
 /* ************************************************************************** */
+/* Prepare list of torsos to render                                            */
+/* - Parameters: AppState* app                                                */
+/* - Returns: void                                                             */
+/* - Actions:                                                                  */
+/*   * If torso rendering is disabled, sets count to 0 and returns.           */
+/*   * If frame changed or forced update, collects torso render data.         */
+/* - Note: torsos are processed separately from bones for modularity.         */
+/* ************************************************************************** */
+static void App_PrepareRenderTorsos(AppState* app) {
+    if (!app || !app->renderTorsoBillboards) {
+        if (app) app->renderTorsosCount = 0;
+        return;
+    }
+
+    // Actualizar torsos cuando sea necesario
+    if (app->currentFrame != app->lastProcessedFrame || app->forceUpdate || true) {
+        CollectTorsosForRendering(&app->animation, &app->renderTorsos,
+            &app->renderTorsosCount, &app->renderTorsosCapacity,
+            app->boneConfigs, app->boneConfigCount);
+    }
+}
+
+/* ************************************************************************** */
 /* Main drawing                                                                */
 /* - Parameters: AppState* app                                                */
 /* - Returns: void                                                             */
@@ -451,7 +513,8 @@ static void App_PrepareRenderHeads(AppState* app) {
 /*   * Shows UI with current mode and controls.                               */
 /*   * Iterates app->renderBones and draws each bone using selected method.   */
 /*   * Iterates app->renderHeads and draws each head billboard.               */
-/*   * Optionally draws debug spheres around each bone/head.                  */
+/*   * Iterates app->renderTorsos and draws each torso billboard.             */
+/*   * Optionally draws debug spheres around each bone/head/torso.            */
 /* - Note: manages blend mode and depth test for correct rendering.          */
 /* ************************************************************************** */
 static void App_Draw(AppState* app) {
@@ -461,7 +524,7 @@ static void App_Draw(AppState* app) {
 
     // Mostrar el estado actual en pantalla
     const char* modeText = app->useMorphing ? "MORPHING MODE" : "CLASSIC MODE";
-    const char* controlsText = "M: Toggle Morphing | H: Toggle Heads | C: Mouse Control | 1/2: Camera Mode | Space: Play/Pause";
+    const char* controlsText = "M: Toggle Morphing | H: Toggle Heads | T: Toggle Torsos | C: Mouse Control | 1/2: Camera Mode | Space: Play/Pause";
     DrawText(modeText, 10, 10, 20, app->useMorphing ? GREEN : BLUE);
     DrawText(controlsText, 10, 35, 16, DARKGRAY);
 
@@ -470,8 +533,9 @@ static void App_Draw(AppState* app) {
     DrawText(frameText, 10, 55, 16, DARKGRAY);
 
     char statsText[256];
-    snprintf(statsText, sizeof(statsText), "Bones: %d | Heads: %s (%d) | Camera Mode: %d | Mouse Control: %s",
+    snprintf(statsText, sizeof(statsText), "Bones: %d | Heads: %s (%d) | Torsos: %s (%d) | Camera Mode: %d | Mouse Control: %s",
         app->renderBonesCount, app->renderHeadBillboards ? "ON" : "OFF", app->renderHeadsCount,
+        app->renderTorsoBillboards ? "ON" : "OFF", app->renderTorsosCount,
         app->camMode, app->cameraMouseControl ? "ON" : "OFF");
     DrawText(statsText, 10, 75, 16, DARKGRAY);
 
@@ -479,7 +543,7 @@ static void App_Draw(AppState* app) {
     DrawGrid(24, 0.5f);
     if (app->autoCenterCalculated) DrawSphereWires(app->autoCenter, 0.05f, 8, 8, ORANGE);
 
-    if (app->renderBonesCount > 0 || app->renderHeadsCount > 0) {
+    if (app->renderBonesCount > 0 || app->renderHeadsCount > 0 || app->renderTorsosCount > 0) {
         rlDisableDepthTest();
         BeginBlendMode(BLEND_ALPHA);
 
@@ -552,6 +616,36 @@ static void App_Draw(AppState* app) {
             }
         }
 
+        // Renderizar torsos
+        if (app->renderTorsoBillboards && app->renderTorsosCount > 0) {
+            for (int i = 0; i < app->renderTorsosCount; i++) {
+                const TorsoRenderData* torso = &app->renderTorsos[i];
+                if (!torso->valid || !torso->visible) continue;
+
+                int texIndex = App_GetTextureIndex(app, torso->texturePath);
+                Texture2D currentTex = app->textures[texIndex];
+
+                DrawTorsoBillboard(currentTex, app->camera, torso, app->physCols, app->physRows);
+
+                // Debug: Mostrar esfera en la posición del torso si están activadas las esferas de debug
+                if (app->renderConfig.drawDebugSpheres) {
+                    Color torsoColor = (torso->type == TORSO_CHEST) ? YELLOW : PURPLE;
+                    DrawSphereWires(torso->position, 0.06f, 8, 8, torsoColor);
+
+                    // Mostrar vectores de orientación del torso
+                    if (torso->orientation.valid) {
+                        Vector3 forwardEnd = Vector3Add(torso->position, Vector3Scale(torso->orientation.forward, 0.12f));
+                        Vector3 upEnd = Vector3Add(torso->position, Vector3Scale(torso->orientation.up, 0.12f));
+                        Vector3 rightEnd = Vector3Add(torso->position, Vector3Scale(torso->orientation.right, 0.12f));
+
+                        DrawLine3D(torso->position, forwardEnd, DARKBLUE);  // Forward = Azul oscuro
+                        DrawLine3D(torso->position, upEnd, DARKGREEN);      // Up = Verde oscuro
+                        DrawLine3D(torso->position, rightEnd, MAROON);      // Right = Rojo oscuro
+                    }
+                }
+            }
+        }
+
         EndBlendMode();
         rlEnableDepthMask();
     }
@@ -577,6 +671,7 @@ int main(void) {
         App_UpdateAutoCenter(&app);
         App_PrepareRenderBones(&app);
         App_PrepareRenderHeads(&app);  // Preparar cabezas
+        App_PrepareRenderTorsos(&app); // Preparar torsos
         App_Draw(&app);
     }
     App_Shutdown(&app);
