@@ -8,13 +8,17 @@
 #include <time.h>
 #include <math.h>
 #include <stddef.h>
-#include "bonetile.h"  // Ahora BoneMorphData está definido en bonetile.h
+#include "bonetile.h" 
 
-#define MAX_BONE_NAME_LENGTH 32
+
 #define MAX_BONES_PER_PERSON 32
 #define MAX_FRAMES 10000
 #define MAX_PERSONS 10
+#ifndef MAX_FILE_PATH_LENGTH
+#define MAX_BONE_NAME_LENGTH 32
 #define MAX_FILE_PATH_LENGTH 512
+#endif
+
 
 typedef struct {
     char boneName[MAX_BONE_NAME_LENGTH];
@@ -31,28 +35,8 @@ typedef struct {
     time_t lastModified;
 } SimpleTextureSystem;
 
-typedef struct {
-    char boneName[MAX_BONE_NAME_LENGTH];
-    char texturePath[MAX_FILE_PATH_LENGTH];
-    bool visible;
-    float size;
-    bool valid;
-} BoneConfig;
 
-typedef struct {
-    Vector3 position;
-    BoneMorphData morphData;  // Ahora definido en bonetile.h
-    int atlasIndex;
-    float rotation;
-    bool mirrored;
-    float distance;
-    char boneName[MAX_BONE_NAME_LENGTH];
-    char personId[16];
-    char texturePath[MAX_FILE_PATH_LENGTH];
-    bool visible;
-    float size;
-    bool valid;
-} BoneRenderData;
+
 
 typedef enum {
     BONES_SUCCESS = 0,
@@ -84,7 +68,7 @@ typedef struct {
     bool visible;
 } Bone;
 
-typedef struct {
+typedef struct Person {
     char personId[16];
     Bone bones[MAX_BONES_PER_PERSON];
     int boneCount;

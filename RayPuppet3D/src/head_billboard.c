@@ -1,11 +1,9 @@
-// head_billboard.c - Sistema de cabezas con orientación real basada en OpenPose
 #include "head_billboard.h"
 #include "bonetile.h"
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
 
-// --- Calcula la posición central de la cabeza usando los puntos faciales disponibles ---
 Vector3 CalculateHeadPosition(const Person* person) {
     if (!person || person->boneCount == 0) {
         return (Vector3) { 0, 0, 0 };
@@ -18,7 +16,6 @@ Vector3 CalculateHeadPosition(const Person* person) {
         const Bone* bone = &person->bones[i];
         if (!bone->position.valid) continue;
 
-        // Incluir las marcas faciales de OpenPose si están presentes
         if (strcmp(bone->name, "Nose") == 0 ||
             strcmp(bone->name, "LEye") == 0 ||
             strcmp(bone->name, "REye") == 0 ||
@@ -37,7 +34,6 @@ Vector3 CalculateHeadPosition(const Person* person) {
     return (Vector3) { 0, 0, 0 };
 }
 
-// --- Calcula una orientación "real" de la cabeza con Nose/ Eyes/ Ears ---
 HeadOrientation CalculateHeadOrientation(const Person* person) {
     HeadOrientation orientation = { 0 };
     orientation.valid = false;
@@ -68,9 +64,7 @@ HeadOrientation CalculateHeadOrientation(const Person* person) {
         }
     }
 
-    // Necesitamos al menos nariz + (ojos o orejas) para una orientación fiable
     if (!hasNose || !((hasLEye && hasREye) || (hasLEar && hasREar))) {
-        // Aún así calculamos la posición para el pivote
         Vector3 centerFallback = CalculateHeadPosition(person);
         if (Vector3Length(centerFallback) > 0.0f) {
             orientation.position = centerFallback;
@@ -79,7 +73,7 @@ HeadOrientation CalculateHeadOrientation(const Person* person) {
         return orientation;
     }
 
-    // posición central (pivote) basada en la media de los puntos disponibles
+    // Calculate central position
     Vector3 totalPos = nose;
     int pointCount = 1;
     if (hasLEye) { totalPos = Vector3Add(totalPos, lEye); pointCount++; }
@@ -89,7 +83,7 @@ HeadOrientation CalculateHeadOrientation(const Person* person) {
     Vector3 center = Vector3Scale(totalPos, 1.0f / pointCount);
     orientation.position = center;
 
-    // right: preferir orejas, si no, ojos
+    // Calculate right vector
     Vector3 rightVec = (Vector3){ 1,0,0 };
     if (hasLEar && hasREar) {
         rightVec = Vector3Normalize(Vector3Subtract(rEar, lEar));
@@ -98,7 +92,7 @@ HeadOrientation CalculateHeadOrientation(const Person* person) {
         rightVec = Vector3Normalize(Vector3Subtract(rEye, lEye));
     }
 
-    // back reference: media entre orejas/ojos para obtener un punto posterior
+    // Calculate back reference
     Vector3 backRef;
     if (hasLEar && hasREar) {
         backRef = Vector3Scale(Vector3Add(lEar, rEar), 0.5f);
@@ -110,26 +104,26 @@ HeadOrientation CalculateHeadOrientation(const Person* person) {
         backRef = center;
     }
 
-    // forward: nariz menos punto trasero
+    // Calculate forward vector
     Vector3 forward = Vector3Normalize(Vector3Subtract(nose, backRef));
     if (Vector3Length(forward) < 1e-6f) {
-        forward = (Vector3){ 0,0,1 }; // fallback
+        forward = (Vector3){ 0,0,1 };
     }
 
-    // up: cross(right, forward)
+    // Calculate up vector
     Vector3 up = Vector3Normalize(Vector3CrossProduct(rightVec, forward));
     if (Vector3Length(up) < 1e-6f) {
         up = (Vector3){ 0,1,0 };
     }
 
-    // re-ortonormalizar right
+    // Re-orthonormalize right
     rightVec = Vector3Normalize(Vector3CrossProduct(forward, up));
 
     orientation.forward = forward;
     orientation.up = up;
     orientation.right = rightVec;
 
-    // Euler angles (en radianes). Los dejamos por si quieres usarlos.
+    // Calculate Euler angles
     orientation.yaw = atan2f(forward.x, forward.z);
     orientation.pitch = atan2f(-forward.y, sqrtf(forward.x * forward.x + forward.z * forward.z));
     orientation.roll = atan2f(up.x, sqrtf(up.y * up.y + up.z * up.z));
@@ -138,21 +132,18 @@ HeadOrientation CalculateHeadOrientation(const Person* person) {
     return orientation;
 }
 
-// --- NUEVA FUNCIÓN: Mapeo de atlas basado en orientación real de la cabeza ---
-// --- FUNCIÓN CORREGIDA: Mapeo de atlas basado en orientación real de la cabeza ---
 void CalculateHeadRenderData(const HeadRenderData* headData, Camera camera,
     int* outChosenIndex, float* outRotation, bool* outMirrored) {
 
     if (!headData->orientation.valid) {
-        // Fallback al método clásico si no hay orientación válida
         CalculateBoneRenderData(headData->position, camera, outChosenIndex, outRotation, outMirrored);
         return;
     }
 
     const int indices[3][8] = {
-        {  0,  4,  5,  6,  7,  6,  5,  4 },  // fila principal (nivel medio)
-        {  2, 12, 13, 14, 15, 14, 13, 12 },  // fila inferior (mirando hacia abajo)
-        {  1,  8,  9, 10, 11, 10,  9,  8 }   // fila superior (mirando hacia arriba)
+        {  0,  4,  5,  6,  7,  6,  5,  4 },
+        {  2, 12, 13, 14, 15, 14, 13, 12 },
+        {  1,  8,  9, 10, 11, 10,  9,  8 }
     };
     const int topdownIndex = 3;
     const int bottomIndex = 15;
@@ -160,21 +151,16 @@ void CalculateHeadRenderData(const HeadRenderData* headData, Camera camera,
     const float HIGH_THRESHOLD = 22.5f;
     const float MAIN_THRESHOLD = -22.5f;
 
-    // Obtener la dirección desde la cabeza hacia la cámara (igual que en la función normal)
     Vector3 camDir = Vector3Subtract(camera.position, headData->position);
 
-    // CLAVE: Transformar la dirección de la cámara al espacio local de la cabeza
-    // Pero invertimos la interpretación para que coincida con lo que "ve" la cámara
+    // Transform camera direction to head's local space
     Vector3 localCamDir;
-    localCamDir.x = Vector3DotProduct(camDir, headData->orientation.right);   // componente hacia la derecha de la cabeza
-    localCamDir.y = Vector3DotProduct(camDir, headData->orientation.up);      // componente hacia arriba de la cabeza  
-    localCamDir.z = Vector3DotProduct(camDir, headData->orientation.forward); // componente hacia adelante de la cabeza
+    localCamDir.x = Vector3DotProduct(camDir, headData->orientation.right);
+    localCamDir.y = Vector3DotProduct(camDir, headData->orientation.up);
+    localCamDir.z = Vector3DotProduct(camDir, headData->orientation.forward);
 
-    // CORRECCIÓN CLAVE: Invertir X para que la lógica coincida con la función normal
-    // Cuando la cabeza mira a la derecha, la cámara ve su lado izquierdo
     localCamDir.x = -localCamDir.x;
 
-    // Calcular yaw y pitch en el espacio local de la cabeza
     float localYaw = atan2f(localCamDir.x, localCamDir.z);
     if (localYaw < 0.0f) localYaw += 2.0f * PI;
     float localYawDeg = localYaw * RAD2DEG;
@@ -183,8 +169,6 @@ void CalculateHeadRenderData(const HeadRenderData* headData, Camera camera,
     float localPitch = atan2f(localCamDir.y, horizDistance);
     float localPitchDeg = localPitch * RAD2DEG;
 
-    // El resto de la función permanece igual...
-    // Determinar la fila del atlas basada en el pitch local
     int chosenRow = -1;
     bool useTopdown = false;
     bool isTopView = false;
@@ -194,34 +178,32 @@ void CalculateHeadRenderData(const HeadRenderData* headData, Camera camera,
         isTopView = true;
     }
     else if (localPitchDeg >= HIGH_THRESHOLD) {
-        chosenRow = 2; // fila superior
+        chosenRow = 2;
     }
     else if (localPitchDeg >= MAIN_THRESHOLD) {
-        chosenRow = 0; // fila principal
+        chosenRow = 0;
     }
     else if (localPitchDeg >= -TOPDOWN_ANGLE) {
-        chosenRow = 1; // fila inferior
+        chosenRow = 1;
     }
     else {
         useTopdown = true;
         isTopView = false;
     }
 
-    // Calcular el sector basado en el yaw local
     int sector = 0;
     float normalizedYaw = localYawDeg + 22.5f;
     if (normalizedYaw >= 360.0f) normalizedYaw -= 360.0f;
 
-    if (normalizedYaw < 45.0f) sector = 0;       // frente
-    else if (normalizedYaw < 90.0f) sector = 1;  // frente-derecha
-    else if (normalizedYaw < 135.0f) sector = 2; // derecha
-    else if (normalizedYaw < 180.0f) sector = 3; // atrás-derecha
-    else if (normalizedYaw < 225.0f) sector = 4; // atrás
-    else if (normalizedYaw < 270.0f) sector = 5; // atrás-izquierda
-    else if (normalizedYaw < 315.0f) sector = 6; // izquierda
-    else sector = 7;                             // frente-izquierda
+    if (normalizedYaw < 45.0f) sector = 0;
+    else if (normalizedYaw < 90.0f) sector = 1;
+    else if (normalizedYaw < 135.0f) sector = 2;
+    else if (normalizedYaw < 180.0f) sector = 3;
+    else if (normalizedYaw < 225.0f) sector = 4;
+    else if (normalizedYaw < 270.0f) sector = 5;
+    else if (normalizedYaw < 315.0f) sector = 6;
+    else sector = 7;
 
-    // Asignar índice, rotación y espejado
     if (useTopdown) {
         if (isTopView) {
             *outChosenIndex = topdownIndex;
@@ -238,27 +220,10 @@ void CalculateHeadRenderData(const HeadRenderData* headData, Camera camera,
     else {
         *outChosenIndex = indices[chosenRow][sector];
         *outRotation = 0.0f;
-        *outMirrored = !(sector >= 5 && sector <= 7); // espejear para los sectores izquierdos
+        *outMirrored = !(sector >= 5 && sector <= 7);
     }
 }
 
-// --- Función de morphing para cabezas (opcional, por si quieres usar morphing también) ---
-void CalculateHeadMorphData(const HeadRenderData* headData, Camera camera, BoneMorphData* outMorphData) {
-    // Por ahora usar la versión sin morphing, pero podrías implementar morphing similar al de los bones
-    int primaryIndex;
-    float rotation;
-    bool mirrored;
-
-    CalculateHeadRenderData(headData, camera, &primaryIndex, &rotation, &mirrored);
-
-    outMorphData->primaryIndex = primaryIndex;
-    outMorphData->secondaryIndex = primaryIndex; // sin morphing por ahora
-    outMorphData->blendFactor = 0.0f;
-    outMorphData->rotation = rotation;
-    outMorphData->mirrored = mirrored;
-}
-
-// --- Mantener la misma lógica de visibilidad que antes (mínimo 2 marcas faciales) ---
 bool ShouldRenderHead(const Person* person) {
     if (!person || !person->active) return false;
 
@@ -279,15 +244,14 @@ bool ShouldRenderHead(const Person* person) {
     return facialPoints >= 2;
 }
 
-// --- DRAW ACTUALIZADO: usa la orientación real de la cabeza ---
-void DrawHeadBillboard(Texture2D texture, Camera camera, const HeadRenderData* headData, int physCols, int physRows) {
+void DrawHeadBillboard(Texture2D texture, Camera camera, const HeadRenderData* headData,
+    int physCols, int physRows) {
     if (!headData || !headData->valid || !headData->visible) return;
 
     int chosenIndex;
     float rotation;
     bool mirrored;
 
-    // USAR LA NUEVA FUNCIÓN que considera la orientación real de la cabeza
     CalculateHeadRenderData(headData, camera, &chosenIndex, &rotation, &mirrored);
 
     int logicalCol = chosenIndex % ATLAS_COLS;
@@ -296,13 +260,12 @@ void DrawHeadBillboard(Texture2D texture, Camera camera, const HeadRenderData* h
     bool finalMirror = false;
     Rectangle src = SrcFromLogical(texture, logicalCol, logicalRow, physCols, physRows, mirrored, &finalMirror);
 
-    // Dibujar con la rotación calculada basada en la orientación real de la cabeza
     Vector2 worldSize = (Vector2){ headData->size, headData->size };
     DrawBonetileCustom(texture, camera, src, headData->position, worldSize, rotation, finalMirror);
 }
 
-// --- Recopilar heads tal como antes, pero ahora con orientación correcta ---
-void CollectHeadsForRendering(const BonesAnimation* animation, HeadRenderData** heads, int* headCount, int* headCapacity, BoneConfig* boneConfigs, int boneConfigCount) {
+void CollectHeadsForRendering(const BonesAnimation* animation, HeadRenderData** heads,
+    int* headCount, int* headCapacity, BoneConfig* boneConfigs, int boneConfigCount) {
     *headCount = 0;
 
     if (!animation->isLoaded) return;
@@ -344,12 +307,10 @@ void CollectHeadsForRendering(const BonesAnimation* animation, HeadRenderData** 
         HeadRenderData* headData = &(*heads)[*headCount];
         memset(headData, 0, sizeof(HeadRenderData));
 
-        // Calcular posición y orientación reales
         headData->position = CalculateHeadPosition(person);
         headData->orientation = CalculateHeadOrientation(person);
 
         if (!headData->orientation.valid && Vector3Length(headData->position) < 1e-6f) {
-            // No hay datos útiles -> saltar
             continue;
         }
 

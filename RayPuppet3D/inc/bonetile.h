@@ -1,40 +1,103 @@
-// bonetile.h
 #ifndef BONETILE_H
 #define BONETILE_H
 
 #include "raylib.h"
+#include "rlgl.h"
+#include <stdbool.h>
+#include <stdio.h>
 
 #define ATLAS_COLS 4
 #define ATLAS_ROWS 4
 
-// Estructura para datos de morphing - DEBE estar aquí para evitar dependencias circulares
+#ifndef MAX_BONE_NAME_LENGTH
+#define MAX_BONE_NAME_LENGTH 32
+#endif
+#ifndef MAX_FILE_PATH_LENGTH
+#define MAX_FILE_PATH_LENGTH 512
+#endif
+
+typedef struct Person Person;
+
 typedef struct {
-    int primaryIndex;      // Índice principal del atlas
-    int secondaryIndex;    // Índice secundario para blend
-    float blendFactor;     // 0.0 = solo primary, 1.0 = solo secondary
-    int effectType;
-    float rotation;        // Rotación en grados
-    bool mirrored;         // Si está espejado
+    Vector3 position;
+    Vector3 forward;
+    Vector3 up;
+    Vector3 right;
+    float yaw;
+    float pitch;
+    float roll;
+    bool valid;
+} BoneOrientation;
+
+typedef struct {
+    int primaryIndex;
+    int secondaryIndex;
+    float blendFactor;
+    float rotation;
+    bool mirrored;
 } BoneMorphData;
 
-// Funciones existentes
-void DrawBonetileCustom(Texture2D tex, Camera camera, Rectangle src, Vector3 pos,
-    Vector2 size, float rotationDeg, bool mirrored);
+typedef struct {
+    char personId[16];
+    char boneName[MAX_BONE_NAME_LENGTH];
+    Vector3 position;
+    BoneOrientation orientation;
+    BoneMorphData morphData;
+    int atlasIndex;
+    float rotation;
+    bool mirrored;
+    float distance;
+    char texturePath[MAX_FILE_PATH_LENGTH];
+    float size;
+    bool valid;
+    bool visible;
+} BoneRenderData;
+
+typedef struct {
+    char boneName[MAX_BONE_NAME_LENGTH];
+    char texturePath[MAX_FILE_PATH_LENGTH];
+    float size;
+    bool visible;
+    bool valid;
+} BoneConfig;
+
+bool GetBoneConnections(const char* boneName, char connections[3][MAX_BONE_NAME_LENGTH]);
+Vector3 GetConnectedBonePosition(const char* boneName, const struct Person* person);
+BoneOrientation CalculateBoneOrientation(const char* boneName, const struct Person* person);
+
+bool GetBoneConnectionsWithPriority(const char* boneName, char connections[3][MAX_BONE_NAME_LENGTH], float priorities[3]);
+BoneOrientation CalculateEnhancedBoneOrientation(const char* boneName, const struct Person* person);
+
+void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, Camera camera,
+    int* outChosenIndex, float* outRotation, bool* outMirrored);
+
+BoneRenderData CreateBoneRenderData(const char* boneName, const Person* person,
+    const BoneConfig* config);
+
+void DrawBoneWithOrientation(Texture2D texture, Camera camera, const char* boneName,
+    const Person* person, const BoneConfig* config,
+    int physCols, int physRows);
+
+void CalculateEnhancedBoneMorphData(const BoneRenderData* boneData, Camera camera,
+    BoneMorphData* outMorphData);
+
+void CalculateBoneRenderDataWithOrientation(const BoneRenderData* boneData, Camera camera,
+    int* outChosenIndex, float* outRotation, bool* outMirrored);
+
+void DrawBonetileCustom(Texture2D tex, Camera camera, Rectangle src, Vector3 pos, Vector2 size,
+    float rotationDeg, bool mirrored);
 
 Rectangle GetAtlasCellSrcPos(Texture2D tex, int col, int rowIndex, bool mirrored, bool* outMirrored);
 
-// Función original que faltaba la declaración
 void CalculateBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex,
     float* outRotation, bool* outMirrored);
 
-// Nuevas funciones para morphing
+Rectangle SrcFromLogical(Texture2D tex, int logicalCol, int logicalRow, int physCols, int physRows,
+    bool mirrored, bool* outMirrored);
+
 void CalculateBoneMorphData(Vector3 bonePos, Camera camera, BoneMorphData* outMorphData);
 
 void DrawBonetileWithMorphing(Texture2D tex, Camera camera, BoneMorphData morphData,
     Vector3 pos, Vector2 size, int physCols, int physRows);
 
-// ESTA es la función que falta - SrcFromLogical
-Rectangle SrcFromLogical(Texture2D tex, int logicalCol, int logicalRow,
-    int physCols, int physRows, bool mirrored, bool* outMirrored);
-
-#endif // BONETILE_H
+#endif /* BONETILE_H */

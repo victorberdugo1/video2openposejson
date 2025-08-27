@@ -33,9 +33,7 @@ static void SafeStrCopy(char* dest, const char* src, size_t destSize) {
     if (!IsValidPointer(dest) || !IsValidString(src) || destSize == 0) return;
 
     size_t len = strlen(src);
-    if (len >= destSize) {
-        len = destSize - 1;
-    }
+    if (len >= destSize) len = destSize - 1;
     memcpy(dest, src, len);
     dest[len] = '\0';
 }
@@ -70,20 +68,14 @@ void BonesLogError(BonesError error, const char* context) {
 }
 
 BonesError BonesInit(BonesAnimation* animation, int maxFrames) {
-    if (!IsValidPointer(animation)) {
-        return BONES_ERROR_NULL_POINTER;
-    }
+    if (!IsValidPointer(animation)) return BONES_ERROR_NULL_POINTER;
 
-    if (maxFrames <= 0 || maxFrames > MAX_FRAMES) {
-        maxFrames = MAX_FRAMES;
-    }
+    if (maxFrames <= 0 || maxFrames > MAX_FRAMES) maxFrames = MAX_FRAMES;
 
     memset(animation, 0, sizeof(BonesAnimation));
 
     animation->frames = (AnimationFrame*)calloc(maxFrames, sizeof(AnimationFrame));
-    if (!IsValidPointer(animation->frames)) {
-        return BONES_ERROR_MEMORY_ALLOCATION;
-    }
+    if (!IsValidPointer(animation->frames)) return BONES_ERROR_MEMORY_ALLOCATION;
 
     animation->maxFrames = maxFrames;
     animation->frameCount = 0;
@@ -91,14 +83,11 @@ BonesError BonesInit(BonesAnimation* animation, int maxFrames) {
     animation->isLoaded = false;
 
     InitializeDefaultConfig();
-
     return BONES_SUCCESS;
 }
 
 void BonesFree(BonesAnimation* animation) {
-    if (!IsValidPointer(animation)) {
-        return;
-    }
+    if (!IsValidPointer(animation)) return;
 
     if (IsValidPointer(animation->frames)) {
         free(animation->frames);
@@ -121,9 +110,7 @@ static BonesError ParseJSONFrame(const char* jsonData, int* outFrameNum, Person*
     *outPersonCount = 0;
 
     const char* frameStart = strstr(jsonData, "\"frame_");
-    if (!frameStart) {
-        return BONES_ERROR_INVALID_JSON;
-    }
+    if (!frameStart) return BONES_ERROR_INVALID_JSON;
 
     if (sscanf(frameStart, "\"frame_%d\"", outFrameNum) != 1) {
         return BONES_ERROR_INVALID_JSON;
@@ -134,14 +121,11 @@ static BonesError ParseJSONFrame(const char* jsonData, int* outFrameNum, Person*
         Person* currentPerson = &outPersons[*outPersonCount];
         memset(currentPerson, 0, sizeof(Person));
 
-        if (sscanf(personStart, "\"person_%15[^\"]\"", currentPerson->personId) != 1) {
-            break;
-        }
+        if (sscanf(personStart, "\"person_%15[^\"]\"", currentPerson->personId) != 1) break;
 
         currentPerson->active = true;
         currentPerson->boneCount = 0;
 
-        const char* boneStart = personStart;
         const char* nextPerson = strstr(personStart + 1, "\"person_");
 
         const char* expectedBones[] = {
@@ -156,10 +140,8 @@ static BonesError ParseJSONFrame(const char* jsonData, int* outFrameNum, Person*
             char searchPattern[64];
             snprintf(searchPattern, sizeof(searchPattern), "\"%s\":", expectedBones[b]);
 
-            const char* bonePos = strstr(boneStart, searchPattern);
-            if (!bonePos || (nextPerson && bonePos > nextPerson)) {
-                continue;
-            }
+            const char* bonePos = strstr(personStart, searchPattern);
+            if (!bonePos || (nextPerson && bonePos > nextPerson)) continue;
 
             Bone* currentBone = &currentPerson->bones[currentPerson->boneCount];
             memset(currentBone, 0, sizeof(Bone));
@@ -194,10 +176,7 @@ static BonesError ParseJSONFrame(const char* jsonData, int* outFrameNum, Person*
             }
         }
 
-        if (currentPerson->boneCount > 0) {
-            (*outPersonCount)++;
-        }
-
+        if (currentPerson->boneCount > 0) (*outPersonCount)++;
         personStart = nextPerson;
     }
 
@@ -272,14 +251,8 @@ BonesError BonesLoadFromString(BonesAnimation* animation, const char* jsonString
 }
 
 BonesError BonesSetFrame(BonesAnimation* animation, int frameNumber) {
-    if (!IsValidPointer(animation)) {
-        return BONES_ERROR_NULL_POINTER;
-    }
-
-    if (!animation->isLoaded) {
-        return BONES_ERROR_EMPTY_DATA;
-    }
-
+    if (!IsValidPointer(animation)) return BONES_ERROR_NULL_POINTER;
+    if (!animation->isLoaded) return BONES_ERROR_EMPTY_DATA;
     if (frameNumber < 0 || frameNumber >= animation->frameCount) {
         return BONES_ERROR_FRAME_OUT_OF_RANGE;
     }
@@ -332,9 +305,7 @@ BonesError BonesGetBone(const BonesAnimation* animation, int frameNumber,
     const char* personId, const char* boneName, Bone** outBone) {
     Person* person;
     BonesError result = BonesGetPerson(animation, frameNumber, personId, &person);
-    if (result != BONES_SUCCESS) {
-        return result;
-    }
+    if (result != BONES_SUCCESS) return result;
 
     if (!IsValidString(boneName) || !IsValidPointer(outBone)) {
         return BONES_ERROR_NULL_POINTER;
@@ -357,47 +328,18 @@ BonesError BonesGetBonePosition(const BonesAnimation* animation, int frameNumber
     Vector3* outPosition) {
     Bone* bone;
     BonesError result = BonesGetBone(animation, frameNumber, personId, boneName, &bone);
-    if (result != BONES_SUCCESS) {
-        return result;
-    }
+    if (result != BONES_SUCCESS) return result;
 
-    if (!IsValidPointer(outPosition)) {
-        return BONES_ERROR_NULL_POINTER;
-    }
-
-    if (!bone->position.valid) {
-        return BONES_ERROR_INVALID_COORDINATES;
-    }
+    if (!IsValidPointer(outPosition)) return BONES_ERROR_NULL_POINTER;
+    if (!bone->position.valid) return BONES_ERROR_INVALID_COORDINATES;
 
     *outPosition = bone->position.position;
     return BONES_SUCCESS;
 }
 
-Vector3 BonesNormalizedToWorld(Vector3 normalizedPos, Vector3 worldCenter, Vector3 worldScale) {
-    return Vector3Add(worldCenter, Vector3Multiply(normalizedPos, worldScale));
-}
-
-Vector3 BonesWorldToNormalized(Vector3 worldPos, Vector3 worldCenter, Vector3 worldScale) {
-    Vector3 centered = Vector3Subtract(worldPos, worldCenter);
-    return (Vector3) {
-        centered.x / worldScale.x,
-            centered.y / worldScale.y,
-            centered.z / worldScale.z
-    };
-}
-
 bool BonesIsPositionValid(Vector3 position) {
     return !isnan(position.x) && !isnan(position.y) && !isnan(position.z) &&
         isfinite(position.x) && isfinite(position.y) && isfinite(position.z);
-}
-
-bool BonesIsBoneVisible(const Bone* bone, Camera camera, float maxDistance) {
-    if (!IsValidPointer(bone) || !bone->visible || !bone->position.valid) {
-        return false;
-    }
-
-    float distance = Vector3Distance(camera.position, bone->position.position);
-    return distance <= maxDistance;
 }
 
 BonesRenderConfig BonesGetDefaultRenderConfig(void) {
@@ -410,62 +352,6 @@ void BonesSetRenderConfig(const BonesRenderConfig* config) {
         g_renderConfig = *config;
         g_configInitialized = true;
     }
-}
-
-BonesError BonesDrawBone(const Bone* bone, Camera camera, Texture2D texture, const BonesRenderConfig* config) {
-    if (!IsValidPointer(bone) || !IsValidPointer(config)) {
-        return BONES_ERROR_NULL_POINTER;
-    }
-
-    if (!bone->visible || !bone->position.valid) {
-        return BONES_SUCCESS;
-    }
-
-    Rectangle src = GetAtlasCellSrcPos(texture, 0, 0, bone->mirrored, NULL);
-
-    DrawBonetileCustom(texture, camera, src, bone->position.position,
-        bone->size, bone->rotation, bone->mirrored);
-
-    if (config->drawDebugSpheres) {
-        DrawSphereWires(bone->position.position, config->debugSphereRadius, 8, 8, config->debugColor);
-    }
-
-    return BONES_SUCCESS;
-}
-
-
-int BonesCountValidBones(const Person* person) {
-    if (!IsValidPointer(person)) return 0;
-
-    int count = 0;
-    for (int i = 0; i < person->boneCount; i++) {
-        if (person->bones[i].position.valid) {
-            count++;
-        }
-    }
-    return count;
-}
-
-Vector3 BonesCalculatePersonCenter(const Person* person) {
-    if (!IsValidPointer(person) || person->boneCount == 0) {
-        return (Vector3) { 0, 0, 0 };
-    }
-
-    Vector3 sum = { 0, 0, 0 };
-    int validCount = 0;
-
-    for (int i = 0; i < person->boneCount; i++) {
-        if (person->bones[i].position.valid) {
-            sum = Vector3Add(sum, person->bones[i].position.position);
-            validCount++;
-        }
-    }
-
-    if (validCount > 0) {
-        return Vector3Scale(sum, 1.0f / validCount);
-    }
-
-    return (Vector3) { 0, 0, 0 };
 }
 
 void CheckBoneNameLength(void) {
@@ -499,40 +385,16 @@ time_t GetFileModificationTime(const char* filename) {
     return 0;
 }
 
-char* ReadEntireFile(const char* filename, long* fileSize) {
-    FILE* file = fopen(filename, "rb");
-    if (!file) return NULL;
+bool LoadSimpleTextureConfig(SimpleTextureSystem* system, const char* filename) {
+    time_t currentModTime = GetFileModificationTime(filename);
+    if (currentModTime == 0) return false;
 
-    fseek(file, 0, SEEK_END);
-    long size = ftell(file);
-    fseek(file, 0, SEEK_SET);
+    if (system->loaded && system->lastModified == currentModTime) return true;
 
-    if (size <= 0) {
-        fclose(file);
-        return NULL;
-    }
+    char* buffer = LoadFileText(filename);
+    if (!buffer) return false;
 
-    char* buffer = (char*)malloc(size + 1);
-    if (!buffer) {
-        fclose(file);
-        return NULL;
-    }
-
-    size_t bytesRead = fread(buffer, 1, size, file);
-    fclose(file);
-
-    if (bytesRead != (size_t)size) {
-        free(buffer);
-        return NULL;
-    }
-
-    buffer[size] = '\0';
-    if (fileSize) *fileSize = size;
-
-    return buffer;
-}
-
-int CountValidLines(const char* buffer) {
+    // Count valid lines
     int lineCount = 0;
     const char* ptr = buffer;
     const char* lineStart = ptr;
@@ -540,22 +402,16 @@ int CountValidLines(const char* buffer) {
     while (*ptr) {
         if (*ptr == '\n' || *ptr == '\0') {
             int lineLen = ptr - lineStart;
-
-            if (lineLen > 5 && *lineStart != '#' && *lineStart != '\n') {
-                lineCount++;
-            }
-
+            if (lineLen > 5 && *lineStart != '#' && *lineStart != '\n') lineCount++;
             lineStart = ptr + 1;
         }
         ptr++;
     }
 
-    return lineCount;
-}
-
-bool ParseConfigFromBuffer(SimpleTextureSystem* system, const char* buffer) {
-    int lineCount = CountValidLines(buffer);
-    if (lineCount == 0) return false;
+    if (lineCount == 0) {
+        UnloadFileText(buffer);
+        return false;
+    }
 
     if (system->configs) {
         free(system->configs);
@@ -565,14 +421,16 @@ bool ParseConfigFromBuffer(SimpleTextureSystem* system, const char* buffer) {
 
     system->configs = (BoneTextureConfig*)calloc(lineCount, sizeof(BoneTextureConfig));
     if (!system->configs) {
+        UnloadFileText(buffer);
         return false;
     }
 
     system->configCapacity = lineCount;
     system->configCount = 0;
 
-    const char* ptr = buffer;
-    const char* lineStart = ptr;
+    // Parse config
+    ptr = buffer;
+    lineStart = ptr;
     char lineBuffer[512];
 
     while (*ptr && system->configCount < system->configCapacity) {
@@ -609,35 +467,15 @@ bool ParseConfigFromBuffer(SimpleTextureSystem* system, const char* buffer) {
         ptr++;
     }
 
-    return true;
-}
+    UnloadFileText(buffer);
 
-bool LoadSimpleTextureConfig(SimpleTextureSystem* system, const char* filename) {
-    time_t currentModTime = GetFileModificationTime(filename);
-    if (currentModTime == 0) {
-        return false;
-    }
-
-    if (system->loaded && system->lastModified == currentModTime) {
+    if (system->configCount > 0) {
+        system->loaded = true;
+        system->lastModified = currentModTime;
         return true;
     }
 
-    long fileSize;
-    char* buffer = ReadEntireFile(filename, &fileSize);
-    if (!buffer) {
-        return false;
-    }
-
-    bool success = ParseConfigFromBuffer(system, buffer);
-
-    free(buffer);
-
-    if (success) {
-        system->loaded = true;
-        system->lastModified = currentModTime;
-    }
-
-    return success;
+    return false;
 }
 
 void LoadBoneConfigurations(SimpleTextureSystem* textureSystem, BoneConfig** boneConfigs, int* boneConfigCount) {
@@ -651,9 +489,7 @@ void LoadBoneConfigurations(SimpleTextureSystem* textureSystem, BoneConfig** bon
 
     *boneConfigCount = textureSystem->configCount;
     *boneConfigs = (BoneConfig*)calloc(*boneConfigCount, sizeof(BoneConfig));
-    if (!*boneConfigs) {
-        return;
-    }
+    if (!*boneConfigs) return;
 
     for (int i = 0; i < *boneConfigCount; i++) {
         const BoneTextureConfig* src = &textureSystem->configs[i];
@@ -682,39 +518,25 @@ BoneConfig* FindBoneConfig(BoneConfig* boneConfigs, int boneConfigCount, const c
 
 const char* GetTexturePathForBone(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName) {
     BoneConfig* config = FindBoneConfig(boneConfigs, boneConfigCount, boneName);
-    if (config) {
-        return config->texturePath;
-    }
-    return "default.png";
+    return config ? config->texturePath : "default.png";
 }
 
 bool IsBoneVisible(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName) {
     BoneConfig* config = FindBoneConfig(boneConfigs, boneConfigCount, boneName);
-    if (config) {
-        return config->visible;
-    }
-    return true;
+    return config ? config->visible : true;
 }
 
 float GetBoneSize(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName) {
     BoneConfig* config = FindBoneConfig(boneConfigs, boneConfigCount, boneName);
-    if (config) {
-        return config->size;
-    }
-    return 0.35f;
+    return config ? config->size : 0.35f;
 }
 
 bool ResizeRenderBonesArray(BoneRenderData** renderBones, int* renderBonesCapacity, int newCapacity) {
-    if (newCapacity <= 0 || newCapacity > 10000) {
-        return false;
-    }
-
+    if (newCapacity <= 0 || newCapacity > 10000) return false;
     if (newCapacity <= *renderBonesCapacity) return true;
 
     BoneRenderData* newArray = (BoneRenderData*)realloc(*renderBones, sizeof(BoneRenderData) * newCapacity);
-    if (!newArray) {
-        return false;
-    }
+    if (!newArray) return false;
 
     for (int i = *renderBonesCapacity; i < newCapacity; i++) {
         memset(&newArray[i], 0, sizeof(BoneRenderData));
@@ -734,7 +556,8 @@ int CompareBonesByDistance(const void* a, const void* b) {
     return 0;
 }
 
-void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, BoneRenderData** renderBones, int* renderBonesCount, int* renderBonesCapacity, BoneConfig* boneConfigs, int boneConfigCount) {
+void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, BoneRenderData** renderBones,
+    int* renderBonesCount, int* renderBonesCapacity, BoneConfig* boneConfigs, int boneConfigCount) {
     *renderBonesCount = 0;
 
     if (!animation->isLoaded) return;
@@ -751,9 +574,7 @@ void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, Bo
         }
     }
 
-    if (!ResizeRenderBonesArray(renderBones, renderBonesCapacity, estimatedBones + 10)) {
-        return;
-    }
+    if (!ResizeRenderBonesArray(renderBones, renderBonesCapacity, estimatedBones + 10)) return;
 
     static char processedBones[2000][MAX_BONE_NAME_LENGTH + 20];
     int processedCount = 0;
@@ -765,11 +586,11 @@ void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, Bo
         for (int b = 0; b < person->boneCount; b++) {
             const Bone* bone = &person->bones[b];
             if (!bone->position.valid || !bone->visible) continue;
-
             if (!BonesIsPositionValid(bone->position.position)) continue;
 
             BoneConfig* config = FindBoneConfig(boneConfigs, boneConfigCount, bone->name);
             if (!config) {
+                // Check if it's a known bone
                 char firstChar = bone->name[0];
                 bool isKnownBone = false;
 
@@ -790,7 +611,6 @@ void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, Bo
                 case 'C': isKnownBone = (strstr(bone->name, "Chest") != NULL); break;
                 case 'S': isKnownBone = (strstr(bone->name, "Shoulder") != NULL ||
                     strstr(bone->name, "Spine") != NULL); break;
-                default: break;
                 }
 
                 if (!isKnownBone) continue;
@@ -799,6 +619,7 @@ void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, Bo
                 if (!config->visible) continue;
             }
 
+            // Check for duplicates
             char boneKey[MAX_BONE_NAME_LENGTH + 20];
             int keyLen = snprintf(boneKey, sizeof(boneKey), "%s_%s", person->personId, bone->name);
 
@@ -820,21 +641,16 @@ void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, Bo
             float distance = Vector3Distance(camera.position, bone->position.position);
             if (distance > 50.0f) continue;
 
-            // CAMBIO PRINCIPAL: Usar CalculateBoneMorphData en lugar de CalculateBoneRenderData
+            // Calculate morph data
             BoneMorphData morphData;
             CalculateBoneMorphData(bone->position.position, camera, &morphData);
 
             BoneRenderData* renderBone = &(*renderBones)[*renderBonesCount];
             renderBone->position = bone->position.position;
-
-            // Guardar los datos de morphing
             renderBone->morphData = morphData;
-
-            // Mantener compatibilidad con código existente
             renderBone->atlasIndex = morphData.primaryIndex;
             renderBone->rotation = morphData.rotation;
             renderBone->mirrored = morphData.mirrored;
-
             renderBone->distance = distance;
             renderBone->valid = true;
 

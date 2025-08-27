@@ -8,7 +8,7 @@
 #include "bonetile.h"
 #include "bones3d.h"
 #include "head_billboard.h"
-#include "torso_billboard.h"  // Nueva inclusión
+#include "torso_billboard.h"
 
 #define BASE_WIDTH 1920
 #define BASE_HEIGHT 1080
@@ -26,13 +26,13 @@ typedef struct {
     int renderBonesCount;
     int renderBonesCapacity;
 
-    // Sistema de cabezas
+    // Head system
     HeadRenderData* renderHeads;
     int renderHeadsCount;
     int renderHeadsCapacity;
     bool renderHeadBillboards;
 
-    // Sistema de torsos
+    // Torso system
     TorsoRenderData* renderTorsos;
     int renderTorsosCount;
     int renderTorsosCapacity;
@@ -53,11 +53,9 @@ typedef struct {
     bool autoCenterCalculated;
     int lastProcessedFrame;
     bool forceUpdate;
-    Vector3 lastCameraPos;
     bool useMorphing;
 } AppState;
 
-/* ---------- Prototypes ---------- */
 static bool App_Init(AppState* app);
 static void App_Shutdown(AppState* app);
 static int App_GetTextureIndex(AppState* app, const char* path);
@@ -66,22 +64,9 @@ static void App_UpdateCamera(AppState* app, float dt);
 static void App_UpdateAutoCenter(AppState* app);
 static void App_PrepareRenderBones(AppState* app);
 static void App_PrepareRenderHeads(AppState* app);
-static void App_PrepareRenderTorsos(AppState* app);  // Nueva función
+static void App_PrepareRenderTorsos(AppState* app);
 static void App_Draw(AppState* app);
 
-/* ---------- Implementations ---------- */
-
-/* ************************************************************************** */
-/* Application initialization                                                  */
-/* - Parameters: AppState* app (output)                                        */
-/* - Returns: true if initialization succeeded, false on failure.             */
-/* - Actions:                                                                  */
-/*   * Zeroes the state struct.                                                */
-/*   * Initializes the window, camera and texture system.                      */
-/*   * Loads the Bones animation from JSON and configures the renderer.        */
-/*   * Sets default values (frames, autoplay, auto-center).                    */
-/* - Note: if BonesInit fails, closes the window and returns false.           */
-/* ************************************************************************** */
 static bool App_Init(AppState* app) {
     if (!app) return false;
     memset(app, 0, sizeof(*app));
@@ -93,44 +78,33 @@ static bool App_Init(AppState* app) {
 #endif
     MaximizeWindow();
     SetTargetFPS(60);
+
     app->camera = (Camera){ 0 };
     app->camera.position = (Vector3){ 0.0f, 0.6f, 2.5f };
     app->camera.target = (Vector3){ 0.0f, 0.6f, 0.0f };
     app->camera.up = (Vector3){ 0.0f, 1.0f, 0.0f };
     app->camera.fovy = 45.0f;
     app->camera.projection = CAMERA_PERSPECTIVE;
+
     app->camMode = 1;
-    app->orbitYaw = 0.0f; app->orbitPitch = -0.2f; app->orbitRadius = 2.5f;
+    app->orbitYaw = 0.0f;
+    app->orbitPitch = -0.2f;
+    app->orbitRadius = 2.5f;
     app->cameraMouseControl = false;
-    app->boneConfigs = NULL;
-    app->boneConfigCount = 0;
-    app->renderBones = NULL;
-    app->renderBonesCount = 0;
-    app->renderBonesCapacity = 0;
+    app->renderHeadBillboards = true;
+    app->renderTorsoBillboards = true;
+    app->physCols = 8;
+    app->physRows = 8;
+    app->useMorphing = false;
 
-    // Inicializar sistema de cabezas
-    app->renderHeads = NULL;
-    app->renderHeadsCount = 0;
-    app->renderHeadsCapacity = 0;
-    app->renderHeadBillboards = true;  // Activado por defecto
-
-    // Inicializar sistema de torsos
-    app->renderTorsos = NULL;
-    app->renderTorsosCount = 0;
-    app->renderTorsosCapacity = 0;
-    app->renderTorsoBillboards = true;  // Activado por defecto
-
-    app->textureCount = 0;
-    app->physCols = 8; app->physRows = 8;
-    app->useMorphing = false; // INICIALIZAR EN FALSE (método clásico por defecto)
-
-    // Load texture config (try, but continue if it fails)
     LoadSimpleTextureConfig(&app->textureSystem, "bone_textures.txt");
     LoadBoneConfigurations(&app->textureSystem, &app->boneConfigs, &app->boneConfigCount);
+
     if (BonesInit(&app->animation, 1000) != BONES_SUCCESS) {
         CloseWindow();
         return false;
     }
+
     BonesLoadFromJSON(&app->animation, "test.json");
     app->renderConfig = BonesGetDefaultRenderConfig();
     app->renderConfig.drawDebugSpheres = true;
@@ -138,6 +112,7 @@ static bool App_Init(AppState* app) {
     app->renderConfig.debugSphereRadius = 0.035f;
     app->renderConfig.enableDepthSorting = true;
     BonesSetRenderConfig(&app->renderConfig);
+
     app->maxFrames = BonesGetFrameCount(&app->animation);
     app->currentFrame = 0;
     app->autoPlay = false;
@@ -147,105 +122,73 @@ static bool App_Init(AppState* app) {
     app->autoCenterCalculated = false;
     app->lastProcessedFrame = -1;
     app->forceUpdate = false;
-    app->lastCameraPos = app->camera.position;
+
     return true;
 }
 
-/* ************************************************************************** */
-/* Application shutdown / cleanup                                              */
-/* - Parameters: AppState* app                                                 */
-/* - Returns: void                                                             */
-/* - Actions:                                                                  */
-/*   * Frees render-related memory.                                            */
-/*   * Cleans up texture system and unloads GPU textures.                      */
-/*   * Frees the Bones animation and closes the window.                        */
-/* - Note: safely handles null pointers.                                       */
-/* ************************************************************************** */
 static void App_Shutdown(AppState* app) {
     if (!app) return;
     if (app->renderBones) free(app->renderBones);
-    if (app->renderHeads) free(app->renderHeads);  // Liberar memoria de cabezas
-    if (app->renderTorsos) free(app->renderTorsos);  // Liberar memoria de torsos
+    if (app->renderHeads) free(app->renderHeads);
+    if (app->renderTorsos) free(app->renderTorsos);
     CleanupTextureSystem(&app->textureSystem, &app->boneConfigs, &app->boneConfigCount);
     for (int i = 0; i < app->textureCount; i++) UnloadTexture(app->textures[i]);
     BonesFree(&app->animation);
     CloseWindow();
 }
 
-/* ************************************************************************** */
-/* Find or load a texture                                                      */
-/* - Parameters: AppState* app, const char* path                               */
-/* - Returns: index (int) of the texture in app->textures; 0 on failure/limit. */
-/* - Actions:                                                                  */
-/*   * Searches if the path has already been loaded; returns its index.        */
-/*   * If not present and there's room, attempts to load the image from disk.  */
-/*   * If loading fails, generates a placeholder image with the path drawn.    */
-/*   * Sets texture filter and stores the path in app->texturePaths.           */
-/* - Note: does not unload old textures here; central management assumed.      */
-/* ************************************************************************** */
 static int App_GetTextureIndex(AppState* app, const char* path) {
     if (!app || !path) return 0;
+
     for (int i = 0; i < app->textureCount; i++) {
         if (strcmp(app->texturePaths[i], path) == 0) return i;
     }
+
     if (app->textureCount >= MAX_TEXTURES) return 0;
+
     Image img = LoadImage(path);
     if (img.data == NULL) {
         img = GenImageColor(1024, 1024, CLITERAL(Color){60, 120, 220, 255});
         ImageDrawText(&img, path, 8, 8, 128, WHITE);
     }
+
     app->textures[app->textureCount] = LoadTextureFromImage(img);
     UnloadImage(img);
     SetTextureFilter(app->textures[app->textureCount], TEXTURE_FILTER_POINT);
     strncpy(app->texturePaths[app->textureCount], path, MAX_FILE_PATH_LENGTH - 1);
     app->texturePaths[app->textureCount][MAX_FILE_PATH_LENGTH - 1] = '\0';
+
     return app->textureCount++;
 }
 
-/* ************************************************************************** */
-/* Input handling (keyboard/mouse)                                             */
-/* - Parameters: AppState* app, float dt                                       */
-/* - Returns: void                                                             */
-/* - Actions:                                                                  */
-/*   * Frame control (left/right, HOME/END, space for autoplay).               */
-/*   * Reload texture configuration (F5).                                      */
-/*   * Switch camera modes and toggle mouse/keyboard control (1,2,C).          */
-/*   * Toggle morphing mode (M).                                               */
-/*   * Toggle head billboards (H).                                             */
-/*   * Toggle torso billboards (T).                                            */
-/* - Side effects: modifies app->currentFrame, app->autoPlay, etc.             */
-/* ************************************************************************** */
 static void App_HandleInput(AppState* app, float dt) {
     if (!app) return;
 
-    // Frame control / autoplay
     if (app->animation.isLoaded && app->maxFrames > 0) {
-        bool manualFrameChange = false;
+        bool frameChanged = false;
 
         if (IsKeyPressed(KEY_LEFT) && app->currentFrame > 0) {
             app->currentFrame--;
             BonesSetFrame(&app->animation, app->currentFrame);
-            manualFrameChange = true;
+            frameChanged = true;
         }
         if (IsKeyPressed(KEY_RIGHT) && app->currentFrame < app->maxFrames - 1) {
             app->currentFrame++;
             BonesSetFrame(&app->animation, app->currentFrame);
-            manualFrameChange = true;
+            frameChanged = true;
         }
         if (IsKeyPressed(KEY_HOME)) {
             app->currentFrame = 0;
             BonesSetFrame(&app->animation, app->currentFrame);
-            manualFrameChange = true;
+            frameChanged = true;
         }
         if (IsKeyPressed(KEY_END) && app->maxFrames > 0) {
             app->currentFrame = app->maxFrames - 1;
             BonesSetFrame(&app->animation, app->currentFrame);
-            manualFrameChange = true;
+            frameChanged = true;
         }
 
-        if (manualFrameChange) {
-            app->autoCenterCalculated = false;
-        }
+        if (frameChanged) app->autoCenterCalculated = false;
 
         if (IsKeyPressed(KEY_SPACE)) app->autoPlay = !app->autoPlay;
 
@@ -265,7 +208,6 @@ static void App_HandleInput(AppState* app, float dt) {
         }
     }
 
-    // Camera mode controls
     if (IsKeyPressed(KEY_ONE)) {
         app->camMode = 1; app->cameraMouseControl = false; EnableCursor();
     }
@@ -279,45 +221,33 @@ static void App_HandleInput(AppState* app, float dt) {
         app->orbitPitch = atan2f(direction.y, sqrtf(direction.x * direction.x + direction.z * direction.z));
     }
 
-    // Mouse control toggle (cambié de M a C para evitar conflictos)
     if (IsKeyPressed(KEY_C)) {
         app->cameraMouseControl = !app->cameraMouseControl;
         if (app->cameraMouseControl) DisableCursor(); else EnableCursor();
     }
 
-    // Toggle morphing con la tecla M
     if (IsKeyPressed(KEY_M)) {
         app->useMorphing = !app->useMorphing;
-        app->forceUpdate = true; // Forzar recálculo de render data
+        app->forceUpdate = true;
         TraceLog(LOG_INFO, "Morphing %s", app->useMorphing ? "ENABLED" : "DISABLED");
     }
 
-    // Toggle head billboards con la tecla H
     if (IsKeyPressed(KEY_H)) {
         app->renderHeadBillboards = !app->renderHeadBillboards;
         TraceLog(LOG_INFO, "Head Billboards %s", app->renderHeadBillboards ? "ENABLED" : "DISABLED");
     }
 
-    // Toggle torso billboards con la tecla T
     if (IsKeyPressed(KEY_T)) {
         app->renderTorsoBillboards = !app->renderTorsoBillboards;
         TraceLog(LOG_INFO, "Torso Billboards %s", app->renderTorsoBillboards ? "ENABLED" : "DISABLED");
     }
 }
 
-/* ************************************************************************** */
-/* Updates the camera based on mode and input                                  */
-/* - Parameters: AppState* app, float dt                                       */
-/* - Returns: void                                                             */
-/* - Actions:                                                                  */
-/*   * Mode 1: orbital camera around autoCenter (rotation and zoom).          */
-/*   * Mode 2: "fly" camera with keyboard and mouse control.                  */
-/*   * Adjusts position, target and pitch/radius limits.                      */
-/* - Note: uses GetMouseDelta() / GetMouseWheelMove() for interaction.        */
-/* ************************************************************************** */
 static void App_UpdateCamera(AppState* app, float dt) {
     if (!app) return;
+
     Vector3 cameraTarget = app->autoCenterCalculated ? app->autoCenter : (Vector3) { 0, 0.6f, 0 };
+
     if (app->camMode == 1) {
         if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
             Vector2 mouseDelta = GetMouseDelta();
@@ -325,8 +255,13 @@ static void App_UpdateCamera(AppState* app, float dt) {
             app->orbitPitch += -mouseDelta.y * 0.01f;
             app->orbitPitch = Clamp(app->orbitPitch, -1.4f, 1.4f);
         }
+
         float wheel = GetMouseWheelMove();
-        if (wheel != 0.0f) { app->orbitRadius -= wheel * 0.5f; app->orbitRadius = Clamp(app->orbitRadius, 0.5f, 20.0f); }
+        if (wheel != 0.0f) {
+            app->orbitRadius -= wheel * 0.5f;
+            app->orbitRadius = Clamp(app->orbitRadius, 0.5f, 20.0f);
+        }
+
         float x = app->orbitRadius * cosf(app->orbitPitch) * sinf(app->orbitYaw);
         float y = app->orbitRadius * sinf(app->orbitPitch);
         float z = app->orbitRadius * cosf(app->orbitPitch) * cosf(app->orbitYaw);
@@ -340,34 +275,29 @@ static void App_UpdateCamera(AppState* app, float dt) {
             app->orbitPitch -= mouseDelta.y * 0.003f;
             app->orbitPitch = Clamp(app->orbitPitch, -1.49f, 1.49f);
         }
-        Vector3 forward = { sinf(app->orbitYaw) * cosf(app->orbitPitch), sinf(app->orbitPitch), cosf(app->orbitYaw) * cosf(app->orbitPitch) };
+
+        Vector3 forward = { sinf(app->orbitYaw) * cosf(app->orbitPitch),
+                           sinf(app->orbitPitch),
+                           cosf(app->orbitYaw) * cosf(app->orbitPitch) };
         forward = Vector3Normalize(forward);
-        Vector3 right = { sinf(app->orbitYaw - PI / 2), 0, cosf(app->orbitYaw - PI / 2) }; right = Vector3Normalize(right);
+        Vector3 right = { sinf(app->orbitYaw - PI / 2), 0, cosf(app->orbitYaw - PI / 2) };
+        right = Vector3Normalize(right);
+
         float speed = IsKeyDown(KEY_LEFT_SHIFT) ? 8.0f : 3.0f;
+
         if (IsKeyDown(KEY_W)) app->camera.position = Vector3Add(app->camera.position, Vector3Scale(forward, speed * dt));
         if (IsKeyDown(KEY_S)) app->camera.position = Vector3Subtract(app->camera.position, Vector3Scale(forward, speed * dt));
         if (IsKeyDown(KEY_A)) app->camera.position = Vector3Subtract(app->camera.position, Vector3Scale(right, speed * dt));
         if (IsKeyDown(KEY_D)) app->camera.position = Vector3Add(app->camera.position, Vector3Scale(right, speed * dt));
         if (IsKeyDown(KEY_SPACE)) app->camera.position.y += speed * dt;
         if (IsKeyDown(KEY_LEFT_CONTROL)) app->camera.position.y -= speed * dt;
+
         app->camera.target = Vector3Add(app->camera.position, forward);
     }
 }
 
-/* ************************************************************************** */
-/* Calculate automatic scene center (autoCenter)                               */
-/* - Parameters: AppState* app                                                */
-/* - Returns: void                                                             */
-/* - Actions:                                                                  */
-/*   * Iterates bones in current frame and averages reference positions       */
-/*     (Spine, Chest, Neck, Hip) to center the view.                          */
-/*   * Includes head and torso positions in the calculation.                  */
-/*   * Marks app->autoCenterCalculated when computed.                         */
-/* - Note: does not recalculate if already computed or frame invalid.         */
-/* ************************************************************************** */
 static void App_UpdateAutoCenter(AppState* app) {
-    if (!app) return;
-    if (!app->animation.isLoaded) return;
+    if (!app || !app->animation.isLoaded) return;
     if (!BonesIsValidFrame(&app->animation, app->currentFrame)) return;
 
     const AnimationFrame* frame = &app->animation.frames[app->currentFrame];
@@ -378,11 +308,9 @@ static void App_UpdateAutoCenter(AppState* app) {
         const Person* person = &frame->persons[p];
         if (!person->active) continue;
 
-        // Calcular posición de cabeza para incluir en el centrado
         Vector3 headPos = CalculateHeadPosition(person);
         bool hasValidHead = Vector3Length(headPos) > 0.01f;
 
-        // Calcular posiciones de torso para incluir en el centrado
         Vector3 chestPos = CalculateChestPosition(person);
         Vector3 hipPos = CalculateHipPosition(person);
         bool hasValidChest = Vector3Length(chestPos) > 0.01f;
@@ -399,13 +327,11 @@ static void App_UpdateAutoCenter(AppState* app) {
             }
         }
 
-        // Incluir posición de cabeza en el cálculo del centro
         if (hasValidHead) {
             totalPos = Vector3Add(totalPos, headPos);
             validBoneCount++;
         }
 
-        // Incluir posiciones de torso en el cálculo del centro
         if (hasValidChest) {
             totalPos = Vector3Add(totalPos, chestPos);
             validBoneCount++;
@@ -420,8 +346,7 @@ static void App_UpdateAutoCenter(AppState* app) {
         Vector3 newCenter = Vector3Scale(totalPos, 1.0f / validBoneCount);
 
         if (app->camMode == 1 && app->autoPlay && app->autoCenterCalculated) {
-            float lerpFactor = 0.15f;
-            app->autoCenter = Vector3Lerp(app->autoCenter, newCenter, lerpFactor);
+            app->autoCenter = Vector3Lerp(app->autoCenter, newCenter, 0.15f);
         }
         else {
             app->autoCenter = newCenter;
@@ -431,98 +356,45 @@ static void App_UpdateAutoCenter(AppState* app) {
     }
 }
 
-/* ************************************************************************** */
-/* Prepare list of bones to render                                              */
-/* - Parameters: AppState* app                                                */
-/* - Returns: void                                                             */
-/* - Actions:                                                                  */
-/*   * If frame changed or forced update, calls function that collects        */
-/*     bone render data and updates counts/capacities.                        */
-/*   * If camera moved enough, marks forceUpdate to reprocess.                */
-/* - Note: optimizes by avoiding unnecessary recompute per frame/camera move. */
-/* ************************************************************************** */
 static void App_PrepareRenderBones(AppState* app) {
     if (!app) return;
+
     if (app->currentFrame != app->lastProcessedFrame || app->forceUpdate) {
-        CollectBonesForRendering(&app->animation, app->camera, &app->renderBones, &app->renderBonesCount, &app->renderBonesCapacity, app->boneConfigs, app->boneConfigCount);
+        CollectBonesForRendering(&app->animation, app->camera, &app->renderBones, &app->renderBonesCount,
+            &app->renderBonesCapacity, app->boneConfigs, app->boneConfigCount);
         app->lastProcessedFrame = app->currentFrame;
         app->forceUpdate = false;
     }
-    float cameraMoved = Vector3Distance(app->camera.position, app->lastCameraPos);
-    if (cameraMoved > 0.5f) {
-        app->forceUpdate = true;
-        app->lastCameraPos = app->camera.position;
-    }
 }
 
-/* ************************************************************************** */
-/* Prepare list of heads to render                                             */
-/* - Parameters: AppState* app                                                */
-/* - Returns: void                                                             */
-/* - Actions:                                                                  */
-/*   * If head rendering is disabled, sets count to 0 and returns.            */
-/*   * If frame changed or forced update, collects head render data.          */
-/* - Note: heads are processed separately from bones for modularity.          */
-/* ************************************************************************** */
 static void App_PrepareRenderHeads(AppState* app) {
     if (!app || !app->renderHeadBillboards) {
         if (app) app->renderHeadsCount = 0;
         return;
     }
 
-    // CAMBIO: Actualizar cabezas siempre que el frame sea válido
-    // No depender de forceUpdate para las cabezas
-    if (app->currentFrame != app->lastProcessedFrame || app->forceUpdate || true) {
-        CollectHeadsForRendering(&app->animation, &app->renderHeads,
-            &app->renderHeadsCount, &app->renderHeadsCapacity,
-            app->boneConfigs, app->boneConfigCount);
-    }
-
-    app->forceUpdate = false;
+    CollectHeadsForRendering(&app->animation, &app->renderHeads,
+        &app->renderHeadsCount, &app->renderHeadsCapacity,
+        app->boneConfigs, app->boneConfigCount);
 }
 
-/* ************************************************************************** */
-/* Prepare list of torsos to render                                            */
-/* - Parameters: AppState* app                                                */
-/* - Returns: void                                                             */
-/* - Actions:                                                                  */
-/*   * If torso rendering is disabled, sets count to 0 and returns.           */
-/*   * If frame changed or forced update, collects torso render data.         */
-/* - Note: torsos are processed separately from bones for modularity.         */
-/* ************************************************************************** */
 static void App_PrepareRenderTorsos(AppState* app) {
     if (!app || !app->renderTorsoBillboards) {
         if (app) app->renderTorsosCount = 0;
         return;
     }
 
-    // Actualizar torsos cuando sea necesario
-    if (app->currentFrame != app->lastProcessedFrame || app->forceUpdate || true) {
-        CollectTorsosForRendering(&app->animation, &app->renderTorsos,
-            &app->renderTorsosCount, &app->renderTorsosCapacity,
-            app->boneConfigs, app->boneConfigCount);
-    }
+    CollectTorsosForRendering(&app->animation, &app->renderTorsos,
+        &app->renderTorsosCount, &app->renderTorsosCapacity,
+        app->boneConfigs, app->boneConfigCount);
 }
 
-/* ************************************************************************** */
-/* Main drawing                                                                */
-/* - Parameters: AppState* app                                                */
-/* - Returns: void                                                             */
-/* - Actions:                                                                  */
-/*   * Clears screen, sets 3D mode and draws grid and center sphere.          */
-/*   * Shows UI with current mode and controls.                               */
-/*   * Iterates app->renderBones and draws each bone using selected method.   */
-/*   * Iterates app->renderHeads and draws each head billboard.               */
-/*   * Iterates app->renderTorsos and draws each torso billboard.             */
-/*   * Optionally draws debug spheres around each bone/head/torso.            */
-/* - Note: manages blend mode and depth test for correct rendering.          */
-/* ************************************************************************** */
 static void App_Draw(AppState* app) {
     if (!app) return;
+
     BeginDrawing();
     ClearBackground(RAYWHITE);
 
-    // Mostrar el estado actual en pantalla
     const char* modeText = app->useMorphing ? "MORPHING MODE" : "CLASSIC MODE";
     const char* controlsText = "M: Toggle Morphing | H: Toggle Heads | T: Toggle Torsos | C: Mouse Control | 1/2: Camera Mode | Space: Play/Pause";
     DrawText(modeText, 10, 10, 20, app->useMorphing ? GREEN : BLUE);
@@ -547,7 +419,7 @@ static void App_Draw(AppState* app) {
         rlDisableDepthTest();
         BeginBlendMode(BLEND_ALPHA);
 
-        // Renderizar huesos
+        // Render bones
         for (int i = 0; i < app->renderBonesCount; i++) {
             const BoneRenderData* bone = &app->renderBones[i];
             if (!bone->valid || !bone->visible) continue;
@@ -563,22 +435,20 @@ static void App_Draw(AppState* app) {
             Vector2 worldSize = (Vector2){ bone->size * aspect, bone->size };
 
             if (app->useMorphing) {
-                // MÉTODO NUEVO: Usar morphing
                 DrawBonetileWithMorphing(currentTex, app->camera, bone->morphData, bone->position, worldSize, app->physCols, app->physRows);
             }
             else {
-                // MÉTODO CLÁSICO: Sin morphing - recalcular datos en tiempo real
-                int outChosenIndex;
-                float outRotation;
-                bool outMirrored;
+                int chosenIndex;
+                float rotation;
+                bool mirrored;
 
-                CalculateBoneRenderData(bone->position, app->camera, &outChosenIndex, &outRotation, &outMirrored);
+                CalculateBoneRenderData(bone->position, app->camera, &chosenIndex, &rotation, &mirrored);
 
-                int logicalCol = outChosenIndex % ATLAS_COLS;
-                int logicalRow = outChosenIndex / ATLAS_COLS;
+                int logicalCol = chosenIndex % ATLAS_COLS;
+                int logicalRow = chosenIndex / ATLAS_COLS;
                 bool finalMirror = false;
-                Rectangle src = SrcFromLogical(currentTex, logicalCol, logicalRow, app->physCols, app->physRows, outMirrored, &finalMirror);
-                DrawBonetileCustom(currentTex, app->camera, src, bone->position, worldSize, outRotation, finalMirror);
+                Rectangle src = SrcFromLogical(currentTex, logicalCol, logicalRow, app->physCols, app->physRows, mirrored, &finalMirror);
+                DrawBonetileCustom(currentTex, app->camera, src, bone->position, worldSize, rotation, finalMirror);
             }
 
             if (app->renderConfig.drawDebugSpheres) {
@@ -587,7 +457,7 @@ static void App_Draw(AppState* app) {
             }
         }
 
-        // Renderizar cabezas
+        // Render heads
         if (app->renderHeadBillboards && app->renderHeadsCount > 0) {
             for (int i = 0; i < app->renderHeadsCount; i++) {
                 const HeadRenderData* head = &app->renderHeads[i];
@@ -598,25 +468,23 @@ static void App_Draw(AppState* app) {
 
                 DrawHeadBillboard(currentTex, app->camera, head, app->physCols, app->physRows);
 
-                // Debug: Mostrar esfera en la posición de la cabeza si están activadas las esferas de debug
                 if (app->renderConfig.drawDebugSpheres) {
                     DrawSphereWires(head->position, 0.05f, 8, 8, ORANGE);
 
-                    // Mostrar vectores de orientación
                     if (head->orientation.valid) {
                         Vector3 forwardEnd = Vector3Add(head->position, Vector3Scale(head->orientation.forward, 0.1f));
                         Vector3 upEnd = Vector3Add(head->position, Vector3Scale(head->orientation.up, 0.1f));
                         Vector3 rightEnd = Vector3Add(head->position, Vector3Scale(head->orientation.right, 0.1f));
 
-                        DrawLine3D(head->position, forwardEnd, BLUE);   // Forward = Azul
-                        DrawLine3D(head->position, upEnd, GREEN);       // Up = Verde
-                        DrawLine3D(head->position, rightEnd, RED);      // Right = Rojo
+                        DrawLine3D(head->position, forwardEnd, BLUE);
+                        DrawLine3D(head->position, upEnd, GREEN);
+                        DrawLine3D(head->position, rightEnd, RED);
                     }
                 }
             }
         }
 
-        // Renderizar torsos
+        // Render torsos
         if (app->renderTorsoBillboards && app->renderTorsosCount > 0) {
             for (int i = 0; i < app->renderTorsosCount; i++) {
                 const TorsoRenderData* torso = &app->renderTorsos[i];
@@ -627,20 +495,18 @@ static void App_Draw(AppState* app) {
 
                 DrawTorsoBillboard(currentTex, app->camera, torso, app->physCols, app->physRows);
 
-                // Debug: Mostrar esfera en la posición del torso si están activadas las esferas de debug
                 if (app->renderConfig.drawDebugSpheres) {
                     Color torsoColor = (torso->type == TORSO_CHEST) ? YELLOW : PURPLE;
                     DrawSphereWires(torso->position, 0.06f, 8, 8, torsoColor);
 
-                    // Mostrar vectores de orientación del torso
                     if (torso->orientation.valid) {
                         Vector3 forwardEnd = Vector3Add(torso->position, Vector3Scale(torso->orientation.forward, 0.12f));
                         Vector3 upEnd = Vector3Add(torso->position, Vector3Scale(torso->orientation.up, 0.12f));
                         Vector3 rightEnd = Vector3Add(torso->position, Vector3Scale(torso->orientation.right, 0.12f));
 
-                        DrawLine3D(torso->position, forwardEnd, DARKBLUE);  // Forward = Azul oscuro
-                        DrawLine3D(torso->position, upEnd, DARKGREEN);      // Up = Verde oscuro
-                        DrawLine3D(torso->position, rightEnd, MAROON);      // Right = Rojo oscuro
+                        DrawLine3D(torso->position, forwardEnd, DARKBLUE);
+                        DrawLine3D(torso->position, upEnd, DARKGREEN);
+                        DrawLine3D(torso->position, rightEnd, MAROON);
                     }
                 }
             }
@@ -654,26 +520,21 @@ static void App_Draw(AppState* app) {
     EndDrawing();
 }
 
-/* ************************************************************************** */
-/* Entry point (main)                                                          */
-/* - Returns: 0 on success, -1 on initialization failure                        */
-/* - Actions:                                                                  */
-/*   * Initializes AppState, runs main loop (input, update, render).          */
-/*   * On exit, frees resources via App_Shutdown.                              */
-/* ************************************************************************** */
 int main(void) {
     AppState app;
     if (!App_Init(&app)) return -1;
+
     while (!WindowShouldClose()) {
         float dt = GetFrameTime();
         App_HandleInput(&app, dt);
         App_UpdateCamera(&app, dt);
         App_UpdateAutoCenter(&app);
         App_PrepareRenderBones(&app);
-        App_PrepareRenderHeads(&app);  // Preparar cabezas
-        App_PrepareRenderTorsos(&app); // Preparar torsos
+        App_PrepareRenderHeads(&app);
+        App_PrepareRenderTorsos(&app);
         App_Draw(&app);
     }
+
     App_Shutdown(&app);
     return 0;
 }

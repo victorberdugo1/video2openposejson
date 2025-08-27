@@ -5,78 +5,61 @@
 #include <string.h>
 #include <stdlib.h>
 
-// --- Calcula la posición central del pecho usando hombros y cuello ---
 Vector3 CalculateChestPosition(const Person* person) {
     if (!person || person->boneCount == 0) {
         return (Vector3) { 0, 0, 0 };
     }
 
-
     Vector3 totalPos = { 0, 0, 0 };
     int pointCount = 0;
-
 
     for (int i = 0; i < person->boneCount; i++) {
         const Bone* bone = &person->bones[i];
         if (!bone->position.valid) continue;
 
-
-        // Usar hombros y cuello para definir el pecho
         if (strcmp(bone->name, "LShoulder") == 0 ||
             strcmp(bone->name, "RShoulder") == 0 ||
             strcmp(bone->name, "Neck") == 0) {
-
 
             totalPos = Vector3Add(totalPos, bone->position.position);
             pointCount++;
         }
     }
 
-
     if (pointCount > 0) {
         return Vector3Scale(totalPos, 1.0f / pointCount);
     }
 
-
     return (Vector3) { 0, 0, 0 };
 }
 
-// --- Calcula la posición central de las caderas usando los hips ---
 Vector3 CalculateHipPosition(const Person* person) {
     if (!person || person->boneCount == 0) {
         return (Vector3) { 0, 0, 0 };
     }
 
-
     Vector3 totalPos = { 0, 0, 0 };
     int pointCount = 0;
-
 
     for (int i = 0; i < person->boneCount; i++) {
         const Bone* bone = &person->bones[i];
         if (!bone->position.valid) continue;
 
-
-        // Usar las caderas
         if (strcmp(bone->name, "LHip") == 0 ||
             strcmp(bone->name, "RHip") == 0) {
-
 
             totalPos = Vector3Add(totalPos, bone->position.position);
             pointCount++;
         }
     }
 
-
     if (pointCount > 0) {
         return Vector3Scale(totalPos, 1.0f / pointCount);
     }
 
-
     return (Vector3) { 0, 0, 0 };
 }
 
-// --- Calcula la columna vertebral virtual ---
 VirtualSpine CalculateVirtualSpine(const Person* person) {
     VirtualSpine spine = { 0 };
     spine.valid = false;
@@ -88,7 +71,6 @@ VirtualSpine CalculateVirtualSpine(const Person* person) {
     Vector3 lShoulder = { 0 }, rShoulder = { 0 }, neck = { 0 };
     Vector3 lHip = { 0 }, rHip = { 0 };
 
-    // Recopilar puntos anatómicos
     for (int i = 0; i < person->boneCount; i++) {
         const Bone* bone = &person->bones[i];
         if (!bone->position.valid) continue;
@@ -110,16 +92,13 @@ VirtualSpine CalculateVirtualSpine(const Person* person) {
         }
     }
 
-    // Necesitamos al menos hombros y caderas
     if ((!hasLShoulder || !hasRShoulder) || (!hasLHip || !hasRHip)) {
         return spine;
     }
 
-    // Calcular posiciones del pecho y caderas
     spine.chestPosition = Vector3Scale(Vector3Add(lShoulder, rShoulder), 0.5f);
     spine.hipPosition = Vector3Scale(Vector3Add(lHip, rHip), 0.5f);
 
-    // Si tenemos cuello, incluirlo en el cálculo del pecho
     if (hasNeck) {
         spine.chestPosition = Vector3Scale(
             Vector3Add(Vector3Add(lShoulder, rShoulder), neck),
@@ -127,39 +106,31 @@ VirtualSpine CalculateVirtualSpine(const Person* person) {
         );
     }
 
-    // COLUMNA VERTEBRAL: Vector de cadera a pecho
     Vector3 spineVec = Vector3Subtract(spine.chestPosition, spine.hipPosition);
     float spineLength = Vector3Length(spineVec);
 
     if (spineLength < 1e-4f) {
-        return spine; // Columna demasiado corta
+        return spine;
     }
 
-    // Dirección de la columna (normalizada) - hacia arriba del cuerpo
     spine.spineDirection = Vector3Scale(spineVec, 1.0f / spineLength);
 
-    // Vector RIGHT de la columna: basado en la línea de hombros
     Vector3 shoulderLine = Vector3Subtract(rShoulder, lShoulder);
     float shoulderLength = Vector3Length(shoulderLine);
 
     if (shoulderLength < 1e-4f) {
-        return spine; // Hombros demasiado cerca
+        return spine;
     }
 
     spine.spineRight = Vector3Scale(shoulderLine, 1.0f / shoulderLength);
-
-    // Vector FORWARD de la columna: perpendicular a spine y right
-    // Esto define hacia dónde "mira" el torso (hacia adelante del cuerpo)
     spine.spineForward = Vector3CrossProduct(spine.spineRight, spine.spineDirection);
     float forwardLength = Vector3Length(spine.spineForward);
 
     if (forwardLength < 1e-6f) {
-        return spine; // Vectores colineales
+        return spine;
     }
 
     spine.spineForward = Vector3Scale(spine.spineForward, 1.0f / forwardLength);
-
-    // Re-ortogonalizar right para asegurar sistema perfecto
     spine.spineRight = Vector3CrossProduct(spine.spineDirection, spine.spineForward);
     float rightLength = Vector3Length(spine.spineRight);
 
@@ -171,14 +142,12 @@ VirtualSpine CalculateVirtualSpine(const Person* person) {
     return spine;
 }
 
-// --- Calcula orientación del pecho basada en la columna virtual ---
 TorsoOrientation CalculateChestOrientation(const Person* person) {
     TorsoOrientation orientation = { 0 };
     orientation.valid = false;
 
     VirtualSpine spine = CalculateVirtualSpine(person);
     if (!spine.valid) {
-        // Fallback a posición simple
         Vector3 chestPos = CalculateChestPosition(person);
         if (Vector3Length(chestPos) > 0.0f) {
             orientation.position = chestPos;
@@ -191,17 +160,10 @@ TorsoOrientation CalculateChestOrientation(const Person* person) {
     }
 
     orientation.position = spine.chestPosition;
+    orientation.forward = spine.spineForward;
+    orientation.up = spine.spineDirection;
+    orientation.right = spine.spineRight;
 
-    // ORIENTACIÓN DEL PECHO (similar a la cabeza):
-    // - FORWARD: hacia donde "mira" el pecho (frente del cuerpo)
-    // - UP: hacia arriba de la columna vertebral
-    // - RIGHT: hacia la derecha del cuerpo (línea de hombros)
-
-    orientation.forward = spine.spineForward;   // Hacia donde mira el pecho
-    orientation.up = spine.spineDirection;      // Hacia arriba de la columna
-    orientation.right = spine.spineRight;       // Línea de hombros
-
-    // Calcular ángulos de Euler
     orientation.yaw = atan2f(orientation.forward.x, orientation.forward.z);
 
     float horizDistance = sqrtf(orientation.forward.x * orientation.forward.x +
@@ -216,14 +178,12 @@ TorsoOrientation CalculateChestOrientation(const Person* person) {
     return orientation;
 }
 
-// --- Calcula orientación de las caderas basada en la columna virtual ---
 TorsoOrientation CalculateHipOrientation(const Person* person) {
     TorsoOrientation orientation = { 0 };
     orientation.valid = false;
 
     VirtualSpine spine = CalculateVirtualSpine(person);
     if (!spine.valid) {
-        // Fallback a posición simple
         Vector3 hipPos = CalculateHipPosition(person);
         if (Vector3Length(hipPos) > 0.0f) {
             orientation.position = hipPos;
@@ -236,17 +196,10 @@ TorsoOrientation CalculateHipOrientation(const Person* person) {
     }
 
     orientation.position = spine.hipPosition;
+    orientation.forward = spine.spineForward;
+    orientation.up = spine.spineDirection;
+    orientation.right = spine.spineRight;
 
-    // ORIENTACIÓN DE LAS CADERAS (igual que el pecho):
-    // - FORWARD: hacia donde "miran" las caderas (mismo que el pecho)
-    // - UP: hacia arriba de la columna vertebral
-    // - RIGHT: hacia la derecha del cuerpo
-
-    orientation.forward = spine.spineForward;   // Hacia donde miran las caderas
-    orientation.up = spine.spineDirection;      // Hacia arriba de la columna
-    orientation.right = spine.spineRight;       // Línea de caderas (mismo que hombros)
-
-    // Calcular ángulos de Euler (mismo sistema que el pecho)
     orientation.yaw = atan2f(orientation.forward.x, orientation.forward.z);
 
     float horizDistance = sqrtf(orientation.forward.x * orientation.forward.x +
@@ -261,20 +214,18 @@ TorsoOrientation CalculateHipOrientation(const Person* person) {
     return orientation;
 }
 
-// --- FUNCIÓN CORREGIDA: Mapeo de atlas basado en orientación real del torso ---
 void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
     int* outChosenIndex, float* outRotation, bool* outMirrored) {
 
     if (!torsoData->orientation.valid) {
-        // Fallback al método clásico si no hay orientación válida
         CalculateBoneRenderData(torsoData->position, camera, outChosenIndex, outRotation, outMirrored);
         return;
     }
 
     const int indices[3][8] = {
-        {  0,  4,  5,  6,  7,  6,  5,  4 },  // fila principal (nivel medio)
-        {  2, 12, 13, 14, 15, 14, 13, 12 },  // fila inferior (mirando hacia abajo)
-        {  1,  8,  9, 10, 11, 10,  9,  8 }   // fila superior (mirando hacia arriba)
+        {  0,  4,  5,  6,  7,  6,  5,  4 },
+        {  2, 12, 13, 14, 15, 14, 13, 12 },
+        {  1,  8,  9, 10, 11, 10,  9,  8 }
     };
     const int topdownIndex = 3;
     const int bottomIndex = 15;
@@ -282,20 +233,16 @@ void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
     const float HIGH_THRESHOLD = 22.5f;
     const float MAIN_THRESHOLD = -22.5f;
 
-    // Obtener la dirección desde el torso hacia la cámara
     Vector3 camDir = Vector3Subtract(camera.position, torsoData->position);
 
-    // CLAVE: Transformar la dirección de la cámara al espacio local del torso
     Vector3 localCamDir;
-    localCamDir.x = Vector3DotProduct(camDir, torsoData->orientation.right);   // componente hacia la derecha del torso
-    localCamDir.y = Vector3DotProduct(camDir, torsoData->orientation.up);      // componente hacia arriba del torso
-    localCamDir.z = Vector3DotProduct(camDir, torsoData->orientation.forward); // componente hacia adelante del torso
+    localCamDir.x = Vector3DotProduct(camDir, torsoData->orientation.right);
+    localCamDir.y = Vector3DotProduct(camDir, torsoData->orientation.up);
+    localCamDir.z = Vector3DotProduct(camDir, torsoData->orientation.forward);
 
-    // IGUAL QUE LA CABEZA: Invertir X para que la lógica coincida con la función normal
     localCamDir.x = -localCamDir.x;
 
-    // Calcular yaw y pitch en el espacio local del torso
-    float localYaw = atan2f(-localCamDir.x, localCamDir.z); // Invertir X aquí para cambiar dirección del giro
+    float localYaw = atan2f(-localCamDir.x, localCamDir.z);
     if (localYaw < 0.0f) localYaw += 2.0f * PI;
     float localYawDeg = localYaw * RAD2DEG;
 
@@ -303,7 +250,6 @@ void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
     float localPitch = atan2f(localCamDir.y, horizDistance);
     float localPitchDeg = localPitch * RAD2DEG;
 
-    // Determinar la fila del atlas basada en el pitch local
     int chosenRow = -1;
     bool useTopdown = false;
     bool isTopView = false;
@@ -313,35 +259,32 @@ void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
         isTopView = true;
     }
     else if (localPitchDeg >= HIGH_THRESHOLD) {
-        chosenRow = 2; // fila superior
+        chosenRow = 2;
     }
     else if (localPitchDeg >= MAIN_THRESHOLD) {
-        chosenRow = 0; // fila principal
+        chosenRow = 0;
     }
     else if (localPitchDeg >= -TOPDOWN_ANGLE) {
-        chosenRow = 1; // fila inferior
+        chosenRow = 1;
     }
     else {
         useTopdown = true;
         isTopView = false;
     }
 
-    // Calcular el sector basado en el yaw local
     int sector = 0;
-    // MODIFICACIÓN: Agregar 180° para rotar la textura al frente
-    float normalizedYaw = localYawDeg + 22.5f + 180.0f; // +180° para girar la textura
+    float normalizedYaw = localYawDeg + 22.5f + 180.0f;
     if (normalizedYaw >= 360.0f) normalizedYaw -= 360.0f;
 
-    if (normalizedYaw < 45.0f) sector = 0;       // frente
-    else if (normalizedYaw < 90.0f) sector = 1;  // frente-derecha
-    else if (normalizedYaw < 135.0f) sector = 2; // derecha
-    else if (normalizedYaw < 180.0f) sector = 3; // atrás-derecha
-    else if (normalizedYaw < 225.0f) sector = 4; // atrás
-    else if (normalizedYaw < 270.0f) sector = 5; // atrás-izquierda
-    else if (normalizedYaw < 315.0f) sector = 6; // izquierda
-    else sector = 7;                             // frente-izquierda
+    if (normalizedYaw < 45.0f) sector = 0;
+    else if (normalizedYaw < 90.0f) sector = 1;
+    else if (normalizedYaw < 135.0f) sector = 2;
+    else if (normalizedYaw < 180.0f) sector = 3;
+    else if (normalizedYaw < 225.0f) sector = 4;
+    else if (normalizedYaw < 270.0f) sector = 5;
+    else if (normalizedYaw < 315.0f) sector = 6;
+    else sector = 7;
 
-    // Asignar índice, rotación y espejado
     if (useTopdown) {
         if (isTopView) {
             *outChosenIndex = topdownIndex;
@@ -358,13 +301,11 @@ void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
     else {
         *outChosenIndex = indices[chosenRow][sector];
         *outRotation = 0.0f;
-        *outMirrored = !(sector >= 5 && sector <= 7); // espejear para los sectores izquierdos
+        *outMirrored = !(sector >= 5 && sector <= 7);
     }
 }
 
-// --- Función de morphing para torsos ---
 void CalculateTorsoMorphData(const TorsoRenderData* torsoData, Camera camera, BoneMorphData* outMorphData) {
-    // Por ahora usar la versión sin morphing, pero podrías implementar morphing similar al de los bones
     int primaryIndex;
     float rotation;
     bool mirrored;
@@ -372,18 +313,16 @@ void CalculateTorsoMorphData(const TorsoRenderData* torsoData, Camera camera, Bo
     CalculateTorsoRenderData(torsoData, camera, &primaryIndex, &rotation, &mirrored);
 
     outMorphData->primaryIndex = primaryIndex;
-    outMorphData->secondaryIndex = primaryIndex; // sin morphing por ahora
+    outMorphData->secondaryIndex = primaryIndex;
     outMorphData->blendFactor = 0.0f;
     outMorphData->rotation = rotation;
     outMorphData->mirrored = mirrored;
 }
 
-// --- Determina si se debe renderizar el pecho ---
 bool ShouldRenderChest(const Person* person) {
     if (!person || !person->active) return false;
 
     int shoulderCount = 0;
-    //bool hasNeck = false;
 
     for (int i = 0; i < person->boneCount; i++) {
         const Bone* bone = &person->bones[i];
@@ -392,16 +331,11 @@ bool ShouldRenderChest(const Person* person) {
         if (strcmp(bone->name, "LShoulder") == 0 || strcmp(bone->name, "RShoulder") == 0) {
             shoulderCount++;
         }
-        if (strcmp(bone->name, "Neck") == 0) {
-            //hasNeck = true;
-        }
     }
 
-    // Necesitamos al menos un hombro para renderizar el pecho
     return shoulderCount >= 1;
 }
 
-// --- Determina si se debe renderizar las caderas ---
 bool ShouldRenderHip(const Person* person) {
     if (!person || !person->active) return false;
 
@@ -415,11 +349,9 @@ bool ShouldRenderHip(const Person* person) {
         }
     }
 
-    // Necesitamos al menos una cadera para renderizar
     return hipCount >= 1;
 }
 
-// --- Dibuja un billboard de torso ---
 void DrawTorsoBillboard(Texture2D texture, Camera camera, const TorsoRenderData* torsoData, int physCols, int physRows) {
     if (!torsoData || !torsoData->valid || !torsoData->visible) return;
 
@@ -427,7 +359,6 @@ void DrawTorsoBillboard(Texture2D texture, Camera camera, const TorsoRenderData*
     float rotation;
     bool mirrored;
 
-    // Usar la nueva función que considera la orientación real del torso
     CalculateTorsoRenderData(torsoData, camera, &chosenIndex, &rotation, &mirrored);
 
     int logicalCol = chosenIndex % ATLAS_COLS;
@@ -436,12 +367,10 @@ void DrawTorsoBillboard(Texture2D texture, Camera camera, const TorsoRenderData*
     bool finalMirror = false;
     Rectangle src = SrcFromLogical(texture, logicalCol, logicalRow, physCols, physRows, mirrored, &finalMirror);
 
-    // Dibujar con la rotación calculada basada en la orientación real del torso
     Vector2 worldSize = (Vector2){ torsoData->size, torsoData->size };
     DrawBonetileCustom(texture, camera, src, torsoData->position, worldSize, rotation, finalMirror);
 }
 
-// --- Recopila torsos para renderizar ---
 void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData** torsos,
     int* torsoCount, int* torsoCapacity, BoneConfig* boneConfigs,
     int boneConfigCount) {
@@ -454,7 +383,6 @@ void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData*
 
     const AnimationFrame* frame = &animation->frames[currentFrame];
 
-    // Estimar capacidad necesaria: 2 torsos por persona (pecho + cadera)
     int estimatedTorsos = frame->personCount * 2;
     if (*torsoCapacity < estimatedTorsos) {
         TorsoRenderData* newArray = (TorsoRenderData*)realloc(*torsos, sizeof(TorsoRenderData) * estimatedTorsos);
@@ -463,13 +391,12 @@ void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData*
         *torsoCapacity = estimatedTorsos;
     }
 
-    static char processedTorsos[200][25]; // personId + "_" + tipo
+    static char processedTorsos[200][25];
     int processedCount = 0;
 
     for (int p = 0; p < frame->personCount; p++) {
         const Person* person = &frame->persons[p];
 
-        // Procesar pecho
         if (ShouldRenderChest(person)) {
             char torsoKey[25];
             snprintf(torsoKey, sizeof(torsoKey), "%s_chest", person->personId);
@@ -492,7 +419,6 @@ void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData*
                 TorsoRenderData* torsoData = &(*torsos)[*torsoCount];
                 memset(torsoData, 0, sizeof(TorsoRenderData));
 
-                // Calcular posición y orientación del pecho
                 torsoData->position = CalculateChestPosition(person);
                 torsoData->orientation = CalculateChestOrientation(person);
                 torsoData->type = TORSO_CHEST;
@@ -524,7 +450,6 @@ void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData*
             }
         }
 
-        // Procesar caderas
         if (ShouldRenderHip(person)) {
             char torsoKey[25];
             snprintf(torsoKey, sizeof(torsoKey), "%s_hip", person->personId);
@@ -547,7 +472,6 @@ void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData*
                 TorsoRenderData* torsoData = &(*torsos)[*torsoCount];
                 memset(torsoData, 0, sizeof(TorsoRenderData));
 
-                // Calcular posición y orientación de las caderas
                 torsoData->position = CalculateHipPosition(person);
                 torsoData->orientation = CalculateHipOrientation(person);
                 torsoData->type = TORSO_HIP;
