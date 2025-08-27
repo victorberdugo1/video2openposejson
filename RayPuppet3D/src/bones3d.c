@@ -641,12 +641,26 @@ void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, Bo
             float distance = Vector3Distance(camera.position, bone->position.position);
             if (distance > 50.0f) continue;
 
-            // Calculate morph data
+            // ENHANCED: Calculate bone orientation using skeletal connections
+            BoneOrientation boneOrientation = CalculateEnhancedBoneOrientation(bone->name, person);
+
+            // Calculate morph data with orientation
             BoneMorphData morphData;
-            CalculateBoneMorphData(bone->position.position, camera, &morphData);
+            if (boneOrientation.valid) {
+                // Create a temporary render data structure for orientation-aware morphing
+                BoneRenderData tempRenderData = { 0 };
+                tempRenderData.position = bone->position.position;
+                tempRenderData.orientation = boneOrientation;
+                
+                CalculateEnhancedBoneMorphData(&tempRenderData, camera, &morphData);
+            } else {
+                // Fall back to basic morphing
+                CalculateBoneMorphData(bone->position.position, camera, &morphData);
+            }
 
             BoneRenderData* renderBone = &(*renderBones)[*renderBonesCount];
             renderBone->position = bone->position.position;
+            renderBone->orientation = boneOrientation;  // Store the orientation
             renderBone->morphData = morphData;
             renderBone->atlasIndex = morphData.primaryIndex;
             renderBone->rotation = morphData.rotation;

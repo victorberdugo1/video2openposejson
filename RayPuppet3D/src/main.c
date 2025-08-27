@@ -395,7 +395,7 @@ static void App_Draw(AppState* app) {
     BeginDrawing();
     ClearBackground(RAYWHITE);
 
-    const char* modeText = app->useMorphing ? "MORPHING MODE" : "CLASSIC MODE";
+    const char* modeText = app->useMorphing ? "MORPHING MODE (Orientation-Aware)" : "CLASSIC MODE";
     const char* controlsText = "M: Toggle Morphing | H: Toggle Heads | T: Toggle Torsos | C: Mouse Control | 1/2: Camera Mode | Space: Play/Pause";
     DrawText(modeText, 10, 10, 20, app->useMorphing ? GREEN : BLUE);
     DrawText(controlsText, 10, 35, 16, DARKGRAY);
@@ -419,7 +419,7 @@ static void App_Draw(AppState* app) {
         rlDisableDepthTest();
         BeginBlendMode(BLEND_ALPHA);
 
-        // Render bones
+        // Render bones with orientation awareness
         for (int i = 0; i < app->renderBonesCount; i++) {
             const BoneRenderData* bone = &app->renderBones[i];
             if (!bone->valid || !bone->visible) continue;
@@ -435,14 +435,27 @@ static void App_Draw(AppState* app) {
             Vector2 worldSize = (Vector2){ bone->size * aspect, bone->size };
 
             if (app->useMorphing) {
-                DrawBonetileWithMorphing(currentTex, app->camera, bone->morphData, bone->position, worldSize, app->physCols, app->physRows);
+                // Use orientation-aware morphing if available
+                if (bone->orientation.valid) {
+                    DrawBonetileWithMorphing(currentTex, app->camera, bone->morphData, bone->position, worldSize, app->physCols, app->physRows);
+                } else {
+                    // Fall back to basic morphing
+                    BoneMorphData basicMorph;
+                    CalculateBoneMorphData(bone->position, app->camera, &basicMorph);
+                    DrawBonetileWithMorphing(currentTex, app->camera, basicMorph, bone->position, worldSize, app->physCols, app->physRows);
+                }
             }
             else {
+                // Classic mode - use orientation if available
                 int chosenIndex;
                 float rotation;
                 bool mirrored;
 
-                CalculateBoneRenderData(bone->position, app->camera, &chosenIndex, &rotation, &mirrored);
+                if (bone->orientation.valid) {
+                    CalculateEnhancedBoneRenderData(bone, app->camera, &chosenIndex, &rotation, &mirrored);
+                } else {
+                    CalculateBoneRenderData(bone->position, app->camera, &chosenIndex, &rotation, &mirrored);
+                }
 
                 int logicalCol = chosenIndex % ATLAS_COLS;
                 int logicalRow = chosenIndex / ATLAS_COLS;
@@ -454,6 +467,17 @@ static void App_Draw(AppState* app) {
             if (app->renderConfig.drawDebugSpheres) {
                 Color debugCol = (texIndex == 0) ? RED : (texIndex == 1) ? BLUE : (texIndex == 2) ? PURPLE : GREEN;
                 DrawSphereWires(bone->position, app->renderConfig.debugSphereRadius, 8, 8, debugCol);
+                
+                // Draw orientation vectors if available
+                if (bone->orientation.valid) {
+                    Vector3 forwardEnd = Vector3Add(bone->position, Vector3Scale(bone->orientation.forward, 0.08f));
+                    Vector3 upEnd = Vector3Add(bone->position, Vector3Scale(bone->orientation.up, 0.08f));
+                    Vector3 rightEnd = Vector3Add(bone->position, Vector3Scale(bone->orientation.right, 0.08f));
+
+                    DrawLine3D(bone->position, forwardEnd, DARKBLUE);
+                    DrawLine3D(bone->position, upEnd, DARKGREEN);
+                    DrawLine3D(bone->position, rightEnd, MAROON);
+                }
             }
         }
 
