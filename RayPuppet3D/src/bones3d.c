@@ -1,4 +1,3 @@
-// src/bones3d.c
 #include "bones3d.h"
 #include "bonetile.h"
 #include <stdio.h>
@@ -642,82 +641,12 @@ void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, Bo
             float distance = Vector3Distance(camera.position, bone->position.position);
             if (distance > 50.0f) continue;
 
-            // ENHANCED: Calculate bone orientation using skeletal connections
-            BoneOrientation boneOrientation = CalculateEnhancedBoneOrientation(bone->name, person);
-
-            // Calculate morph data with orientation
+            // Calculate morph data
             BoneMorphData morphData;
-            BoneRenderData tempRenderData = { 0 };
-            tempRenderData.position = bone->position.position;
-            tempRenderData.orientation = boneOrientation;
-
-            // set texturePath and boneName on tempRenderData so later logic (if extended) can use it
-            if (config) {
-                strncpy(tempRenderData.texturePath, config->texturePath, MAX_FILE_PATH_LENGTH - 1);
-                tempRenderData.texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
-            }
-            else {
-                const char* defaultPath = GetTexturePathForBone(boneConfigs, boneConfigCount, bone->name);
-                strncpy(tempRenderData.texturePath, defaultPath, MAX_FILE_PATH_LENGTH - 1);
-                tempRenderData.texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
-            }
-            strncpy(tempRenderData.boneName, bone->name, MAX_BONE_NAME_LENGTH - 1);
-            tempRenderData.boneName[MAX_BONE_NAME_LENGTH - 1] = '\0';
-
-            if (boneOrientation.valid) {
-                // Create a temporary render data structure for orientation-aware morphing
-                CalculateEnhancedBoneMorphData(&tempRenderData, camera, &morphData);
-            }
-            else {
-                // Fall back to basic morphing
-                CalculateBoneMorphData(bone->position.position, camera, &morphData);
-            }
-
-            // ------------------------------
-            // Apply per-bone texture rotation & pivot for morphing path (fix for Neck)
-            // ------------------------------
-            // NOTE: For simplicity and immediate compatibility we hardcode the Neck correction here
-            // (this mirrors the correction you already had in the bonetile corrections table).
-            if (strcmp(bone->name, "Neck") == 0) {
-                // values taken from your corrections table:
-                const float neckPivotX = 0.5f;
-                const float neckPivotY = 0.32f;
-                const float neckTextureRotationDeg = 90.0f;
-
-                // apply texture rotation to morph rotation (so DrawBonetileWithMorphing rotates correctly)
-                float finalRotation = morphData.rotation + neckTextureRotationDeg;
-                morphData.rotation = finalRotation;
-
-                // compute pivot offset exactly like DrawBoneWithOrientation does
-                Vector3 camForward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
-                Vector3 right = Vector3Normalize(Vector3CrossProduct(camForward, camera.up));
-                Vector3 up = Vector3Normalize(Vector3CrossProduct(right, camForward));
-
-                float a = finalRotation * (PI / 180.0f);
-                float ca = cosf(a);
-                float sa = sinf(a);
-
-                Vector3 newRight = Vector3Subtract(Vector3Scale(right, ca), Vector3Scale(up, sa));
-                Vector3 newUp = Vector3Add(Vector3Scale(right, sa), Vector3Scale(up, ca));
-
-                float pivotX = neckPivotX;
-                float pivotY = neckPivotY;
-
-                // if mirrored, invert pivotX so visual pivot remains consistent
-                if (morphData.mirrored) pivotX = 1.0f - pivotX;
-
-                Vector3 pivotOffset = Vector3Add(
-                    Vector3Scale(newRight, (0.5f - pivotX) * ((config ? config->size : GetBoneSize(boneConfigs, boneConfigCount, bone->name)))),
-                    Vector3Scale(newUp, (0.5f - pivotY) * ((config ? config->size : GetBoneSize(boneConfigs, boneConfigCount, bone->name))))
-                );
-
-                // move the render position so the pivot point aligns with the original bone position
-                tempRenderData.position = Vector3Add(tempRenderData.position, pivotOffset);
-            }
+            CalculateBoneMorphData(bone->position.position, camera, &morphData);
 
             BoneRenderData* renderBone = &(*renderBones)[*renderBonesCount];
-            renderBone->position = tempRenderData.position;
-            renderBone->orientation = boneOrientation;  // Store the orientation
+            renderBone->position = bone->position.position;
             renderBone->morphData = morphData;
             renderBone->atlasIndex = morphData.primaryIndex;
             renderBone->rotation = morphData.rotation;

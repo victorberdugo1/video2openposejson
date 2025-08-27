@@ -37,20 +37,20 @@ typedef struct {
     bool mirrored;
 } BoneMorphData;
 
-typedef struct BoneRenderData {
+typedef struct {
+    char personId[16];
+    char boneName[MAX_BONE_NAME_LENGTH];
     Vector3 position;
-    BoneOrientation orientation;  // Add this field
+    BoneOrientation orientation;
     BoneMorphData morphData;
     int atlasIndex;
     float rotation;
     bool mirrored;
     float distance;
-    bool valid;
     char texturePath[MAX_FILE_PATH_LENGTH];
-    bool visible;
     float size;
-    char boneName[MAX_BONE_NAME_LENGTH];
-    char personId[16];
+    bool valid;
+    bool visible;
 } BoneRenderData;
 
 typedef struct {
