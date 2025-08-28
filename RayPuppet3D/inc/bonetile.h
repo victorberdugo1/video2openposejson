@@ -30,19 +30,10 @@ typedef struct {
 } BoneOrientation;
 
 typedef struct {
-    int primaryIndex;
-    int secondaryIndex;
-    float blendFactor;
-    float rotation;
-    bool mirrored;
-} BoneMorphData;
-
-typedef struct {
     char personId[16];
     char boneName[MAX_BONE_NAME_LENGTH];
     Vector3 position;
     BoneOrientation orientation;
-    BoneMorphData morphData;
     int atlasIndex;
     float rotation;
     bool mirrored;
@@ -78,9 +69,6 @@ void DrawBoneWithOrientation(Texture2D texture, Camera camera, const char* boneN
     const Person* person, const BoneConfig* config,
     int physCols, int physRows);
 
-void CalculateEnhancedBoneMorphData(const BoneRenderData* boneData, Camera camera,
-    BoneMorphData* outMorphData);
-
 void CalculateBoneRenderDataWithOrientation(const BoneRenderData* boneData, Camera camera,
     int* outChosenIndex, float* outRotation, bool* outMirrored);
 
@@ -94,10 +82,5 @@ void CalculateBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex
 
 Rectangle SrcFromLogical(Texture2D tex, int logicalCol, int logicalRow, int physCols, int physRows,
     bool mirrored, bool* outMirrored);
-
-void CalculateBoneMorphData(Vector3 bonePos, Camera camera, BoneMorphData* outMorphData);
-
-void DrawBonetileWithMorphing(Texture2D tex, Camera camera, BoneMorphData morphData,
-    Vector3 pos, Vector2 size, int physCols, int physRows);
 
 #endif /* BONETILE_H */

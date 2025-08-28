@@ -57,7 +57,6 @@ TorsoOrientation CalculateHipOrientation(const Person* person);
 // Funciones de renderizado
 void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
     int* outChosenIndex, float* outRotation, bool* outMirrored);
-void CalculateTorsoMorphData(const TorsoRenderData* torsoData, Camera camera, BoneMorphData* outMorphData);
 
 // Funciones de visibilidad
 bool ShouldRenderChest(const Person* person);

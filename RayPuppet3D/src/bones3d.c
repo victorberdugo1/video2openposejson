@@ -642,15 +642,10 @@ void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, Bo
             if (distance > 50.0f) continue;
 
             // Calculate morph data
-            BoneMorphData morphData;
-            CalculateBoneMorphData(bone->position.position, camera, &morphData);
+
 
             BoneRenderData* renderBone = &(*renderBones)[*renderBonesCount];
             renderBone->position = bone->position.position;
-            renderBone->morphData = morphData;
-            renderBone->atlasIndex = morphData.primaryIndex;
-            renderBone->rotation = morphData.rotation;
-            renderBone->mirrored = morphData.mirrored;
             renderBone->distance = distance;
             renderBone->valid = true;
 

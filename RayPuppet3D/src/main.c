@@ -53,7 +53,6 @@ typedef struct {
     bool autoCenterCalculated;
     int lastProcessedFrame;
     bool forceUpdate;
-    bool useMorphing;
 } AppState;
 
 static bool App_Init(AppState* app);
@@ -95,7 +94,6 @@ static bool App_Init(AppState* app) {
     app->renderTorsoBillboards = true;
     app->physCols = 8;
     app->physRows = 8;
-    app->useMorphing = false;
 
     LoadSimpleTextureConfig(&app->textureSystem, "bone_textures.txt");
     LoadBoneConfigurations(&app->textureSystem, &app->boneConfigs, &app->boneConfigCount);
@@ -224,12 +222,6 @@ static void App_HandleInput(AppState* app, float dt) {
     if (IsKeyPressed(KEY_C)) {
         app->cameraMouseControl = !app->cameraMouseControl;
         if (app->cameraMouseControl) DisableCursor(); else EnableCursor();
-    }
-
-    if (IsKeyPressed(KEY_M)) {
-        app->useMorphing = !app->useMorphing;
-        app->forceUpdate = true;
-        TraceLog(LOG_INFO, "Morphing %s", app->useMorphing ? "ENABLED" : "DISABLED");
     }
 
     if (IsKeyPressed(KEY_H)) {
@@ -395,9 +387,9 @@ static void App_Draw(AppState* app) {
     BeginDrawing();
     ClearBackground(RAYWHITE);
 
-    const char* modeText = app->useMorphing ? "MORPHING MODE (Orientation-Aware)" : "CLASSIC MODE";
+    const char* modeText = "CLASSIC MODE";
     const char* controlsText = "M: Toggle Morphing | H: Toggle Heads | T: Toggle Torsos | C: Mouse Control | 1/2: Camera Mode | Space: Play/Pause";
-    DrawText(modeText, 10, 10, 20, app->useMorphing ? GREEN : BLUE);
+    DrawText(modeText, 10, 10, 20, BLUE);
     DrawText(controlsText, 10, 35, 16, DARKGRAY);
 
     char frameText[64];
@@ -434,19 +426,7 @@ static void App_Draw(AppState* app) {
             float aspect = logicalCellW / logicalCellH;
             Vector2 worldSize = (Vector2){ bone->size * aspect, bone->size };
 
-            if (app->useMorphing) {
-                // Use orientation-aware morphing if available
-                if (bone->orientation.valid) {
-                    DrawBonetileWithMorphing(currentTex, app->camera, bone->morphData, bone->position, worldSize, app->physCols, app->physRows);
-                } else {
-                    // Fall back to basic morphing
-                    BoneMorphData basicMorph;
-                    CalculateBoneMorphData(bone->position, app->camera, &basicMorph);
-                    DrawBonetileWithMorphing(currentTex, app->camera, basicMorph, bone->position, worldSize, app->physCols, app->physRows);
-                }
-            }
-            else {
-                // Classic mode - use orientation if available
+
                 int chosenIndex;
                 float rotation;
                 bool mirrored;
@@ -462,7 +442,7 @@ static void App_Draw(AppState* app) {
                 bool finalMirror = false;
                 Rectangle src = SrcFromLogical(currentTex, logicalCol, logicalRow, app->physCols, app->physRows, mirrored, &finalMirror);
                 DrawBonetileCustom(currentTex, app->camera, src, bone->position, worldSize, rotation, finalMirror);
-            }
+
 
             if (app->renderConfig.drawDebugSpheres) {
                 Color debugCol = (texIndex == 0) ? RED : (texIndex == 1) ? BLUE : (texIndex == 2) ? PURPLE : GREEN;

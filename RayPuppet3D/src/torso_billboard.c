@@ -305,20 +305,6 @@ void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
     }
 }
 
-void CalculateTorsoMorphData(const TorsoRenderData* torsoData, Camera camera, BoneMorphData* outMorphData) {
-    int primaryIndex;
-    float rotation;
-    bool mirrored;
-
-    CalculateTorsoRenderData(torsoData, camera, &primaryIndex, &rotation, &mirrored);
-
-    outMorphData->primaryIndex = primaryIndex;
-    outMorphData->secondaryIndex = primaryIndex;
-    outMorphData->blendFactor = 0.0f;
-    outMorphData->rotation = rotation;
-    outMorphData->mirrored = mirrored;
-}
-
 bool ShouldRenderChest(const Person* person) {
     if (!person || !person->active) return false;
 
