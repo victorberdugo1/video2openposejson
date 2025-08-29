@@ -9,26 +9,79 @@ Vector3 CalculateHeadPosition(const Person* person) {
         return (Vector3) { 0, 0, 0 };
     }
 
-    Vector3 totalPos = { 0,0,0 };
-    int pointCount = 0;
+    Vector3 eyeCenter = { 0, 0, 0 };
+    int eyeCount = 0;
+    Vector3 neckPos = { 0, 0, 0 };
+    bool hasNeck = false;
+    Vector3 nosePos = { 0, 0, 0 };
+    bool hasNose = false;
 
     for (int i = 0; i < person->boneCount; i++) {
         const Bone* bone = &person->bones[i];
         if (!bone->position.valid) continue;
 
-        if (strcmp(bone->name, "Nose") == 0 ||
-            strcmp(bone->name, "LEye") == 0 ||
-            strcmp(bone->name, "REye") == 0 ||
-            strcmp(bone->name, "LEar") == 0 ||
-            strcmp(bone->name, "REar") == 0) {
-
-            totalPos = Vector3Add(totalPos, bone->position.position);
-            pointCount++;
+        // Solo ojos para referencia vertical
+        if (strcmp(bone->name, "LEye") == 0 || strcmp(bone->name, "REye") == 0) {
+            eyeCenter = Vector3Add(eyeCenter, bone->position.position);
+            eyeCount++;
+        }
+        // Nariz para referencia frontal (profundidad)
+        else if (strcmp(bone->name, "Nose") == 0) {
+            nosePos = bone->position.position;
+            hasNose = true;
+        }
+        // Cuello como base
+        else if (strcmp(bone->name, "Neck") == 0) {
+            neckPos = bone->position.position;
+            hasNeck = true;
         }
     }
 
-    if (pointCount > 0) {
-        return Vector3Scale(totalPos, 1.0f / pointCount);
+    // Cálculo anatómicamente correcto
+    if (eyeCount > 0 && hasNeck) {
+        eyeCenter = Vector3Scale(eyeCenter, 1.0f / eyeCount);
+
+        Vector3 headCenter;
+
+        // X: Promedio entre cuello y ojos, pero más cerca del cuello
+        headCenter.x = neckPos.x * 0.7f + eyeCenter.x * 0.3f;
+
+        // Y: Mantener altura de ojos (la cabeza está a esa altura)
+        headCenter.y = eyeCenter.y;
+
+        // Z: Atrás de la nariz, cerca del cuello (centro de masa del cráneo)
+        if (hasNose) {
+            // La cabeza está significativamente atrás de la cara
+            headCenter.z = neckPos.z * 0.8f + nosePos.z * 0.2f;  // MÁS hacia atrás
+        }
+        else {
+            // Sin nariz, usar solo referencia de cuello y ojos
+            headCenter.z = neckPos.z * 0.9f + eyeCenter.z * 0.1f; // MÁS hacia atrás
+        }
+
+        return headCenter;
+    }
+
+    // Fallbacks progresivos
+    if (eyeCount > 0) {
+        eyeCenter = Vector3Scale(eyeCenter, 1.0f / eyeCount);
+
+        // Sin cuello, estimar posición hacia atrás desde los ojos
+        Vector3 estimatedHead = eyeCenter;
+        if (hasNose) {
+            // Mover hacia atrás desde la línea nariz-ojos
+            Vector3 backOffset = Vector3Subtract(eyeCenter, nosePos);
+            backOffset = Vector3Scale(backOffset, 0.5f); // 50% hacia atrás
+            estimatedHead = Vector3Add(eyeCenter, backOffset);
+        }
+        return estimatedHead;
+    }
+
+    if (hasNeck) {
+        // Solo cuello disponible, estimar cabeza arriba y adelante
+        Vector3 estimatedHead = neckPos;
+        estimatedHead.y += 0.15f; // Aproximadamente 15cm arriba del cuello
+        return estimatedHead;
     }
 
     return (Vector3) { 0, 0, 0 };

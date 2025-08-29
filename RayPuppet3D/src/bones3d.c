@@ -1,5 +1,6 @@
 #include "bones3d.h"
 #include "bonetile.h"
+#include "head_billboard.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,6 +9,45 @@
 
 static BonesRenderConfig g_renderConfig = { 0 };
 static bool g_configInitialized = false;
+
+// Mapa de conexiones para cálculo de puntos medios
+
+// Mapa de conexiones actualizado para el nuevo sistema
+static const struct {
+    const char* boneName;
+    const char* connectedBone;
+    float projectionFactor; // Factor para proyección (1.0 = punto medio, >1.0 = proyección)
+} MIDPOINT_CONNECTIONS[] = {
+    // CUELLO - punto medio entre cabeza calculada y cuello original
+    {"Neck", "HEAD_CALCULATED", 1.0f},  // Caso especial
+
+    // BRAZOS
+    // Shoulders: punto medio entre hombro original y codo
+    {"LShoulder", "LElbow", 1.0f},
+    {"RShoulder", "RElbow", 1.0f},
+
+    // Elbows: punto medio entre codo original y muñeca
+    {"LElbow", "LWrist", 1.0f},
+    {"RElbow", "RWrist", 1.0f},
+
+    // Wrists: proyección del antebrazo (codo -> muñeca extendido)
+    {"LWrist", "LElbow", 1.3f}, // Proyección 30% más allá
+    {"RWrist", "RElbow", 1.3f},
+
+    // PIERNAS
+    // Hips: punto medio entre cadera original y rodilla
+    {"LHip", "LKnee", 1.0f},
+    {"RHip", "RKnee", 1.0f},
+
+    // Knees: punto medio entre rodilla original y tobillo
+    {"LKnee", "LAnkle", 1.0f},
+    {"RKnee", "RAnkle", 1.0f},
+
+    {"LAnkle", "FOOT_FORWARD", 1.0f}, // Identificador especial
+    {"RAnkle", "FOOT_FORWARD", 1.0f}, // Identificador especial
+
+    {"", "", 0.0f}
+};
 
 static void InitializeDefaultConfig(void) {
     if (!g_configInitialized) {
@@ -37,6 +77,194 @@ static void SafeStrCopy(char* dest, const char* src, size_t destSize) {
     memcpy(dest, src, len);
     dest[len] = '\0';
 }
+
+// Función auxiliar para obtener posición original del hueso
+// Función auxiliar para obtener posición original del hueso
+static Vector3 GetOriginalBonePosition(const char* boneName, const Person* person) {
+    if (!person || !boneName) return (Vector3) { 0, 0, 0 };
+
+    for (int i = 0; i < person->boneCount; i++) {
+        if (strcmp(person->bones[i].name, boneName) == 0 && person->bones[i].position.valid) {
+            return person->bones[i].position.position;
+        }
+    }
+    return (Vector3) { 0, 0, 0 };
+}
+
+
+
+// 2. Reemplazar completamente la función CalculateBoneMidpoint:
+
+static Vector3 CalculateBoneMidpoint(const char* boneName, const Person* person) {
+    if (!person || !boneName) return (Vector3) { 0, 0, 0 };
+
+    // CASO ESPECIAL: CUELLO - punto medio entre cabeza calculada y cuello original
+    if (strcmp(boneName, "Neck") == 0) {
+        // Obtener posición original del cuello de OpenPose
+        Vector3 originalNeck = GetOriginalBonePosition("Neck", person);
+
+        // Si no hay cuello original, no podemos calcular
+        if (originalNeck.x == 0 && originalNeck.y == 0 && originalNeck.z == 0) {
+            return originalNeck;
+        }
+
+        // Calcular posición anatómica de la cabeza
+        Vector3 calculatedHead = CalculateHeadPosition(person);
+
+        // Si no se pudo calcular la cabeza, usar cuello original
+        if (calculatedHead.x == 0 && calculatedHead.y == 0 && calculatedHead.z == 0) {
+            return originalNeck;
+        }
+
+        // Cuello a 1/3 de distancia desde cuello original hacia cabeza
+        // (33% cabeza, 67% cuello original = cuello más cerca del punto original)
+        return (Vector3) {
+            calculatedHead.x * 0.33f + originalNeck.x * 0.67f,
+                calculatedHead.y * 0.33f + originalNeck.y * 0.67f,
+                calculatedHead.z * 0.33f + originalNeck.z * 0.67f
+        };
+
+        // Otras opciones comentadas:
+        // 1/4 distancia: calculatedHead * 0.25f + originalNeck * 0.75f
+        // Punto medio:   calculatedHead * 0.5f  + originalNeck * 0.5f  
+        // 3/4 distancia: calculatedHead * 0.75f + originalNeck * 0.25f
+    }
+
+    // Buscar la configuración de conexión para otros huesos
+    const char* connectedBoneName = NULL;
+    float projectionFactor = 1.0f;
+
+    for (int i = 0; MIDPOINT_CONNECTIONS[i].boneName[0] != '\0'; i++) {
+        if (strcmp(MIDPOINT_CONNECTIONS[i].boneName, boneName) == 0) {
+            connectedBoneName = MIDPOINT_CONNECTIONS[i].connectedBone;
+            projectionFactor = MIDPOINT_CONNECTIONS[i].projectionFactor;
+            break;
+        }
+    }
+
+    if (!connectedBoneName) {
+        // Si no hay conexión definida, usar posición original
+        return GetOriginalBonePosition(boneName, person);
+    }
+
+    // Obtener posiciones de los huesos involucrados
+    Vector3 bonePos = { 0, 0, 0 };
+    Vector3 connectedPos = { 0, 0, 0 };
+    bool foundBone = false, foundConnected = false;
+
+    // BRAZOS - casos especiales que requieren posiciones originales
+    if (strstr(boneName, "Shoulder") != NULL) {
+        // Shoulder: punto medio entre hombro original y codo original
+        bonePos = GetOriginalBonePosition(boneName, person);
+        connectedPos = GetOriginalBonePosition(connectedBoneName, person);
+        foundBone = (bonePos.x != 0 || bonePos.y != 0 || bonePos.z != 0);
+        foundConnected = (connectedPos.x != 0 || connectedPos.y != 0 || connectedPos.z != 0);
+    }
+    else if (strstr(boneName, "Elbow") != NULL) {
+        // Elbow: punto medio entre codo original y muñeca original
+        bonePos = GetOriginalBonePosition(boneName, person);
+        connectedPos = GetOriginalBonePosition(connectedBoneName, person);
+        foundBone = (bonePos.x != 0 || bonePos.y != 0 || bonePos.z != 0);
+        foundConnected = (connectedPos.x != 0 || connectedPos.y != 0 || connectedPos.z != 0);
+    }
+    else if (strstr(boneName, "Wrist") != NULL) {
+        // Wrist: proyección del vector codo -> muñeca original
+        Vector3 originalWrist = GetOriginalBonePosition(boneName, person);
+        Vector3 elbow = GetOriginalBonePosition(connectedBoneName, person);
+
+        if ((originalWrist.x != 0 || originalWrist.y != 0 || originalWrist.z != 0) &&
+            (elbow.x != 0 || elbow.y != 0 || elbow.z != 0)) {
+
+            // Calcular vector del antebrazo (codo -> muñeca)
+            Vector3 forearmVector = {
+                originalWrist.x - elbow.x,
+                originalWrist.y - elbow.y,
+                originalWrist.z - elbow.z
+            };
+
+            // Proyectar el punto más allá de la muñeca original
+            return (Vector3) {
+                elbow.x + forearmVector.x * projectionFactor,
+                    elbow.y + forearmVector.y * projectionFactor,
+                    elbow.z + forearmVector.z * projectionFactor
+            };
+        }
+
+        // Si no se puede calcular la proyección, usar posición original
+        return originalWrist;
+    }
+    // PIERNAS - casos especiales que requieren posiciones originales
+    else if (strstr(boneName, "Hip") != NULL) {
+        // Hip: punto medio entre cadera original y rodilla original
+        bonePos = GetOriginalBonePosition(boneName, person);
+        connectedPos = GetOriginalBonePosition(connectedBoneName, person);
+        foundBone = (bonePos.x != 0 || bonePos.y != 0 || bonePos.z != 0);
+        foundConnected = (connectedPos.x != 0 || connectedPos.y != 0 || connectedPos.z != 0);
+    }
+    else if (strstr(boneName, "Knee") != NULL) {
+        // Knee: punto medio entre rodilla original y tobillo original
+        bonePos = GetOriginalBonePosition(boneName, person);
+        connectedPos = GetOriginalBonePosition(connectedBoneName, person);
+        foundBone = (bonePos.x != 0 || bonePos.y != 0 || bonePos.z != 0);
+        foundConnected = (connectedPos.x != 0 || connectedPos.y != 0 || connectedPos.z != 0);
+    }
+    else if (strstr(boneName, "Ankle") != NULL) {
+        // Ankle: posición anatómica del pie - hacia adelante desde el tobillo
+        Vector3 originalAnkle = GetOriginalBonePosition(boneName, person);
+
+        if (originalAnkle.x != 0 || originalAnkle.y != 0 || originalAnkle.z != 0) {
+            // Los pies van hacia adelante (eje Z positivo) desde el tobillo
+            // No seguimos la dirección de la pantorrilla, sino hacia adelante anatómicamente
+            Vector3 footPosition = originalAnkle;
+
+            // Proyectar hacia adelante (dirección Z positiva = adelante en la mayoría de sistemas)
+            // Aproximadamente la longitud de un pie humano (20-25cm)
+            footPosition.z += 0.03f; // 15cm hacia adelante
+
+            // Ligeramente hacia abajo para tocar el suelo
+            footPosition.y -= 0.01f; // 3cm hacia abajo
+
+            return footPosition;
+        }
+
+        return originalAnkle;
+    }
+    else {
+        // Para otros huesos, usar el sistema original
+        bonePos = GetOriginalBonePosition(boneName, person);
+        connectedPos = GetOriginalBonePosition(connectedBoneName, person);
+        foundBone = (bonePos.x != 0 || bonePos.y != 0 || bonePos.z != 0);
+        foundConnected = (connectedPos.x != 0 || connectedPos.y != 0 || connectedPos.z != 0);
+    }
+
+    if (!foundBone) return (Vector3) { 0, 0, 0 };
+    if (!foundConnected) return bonePos;
+
+    // Calcular punto medio o proyección según el factor
+    if (projectionFactor == 1.0f) {
+        // Punto medio estándar
+        return (Vector3) {
+            (bonePos.x + connectedPos.x) * 0.5f,
+                (bonePos.y + connectedPos.y) * 0.5f,
+                (bonePos.z + connectedPos.z) * 0.5f
+        };
+    }
+    else {
+        // Proyección (para casos futuros si necesitas otros huesos proyectados)
+        Vector3 direction = {
+            connectedPos.x - bonePos.x,
+            connectedPos.y - bonePos.y,
+            connectedPos.z - bonePos.z
+        };
+
+        return (Vector3) {
+            bonePos.x + direction.x * projectionFactor,
+                bonePos.y + direction.y * projectionFactor,
+                bonePos.z + direction.z * projectionFactor
+        };
+    }
+}
+
 
 const char* BonesGetErrorString(BonesError error) {
     switch (error) {
@@ -556,6 +784,7 @@ int CompareBonesByDistance(const void* a, const void* b) {
     return 0;
 }
 
+// Función modificada para usar puntos medios
 void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, BoneRenderData** renderBones,
     int* renderBonesCount, int* renderBonesCapacity, BoneConfig* boneConfigs, int boneConfigCount) {
     *renderBonesCount = 0;
@@ -638,14 +867,15 @@ void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, Bo
                 processedCount++;
             }
 
-            float distance = Vector3Distance(camera.position, bone->position.position);
+            // CLAVE: Calcular punto medio en lugar de usar la posición del bone directamente
+            Vector3 midpointPos = CalculateBoneMidpoint(bone->name, person);
+            if (!BonesIsPositionValid(midpointPos)) continue;
+
+            float distance = Vector3Distance(camera.position, midpointPos);
             if (distance > 50.0f) continue;
 
-            // Calculate morph data
-
-
             BoneRenderData* renderBone = &(*renderBones)[*renderBonesCount];
-            renderBone->position = bone->position.position;
+            renderBone->position = midpointPos; // Usar punto medio en lugar de posición del bone
             renderBone->distance = distance;
             renderBone->valid = true;
 

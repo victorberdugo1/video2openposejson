@@ -10,6 +10,45 @@ Vector3 CalculateChestPosition(const Person* person) {
         return (Vector3) { 0, 0, 0 };
     }
 
+    // Buscar cuello y hombros
+    Vector3 neckPos = { 0, 0, 0 };
+    Vector3 shoulderCenter = { 0, 0, 0 };
+    bool hasNeck = false;
+    int shoulderCount = 0;
+
+    for (int i = 0; i < person->boneCount; i++) {
+        const Bone* bone = &person->bones[i];
+        if (!bone->position.valid) continue;
+
+        if (strcmp(bone->name, "Neck") == 0) {
+            neckPos = bone->position.position;
+            hasNeck = true;
+        }
+        else if (strcmp(bone->name, "LShoulder") == 0 || strcmp(bone->name, "RShoulder") == 0) {
+            shoulderCenter = Vector3Add(shoulderCenter, bone->position.position);
+            shoulderCount++;
+        }
+    }
+
+    if (hasNeck && shoulderCount > 0) {
+        // Promedio de hombros
+        shoulderCenter = Vector3Scale(shoulderCenter, 1.0f / shoulderCount);
+
+        // Pecho: desde el cuello hacia abajo, en dirección a los hombros
+        // Aproximadamente 10-15cm hacia abajo del cuello
+        Vector3 chestPos = neckPos;
+        chestPos.y -= 0.06f; // 12cm hacia abajo del cuello
+
+        // Ligeramente hacia adelante (pecho sale hacia adelante)
+        chestPos.z += 0.015f; // 3cm hacia adelante
+
+        // Centrar horizontalmente con los hombros
+        chestPos.x = (neckPos.x + shoulderCenter.x) * 0.5f;
+
+        return chestPos;
+    }
+
+    // Fallback al método original si no hay suficientes puntos
     Vector3 totalPos = { 0, 0, 0 };
     int pointCount = 0;
 
@@ -27,7 +66,9 @@ Vector3 CalculateChestPosition(const Person* person) {
     }
 
     if (pointCount > 0) {
-        return Vector3Scale(totalPos, 1.0f / pointCount);
+        Vector3 chestPos = Vector3Scale(totalPos, 1.0f / pointCount);
+        chestPos.y -= 0.08f; // Bajar un poco desde el promedio
+        return chestPos;
     }
 
     return (Vector3) { 0, 0, 0 };

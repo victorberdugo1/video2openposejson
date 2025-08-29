@@ -381,6 +381,95 @@ static void App_PrepareRenderTorsos(AppState* app) {
         app->boneConfigs, app->boneConfigCount);
 }
 
+static void DrawSimpleSkeleton(const BonesAnimation* animation) {
+    if (!animation || !animation->isLoaded) return;
+
+    int currentFrame = BonesGetCurrentFrame(animation);
+    if (!BonesIsValidFrame(animation, currentFrame)) return;
+
+    const AnimationFrame* frame = &animation->frames[currentFrame];
+
+    // Conexiones COCO18 simples
+    const char* connections[][2] = {
+        {"Nose", "Neck"},
+        {"Neck", "LEye"}, {"Neck", "REye"},
+        {"LEye", "LEar"}, {"REye", "REar"},
+        {"Neck", "LShoulder"}, {"Neck", "RShoulder"},
+        {"LShoulder", "RShoulder"},
+        {"LShoulder", "LHip"}, {"RShoulder", "RHip"},
+        {"LHip", "RHip"},
+        {"LShoulder", "LElbow"}, {"LElbow", "LWrist"},
+        {"RShoulder", "RElbow"}, {"RElbow", "RWrist"},
+        {"LHip", "LKnee"}, {"LKnee", "LAnkle"},
+        {"RHip", "RKnee"}, {"RKnee", "RAnkle"},
+    };
+
+    int numConnections = sizeof(connections) / sizeof(connections[0]);
+
+    // Array para evitar duplicados - formato: "personId:bone1:bone2"
+    static char drawnConnections[1000][64];
+    static int drawnCount = 0;
+    drawnCount = 0; // Reset cada frame
+
+    for (int p = 0; p < frame->personCount; p++) {
+        const Person* person = &frame->persons[p];
+        if (!person->active) continue;
+
+        for (int c = 0; c < numConnections; c++) {
+            Vector3 pos1 = { 0 }, pos2 = { 0 };
+            bool found1 = false, found2 = false;
+
+            // Buscar posiciones de los huesos
+            for (int b = 0; b < person->boneCount; b++) {
+                const Bone* bone = &person->bones[b];
+                if (!bone->position.valid || !BonesIsPositionValid(bone->position.position)) continue;
+
+                if (strcmp(bone->name, connections[c][0]) == 0) {
+                    pos1 = bone->position.position;
+                    found1 = true;
+                }
+                if (strcmp(bone->name, connections[c][1]) == 0) {
+                    pos2 = bone->position.position;
+                    found2 = true;
+                }
+            }
+
+            if (found1 && found2) {
+                float distance = Vector3Distance(pos1, pos2);
+                if (distance < 1.5f && distance > 0.01f) {
+
+                    // Crear clave única para esta conexión
+                    char connectionKey[64];
+                    snprintf(connectionKey, sizeof(connectionKey), "%s:%s:%s",
+                        person->personId, connections[c][0], connections[c][1]);
+
+                    // Verificar si ya se dibujó
+                    bool alreadyDrawn = false;
+                    for (int d = 0; d < drawnCount; d++) {
+                        if (strcmp(drawnConnections[d], connectionKey) == 0) {
+                            alreadyDrawn = true;
+                            break;
+                        }
+                    }
+
+                    if (!alreadyDrawn && drawnCount < 1000) {
+                        // Marcar como dibujado
+                        strcpy(drawnConnections[drawnCount], connectionKey);
+                        drawnCount++;
+
+                        // Dibujar línea
+                        DrawLine3D(pos1, pos2, GREEN);
+
+                        // Dibujar punto medio
+                        Vector3 midPoint = Vector3Scale(Vector3Add(pos1, pos2), 0.5f);
+                        DrawSphere(midPoint, 0.015f, YELLOW);
+                    }
+                }
+            }
+        }
+    }
+}
+
 static void App_Draw(AppState* app) {
     if (!app) return;
 
@@ -406,6 +495,8 @@ static void App_Draw(AppState* app) {
     BeginMode3D(app->camera);
     DrawGrid(24, 0.5f);
     if (app->autoCenterCalculated) DrawSphereWires(app->autoCenter, 0.05f, 8, 8, ORANGE);
+
+    DrawSimpleSkeleton(&app->animation);
 
     if (app->renderBonesCount > 0 || app->renderHeadsCount > 0 || app->renderTorsosCount > 0) {
         rlDisableDepthTest();
@@ -445,8 +536,8 @@ static void App_Draw(AppState* app) {
 
 
             if (app->renderConfig.drawDebugSpheres) {
-                Color debugCol = (texIndex == 0) ? RED : (texIndex == 1) ? BLUE : (texIndex == 2) ? PURPLE : GREEN;
-                DrawSphereWires(bone->position, app->renderConfig.debugSphereRadius, 8, 8, debugCol);
+                //Color debugCol = (texIndex == 0) ? RED : (texIndex == 1) ? BLUE : (texIndex == 2) ? PURPLE : GREEN;
+                //DrawSphereWires(bone->position, app->renderConfig.debugSphereRadius, 8, 8, debugCol);
                 
                 // Draw orientation vectors if available
                 if (bone->orientation.valid) {
