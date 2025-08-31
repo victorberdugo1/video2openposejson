@@ -189,7 +189,8 @@ void CalculateHeadRenderData(const HeadRenderData* headData, Camera camera,
     int* outChosenIndex, float* outRotation, bool* outMirrored) {
 
     if (!headData->orientation.valid) {
-        CalculateBoneRenderData(headData->position, camera, outChosenIndex, outRotation, outMirrored);
+        CalculateBoneRenderData(headData->position, camera, outChosenIndex, outRotation, outMirrored,"Head");
+        //CalculateBoneRenderData(headPos, camera, &chosenIndex, &rotation, &mirrored, "Head");
         return;
     }
 
@@ -314,7 +315,7 @@ void DrawHeadBillboard(Texture2D texture, Camera camera, const HeadRenderData* h
     Rectangle src = SrcFromLogical(texture, logicalCol, logicalRow, physCols, physRows, mirrored, &finalMirror);
 
     Vector2 worldSize = (Vector2){ headData->size, headData->size };
-    DrawBonetileCustom(texture, camera, src, headData->position, worldSize, rotation, finalMirror);
+    DrawBonetileCustom(texture, camera, src, headData->position, worldSize, rotation, finalMirror, "Head");
 }
 
 void CollectHeadsForRendering(const BonesAnimation* animation, HeadRenderData** heads,

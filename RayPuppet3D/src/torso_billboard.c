@@ -259,7 +259,7 @@ void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
     int* outChosenIndex, float* outRotation, bool* outMirrored) {
 
     if (!torsoData->orientation.valid) {
-        CalculateBoneRenderData(torsoData->position, camera, outChosenIndex, outRotation, outMirrored);
+        CalculateBoneRenderData(torsoData->position, camera, outChosenIndex, outRotation, outMirrored, "");
         return;
     }
 
@@ -395,7 +395,7 @@ void DrawTorsoBillboard(Texture2D texture, Camera camera, const TorsoRenderData*
     Rectangle src = SrcFromLogical(texture, logicalCol, logicalRow, physCols, physRows, mirrored, &finalMirror);
 
     Vector2 worldSize = (Vector2){ torsoData->size, torsoData->size };
-    DrawBonetileCustom(texture, camera, src, torsoData->position, worldSize, rotation, finalMirror);
+    DrawBonetileCustom(texture, camera, src, torsoData->position, worldSize, rotation, finalMirror, "");
 }
 
 void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData** torsos,

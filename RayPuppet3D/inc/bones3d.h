@@ -109,35 +109,20 @@ BonesError BonesSetFrame(BonesAnimation* animation, int frameNumber);
 int BonesGetCurrentFrame(const BonesAnimation* animation);
 int BonesGetFrameCount(const BonesAnimation* animation);
 bool BonesIsValidFrame(const BonesAnimation* animation, int frameNumber);
-BonesError BonesGetPerson(const BonesAnimation* animation, int frameNumber, const char* personId, Person** outPerson);
-BonesError BonesGetBone(const BonesAnimation* animation, int frameNumber, const char* personId, const char* boneName, Bone** outBone);
-BonesError BonesGetBonePosition(const BonesAnimation* animation, int frameNumber, const char* personId, const char* boneName, Vector3* outPosition);
-Vector3 BonesNormalizedToWorld(Vector3 normalizedPos, Vector3 worldCenter, Vector3 worldScale);
-Vector3 BonesWorldToNormalized(Vector3 worldPos, Vector3 worldCenter, Vector3 worldScale);
+
+
 bool BonesIsPositionValid(Vector3 position);
-bool BonesIsBoneVisible(const Bone* bone, Camera camera, float maxDistance);
+
 BonesRenderConfig BonesGetDefaultRenderConfig(void);
 void BonesSetRenderConfig(const BonesRenderConfig* config);
-BonesError BonesDrawFrame(const BonesAnimation* animation, int frameNumber, Camera camera, Texture2D* textures, int textureCount, const BonesRenderConfig* config);
-BonesError BonesDrawPerson(const Person* person, Camera camera, Texture2D* textures, int textureCount, const BonesRenderConfig* config);
-BonesError BonesDrawBone(const Bone* bone, Camera camera, Texture2D texture, const BonesRenderConfig* config);
+
 const char* BonesGetErrorString(BonesError error);
 void BonesLogError(BonesError error, const char* context);
-void BonesPrintFrameInfo(const BonesAnimation* animation, int frameNumber);
-void BonesPrintPersonInfo(const Person* person);
-void BonesPrintBoneInfo(const Bone* bone);
-int BonesCountValidBones(const Person* person);
-float BonesCalculatePersonHeight(const Person* person);
-Vector3 BonesCalculatePersonCenter(const Person* person);
-Vector3 BonesInterpolatePosition(Vector3 pos1, Vector3 pos2, float t);
-BonesError BonesInterpolateFrame(const BonesAnimation* animation, float frameTime, Person* outInterpolated);
 
 void CheckBoneNameLength(void);
 void CleanupTextureSystem(SimpleTextureSystem* textureSystem, BoneConfig** boneConfigs, int* boneConfigCount);
 time_t GetFileModificationTime(const char* filename);
-char* ReadEntireFile(const char* filename, long* fileSize);
-int CountValidLines(const char* buffer);
-bool ParseConfigFromBuffer(SimpleTextureSystem* system, const char* buffer);
+
 bool LoadSimpleTextureConfig(SimpleTextureSystem* system, const char* filename);
 void LoadBoneConfigurations(SimpleTextureSystem* textureSystem, BoneConfig** boneConfigs, int* boneConfigCount);
 BoneConfig* FindBoneConfig(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName);

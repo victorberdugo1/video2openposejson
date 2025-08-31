@@ -10,9 +10,6 @@
 static BonesRenderConfig g_renderConfig = { 0 };
 static bool g_configInitialized = false;
 
-// Mapa de conexiones para cálculo de puntos medios
-
-// Mapa de conexiones actualizado para el nuevo sistema
 static const struct {
     const char* boneName;
     const char* connectedBone;
@@ -78,8 +75,6 @@ static void SafeStrCopy(char* dest, const char* src, size_t destSize) {
     dest[len] = '\0';
 }
 
-// Función auxiliar para obtener posición original del hueso
-// Función auxiliar para obtener posición original del hueso
 static Vector3 GetOriginalBonePosition(const char* boneName, const Person* person) {
     if (!person || !boneName) return (Vector3) { 0, 0, 0 };
 
@@ -90,10 +85,6 @@ static Vector3 GetOriginalBonePosition(const char* boneName, const Person* perso
     }
     return (Vector3) { 0, 0, 0 };
 }
-
-
-
-// 2. Reemplazar completamente la función CalculateBoneMidpoint:
 
 static Vector3 CalculateBoneMidpoint(const char* boneName, const Person* person) {
     if (!person || !boneName) return (Vector3) { 0, 0, 0 };
@@ -264,7 +255,6 @@ static Vector3 CalculateBoneMidpoint(const char* boneName, const Person* person)
         };
     }
 }
-
 
 const char* BonesGetErrorString(BonesError error) {
     switch (error) {
@@ -505,66 +495,6 @@ bool BonesIsValidFrame(const BonesAnimation* animation, int frameNumber) {
         animation->frames[frameNumber].valid;
 }
 
-BonesError BonesGetPerson(const BonesAnimation* animation, int frameNumber,
-    const char* personId, Person** outPerson) {
-    if (!IsValidPointer(animation) || !IsValidString(personId) || !IsValidPointer(outPerson)) {
-        return BONES_ERROR_NULL_POINTER;
-    }
-
-    *outPerson = NULL;
-
-    if (!BonesIsValidFrame(animation, frameNumber)) {
-        return BONES_ERROR_FRAME_OUT_OF_RANGE;
-    }
-
-    const AnimationFrame* frame = &animation->frames[frameNumber];
-
-    for (int i = 0; i < frame->personCount; i++) {
-        if (strcmp(frame->persons[i].personId, personId) == 0) {
-            *outPerson = (Person*)&frame->persons[i];
-            return BONES_SUCCESS;
-        }
-    }
-
-    return BONES_ERROR_PERSON_NOT_FOUND;
-}
-
-BonesError BonesGetBone(const BonesAnimation* animation, int frameNumber,
-    const char* personId, const char* boneName, Bone** outBone) {
-    Person* person;
-    BonesError result = BonesGetPerson(animation, frameNumber, personId, &person);
-    if (result != BONES_SUCCESS) return result;
-
-    if (!IsValidString(boneName) || !IsValidPointer(outBone)) {
-        return BONES_ERROR_NULL_POINTER;
-    }
-
-    *outBone = NULL;
-
-    for (int i = 0; i < person->boneCount; i++) {
-        if (strcmp(person->bones[i].name, boneName) == 0) {
-            *outBone = &person->bones[i];
-            return BONES_SUCCESS;
-        }
-    }
-
-    return BONES_ERROR_BONE_NOT_FOUND;
-}
-
-BonesError BonesGetBonePosition(const BonesAnimation* animation, int frameNumber,
-    const char* personId, const char* boneName,
-    Vector3* outPosition) {
-    Bone* bone;
-    BonesError result = BonesGetBone(animation, frameNumber, personId, boneName, &bone);
-    if (result != BONES_SUCCESS) return result;
-
-    if (!IsValidPointer(outPosition)) return BONES_ERROR_NULL_POINTER;
-    if (!bone->position.valid) return BONES_ERROR_INVALID_COORDINATES;
-
-    *outPosition = bone->position.position;
-    return BONES_SUCCESS;
-}
-
 bool BonesIsPositionValid(Vector3 position) {
     return !isnan(position.x) && !isnan(position.y) && !isnan(position.z) &&
         isfinite(position.x) && isfinite(position.y) && isfinite(position.z);
@@ -784,7 +714,6 @@ int CompareBonesByDistance(const void* a, const void* b) {
     return 0;
 }
 
-// Función modificada para usar puntos medios
 void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, BoneRenderData** renderBones,
     int* renderBonesCount, int* renderBonesCapacity, BoneConfig* boneConfigs, int boneConfigCount) {
     *renderBonesCount = 0;

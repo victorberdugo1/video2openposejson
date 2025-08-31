@@ -502,7 +502,7 @@ static void App_Draw(AppState* app) {
         rlDisableDepthTest();
         BeginBlendMode(BLEND_ALPHA);
 
-        // Render bones with orientation awareness
+        // Render bones with orientation awareness (con roll hacia vecino y ajuste de UV)
         for (int i = 0; i < app->renderBonesCount; i++) {
             const BoneRenderData* bone = &app->renderBones[i];
             if (!bone->valid || !bone->visible) continue;
@@ -517,22 +517,53 @@ static void App_Draw(AppState* app) {
             float aspect = logicalCellW / logicalCellH;
             Vector2 worldSize = (Vector2){ bone->size * aspect, bone->size };
 
+            int chosenIndex = 0;
+            float rotation = 0.0f;
+            bool mirrored = false;
 
-                int chosenIndex;
-                float rotation;
-                bool mirrored;
+            // Calcular el atlas index / rotation según orientación del bone (si existe) o por posición
+            if (bone->orientation.valid) {
+                CalculateEnhancedBoneRenderData(bone, app->camera, &chosenIndex, &rotation, &mirrored);
+            }
+            else {
+                // Updated call with boneName parameter
+                CalculateBoneRenderData(bone->position, app->camera, &chosenIndex, &rotation, &mirrored, bone->boneName);
+            }
 
-                if (bone->orientation.valid) {
-                    CalculateEnhancedBoneRenderData(bone, app->camera, &chosenIndex, &rotation, &mirrored);
-                } else {
-                    CalculateBoneRenderData(bone->position, app->camera, &chosenIndex, &rotation, &mirrored);
+            // Construir src desde el atlas (manteniendo el mirrored que devolvió la función anterior)
+            int logicalCol = chosenIndex % ATLAS_COLS;
+            int logicalRow = chosenIndex / ATLAS_COLS;
+            bool finalMirror = false;
+            Rectangle src = SrcFromLogical(currentTex, logicalCol, logicalRow, app->physCols, app->physRows, mirrored, &finalMirror);
+
+            // Buscar vecino preferente usando la tabla de conexiones y la lista de render bones
+            char conns[3][32];
+            float prios[3];
+            Vector3 neighborPos = { 0.0f, 0.0f, 0.0f };
+            bool haveNeighbor = false;
+
+            if (GetBoneConnectionsWithPriority(bone->boneName, conns, prios)) {
+                for (int k = 0; k < 3; k++) {
+                    if (conns[k][0] == '\0') continue; // entrada vacía
+                    BoneRenderData* nb = FindRenderBoneByName(app->renderBones, app->renderBonesCount, conns[k]);
+                    if (nb && nb->valid && nb->visible) {
+                        // opcional: filtrar por distancia mínima para evitar jitter
+                        float d = Vector3Distance(bone->position, nb->position);
+                        if (d > 0.001f) {
+                            neighborPos = nb->position;
+                            haveNeighbor = true;
+                            break; // usamos el primero disponible según prioridad
+                        }
+                    }
                 }
+            }
 
-                int logicalCol = chosenIndex % ATLAS_COLS;
-                int logicalRow = chosenIndex / ATLAS_COLS;
-                bool finalMirror = false;
-                Rectangle src = SrcFromLogical(currentTex, logicalCol, logicalRow, app->physCols, app->physRows, mirrored, &finalMirror);
-                DrawBonetileCustom(currentTex, app->camera, src, bone->position, worldSize, rotation, finalMirror);
+            // Llamada a la versión que aplica roll (y opcionalmente rota UVs para que la textura siga el roll)
+            // Ajustamos adjustUV=true para que la textura rote con el roll del billboard.
+// In the bone rendering loop in App_Draw function:
+DrawBonetileCustomWithRoll(currentTex, app->camera, src, bone->position, worldSize,
+    rotation, finalMirror, true /* adjustUV */, haveNeighbor, neighborPos, bone->boneName);
+
 
 
             if (app->renderConfig.drawDebugSpheres) {
