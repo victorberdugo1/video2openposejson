@@ -381,93 +381,38 @@ static void App_PrepareRenderTorsos(AppState* app) {
         app->boneConfigs, app->boneConfigCount);
 }
 
-static void DrawSimpleSkeleton(const BonesAnimation* animation) {
-    if (!animation || !animation->isLoaded) return;
 
-    int currentFrame = BonesGetCurrentFrame(animation);
-    if (!BonesIsValidFrame(animation, currentFrame)) return;
 
-    const AnimationFrame* frame = &animation->frames[currentFrame];
+// Estructura para renderizado con detección de Z-fighting
+typedef struct {
+    int type; // 0=torso, 1=bone, 2=head
+    int index;
+    float distance;
+    float depthBias;
+    bool hasZFighting; // Flag para Z-fighting detectado
+} RenderItem;
 
-    // Conexiones COCO18 simples
-    const char* connections[][2] = {
-        {"Nose", "Neck"},
-        {"Neck", "LEye"}, {"Neck", "REye"},
-        {"LEye", "LEar"}, {"REye", "REar"},
-        {"Neck", "LShoulder"}, {"Neck", "RShoulder"},
-        {"LShoulder", "RShoulder"},
-        {"LShoulder", "LHip"}, {"RShoulder", "RHip"},
-        {"LHip", "RHip"},
-        {"LShoulder", "LElbow"}, {"LElbow", "LWrist"},
-        {"RShoulder", "RElbow"}, {"RElbow", "RWrist"},
-        {"LHip", "LKnee"}, {"LKnee", "LAnkle"},
-        {"RHip", "RKnee"}, {"RKnee", "RAnkle"},
-    };
+// Función para detectar Z-fighting entre elementos cercanos
+static bool DetectZFighting(RenderItem* items, int itemCount, float threshold) {
+    bool hasZFighting = false;
 
-    int numConnections = sizeof(connections) / sizeof(connections[0]);
+    for (int i = 0; i < itemCount; i++) {
+        items[i].hasZFighting = false;
 
-    // Array para evitar duplicados - formato: "personId:bone1:bone2"
-    static char drawnConnections[1000][64];
-    static int drawnCount = 0;
-    drawnCount = 0; // Reset cada frame
+        for (int j = i + 1; j < itemCount; j++) {
+            // Calcular diferencia de profundidad real (sin bias)
+            float depthDiff = fabs(items[i].distance - items[j].distance);
 
-    for (int p = 0; p < frame->personCount; p++) {
-        const Person* person = &frame->persons[p];
-        if (!person->active) continue;
-
-        for (int c = 0; c < numConnections; c++) {
-            Vector3 pos1 = { 0 }, pos2 = { 0 };
-            bool found1 = false, found2 = false;
-
-            // Buscar posiciones de los huesos
-            for (int b = 0; b < person->boneCount; b++) {
-                const Bone* bone = &person->bones[b];
-                if (!bone->position.valid || !BonesIsPositionValid(bone->position.position)) continue;
-
-                if (strcmp(bone->name, connections[c][0]) == 0) {
-                    pos1 = bone->position.position;
-                    found1 = true;
-                }
-                if (strcmp(bone->name, connections[c][1]) == 0) {
-                    pos2 = bone->position.position;
-                    found2 = true;
-                }
-            }
-
-            if (found1 && found2) {
-                float distance = Vector3Distance(pos1, pos2);
-                if (distance < 1.5f && distance > 0.01f) {
-
-                    // Crear clave única para esta conexión
-                    char connectionKey[64];
-                    snprintf(connectionKey, sizeof(connectionKey), "%s:%s:%s",
-                        person->personId, connections[c][0], connections[c][1]);
-
-                    // Verificar si ya se dibujó
-                    bool alreadyDrawn = false;
-                    for (int d = 0; d < drawnCount; d++) {
-                        if (strcmp(drawnConnections[d], connectionKey) == 0) {
-                            alreadyDrawn = true;
-                            break;
-                        }
-                    }
-
-                    if (!alreadyDrawn && drawnCount < 1000) {
-                        // Marcar como dibujado
-                        strcpy(drawnConnections[drawnCount], connectionKey);
-                        drawnCount++;
-
-                        // Dibujar línea
-                        DrawLine3D(pos1, pos2, GREEN);
-
-                        // Dibujar punto medio
-                        Vector3 midPoint = Vector3Scale(Vector3Add(pos1, pos2), 0.5f);
-                        DrawSphere(midPoint, 0.015f, YELLOW);
-                    }
-                }
+            // Si están muy cerca en profundidad, hay potencial Z-fighting
+            if (depthDiff < threshold) {
+                items[i].hasZFighting = true;
+                items[j].hasZFighting = true;
+                hasZFighting = true;
             }
         }
     }
+
+    return hasZFighting;
 }
 
 static void App_Draw(AppState* app) {
@@ -496,150 +441,192 @@ static void App_Draw(AppState* app) {
     DrawGrid(24, 0.5f);
     if (app->autoCenterCalculated) DrawSphereWires(app->autoCenter, 0.05f, 8, 8, ORANGE);
 
-    DrawSimpleSkeleton(&app->animation);
-
     if (app->renderBonesCount > 0 || app->renderHeadsCount > 0 || app->renderTorsosCount > 0) {
-        rlDisableDepthTest();
-        BeginBlendMode(BLEND_ALPHA);
+        // Crear array combinado para ordenar
+        RenderItem renderItems[512];
+        int itemCount = 0;
 
-        // Render bones with orientation awareness (con roll hacia vecino y ajuste de UV)
+        Vector3 camPos = app->camera.position;
+
+        // Bias más suaves para evitar problemas visuales
+        const float TORSO_BIAS = 0.001f;
+        const float BONE_BIAS = 0.0f;
+        const float HEAD_BIAS = -0.001f;
+        const float INDEX_BIAS = -0.00001f;
+
+        // Umbral de Z-fighting
+        const float Z_FIGHTING_THRESHOLD = 0.01f; // 1cm
+
+        // Agregar torsos
+        for (int i = 0; i < app->renderTorsosCount; i++) {
+            const TorsoRenderData* torso = &app->renderTorsos[i];
+            if (!torso->valid || !torso->visible) continue;
+
+            renderItems[itemCount].type = 0;
+            renderItems[itemCount].index = i;
+            renderItems[itemCount].distance = Vector3Distance(camPos, torso->position);
+            renderItems[itemCount].depthBias = TORSO_BIAS + (INDEX_BIAS * i);
+            renderItems[itemCount].hasZFighting = false;
+            itemCount++;
+        }
+
+        // Agregar bones
         for (int i = 0; i < app->renderBonesCount; i++) {
             const BoneRenderData* bone = &app->renderBones[i];
             if (!bone->valid || !bone->visible) continue;
 
-            int texIndex = App_GetTextureIndex(app, bone->texturePath);
-            Texture2D currentTex = app->textures[texIndex];
+            renderItems[itemCount].type = 1;
+            renderItems[itemCount].index = i;
+            renderItems[itemCount].distance = Vector3Distance(camPos, bone->position);
+            renderItems[itemCount].depthBias = BONE_BIAS + (INDEX_BIAS * i);
+            renderItems[itemCount].hasZFighting = false;
+            itemCount++;
+        }
 
-            float physCellW = (float)currentTex.width / (float)app->physCols;
-            float physCellH = (float)currentTex.height / (float)app->physRows;
-            float logicalCellW = physCellW * (app->physCols / ATLAS_COLS);
-            float logicalCellH = physCellH * (app->physRows / ATLAS_ROWS);
-            float aspect = logicalCellW / logicalCellH;
-            Vector2 worldSize = (Vector2){ bone->size * aspect, bone->size };
+        // Agregar heads
+        for (int i = 0; i < app->renderHeadsCount; i++) {
+            const HeadRenderData* head = &app->renderHeads[i];
+            if (!head->valid || !head->visible) continue;
 
-            int chosenIndex = 0;
-            float rotation = 0.0f;
-            bool mirrored = false;
+            renderItems[itemCount].type = 2;
+            renderItems[itemCount].index = i;
+            renderItems[itemCount].distance = Vector3Distance(camPos, head->position);
+            renderItems[itemCount].depthBias = HEAD_BIAS + (INDEX_BIAS * i);
+            renderItems[itemCount].hasZFighting = false;
+            itemCount++;
+        }
 
-            // Calcular el atlas index / rotation según orientación del bone (si existe) o por posición
-            if (bone->orientation.valid) {
-                CalculateEnhancedBoneRenderData(bone, app->camera, &chosenIndex, &rotation, &mirrored);
-            }
-            else {
-                // Updated call with boneName parameter
-                CalculateBoneRenderData(bone->position, app->camera, &chosenIndex, &rotation, &mirrored, bone->boneName);
-            }
+        // Detectar Z-fighting
+        DetectZFighting(renderItems, itemCount, Z_FIGHTING_THRESHOLD);
 
-            // Construir src desde el atlas (manteniendo el mirrored que devolvió la función anterior)
-            int logicalCol = chosenIndex % ATLAS_COLS;
-            int logicalRow = chosenIndex / ATLAS_COLS;
-            bool finalMirror = false;
-            Rectangle src = SrcFromLogical(currentTex, logicalCol, logicalRow, app->physCols, app->physRows, mirrored, &finalMirror);
+        // Ordenar por distancia + bias (más lejos primero para renderizado back-to-front)
+        for (int i = 0; i < itemCount - 1; i++) {
+            for (int j = 0; j < itemCount - i - 1; j++) {
+                float distanceA = renderItems[j].distance + renderItems[j].depthBias;
+                float distanceB = renderItems[j + 1].distance + renderItems[j + 1].depthBias;
 
-            // Buscar vecino preferente usando la tabla de conexiones y la lista de render bones
-            char conns[3][32];
-            float prios[3];
-            Vector3 neighborPos = { 0.0f, 0.0f, 0.0f };
-            bool haveNeighbor = false;
-
-            if (GetBoneConnectionsWithPriority(bone->boneName, conns, prios)) {
-                for (int k = 0; k < 3; k++) {
-                    if (conns[k][0] == '\0') continue; // entrada vacía
-                    BoneRenderData* nb = FindRenderBoneByName(app->renderBones, app->renderBonesCount, conns[k]);
-                    if (nb && nb->valid && nb->visible) {
-                        // opcional: filtrar por distancia mínima para evitar jitter
-                        float d = Vector3Distance(bone->position, nb->position);
-                        if (d > 0.001f) {
-                            neighborPos = nb->position;
-                            haveNeighbor = true;
-                            break; // usamos el primero disponible según prioridad
-                        }
-                    }
-                }
-            }
-
-            // Llamada a la versión que aplica roll (y opcionalmente rota UVs para que la textura siga el roll)
-            // Ajustamos adjustUV=true para que la textura rote con el roll del billboard.
-// In the bone rendering loop in App_Draw function:
-DrawBonetileCustomWithRoll(currentTex, app->camera, src, bone->position, worldSize,
-    rotation, finalMirror, true /* adjustUV */, haveNeighbor, neighborPos, bone->boneName);
-
-
-
-            if (app->renderConfig.drawDebugSpheres) {
-                //Color debugCol = (texIndex == 0) ? RED : (texIndex == 1) ? BLUE : (texIndex == 2) ? PURPLE : GREEN;
-                //DrawSphereWires(bone->position, app->renderConfig.debugSphereRadius, 8, 8, debugCol);
-                
-                // Draw orientation vectors if available
-                if (bone->orientation.valid) {
-                    Vector3 forwardEnd = Vector3Add(bone->position, Vector3Scale(bone->orientation.forward, 0.08f));
-                    Vector3 upEnd = Vector3Add(bone->position, Vector3Scale(bone->orientation.up, 0.08f));
-                    Vector3 rightEnd = Vector3Add(bone->position, Vector3Scale(bone->orientation.right, 0.08f));
-
-                    DrawLine3D(bone->position, forwardEnd, DARKBLUE);
-                    DrawLine3D(bone->position, upEnd, DARKGREEN);
-                    DrawLine3D(bone->position, rightEnd, MAROON);
+                if (distanceA < distanceB) {
+                    RenderItem temp = renderItems[j];
+                    renderItems[j] = renderItems[j + 1];
+                    renderItems[j + 1] = temp;
                 }
             }
         }
 
-        // Render heads
-        if (app->renderHeadBillboards && app->renderHeadsCount > 0) {
-            for (int i = 0; i < app->renderHeadsCount; i++) {
-                const HeadRenderData* head = &app->renderHeads[i];
-                if (!head->valid || !head->visible) continue;
+        BeginBlendMode(BLEND_ALPHA);
+        rlDisableDepthTest();
 
-                int texIndex = App_GetTextureIndex(app, head->texturePath);
-                Texture2D currentTex = app->textures[texIndex];
 
-                DrawHeadBillboard(currentTex, app->camera, head, app->physCols, app->physRows);
+        // Renderizar todos los elementos en orden
+        for (int i = 0; i < itemCount; i++) {
+            RenderItem* item = &renderItems[i];
 
-                if (app->renderConfig.drawDebugSpheres) {
-                    DrawSphereWires(head->position, 0.05f, 8, 8, ORANGE);
+            if (item->type == 0) { // Torso
+                const TorsoRenderData* torso = &app->renderTorsos[item->index];
 
-                    if (head->orientation.valid) {
-                        Vector3 forwardEnd = Vector3Add(head->position, Vector3Scale(head->orientation.forward, 0.1f));
-                        Vector3 upEnd = Vector3Add(head->position, Vector3Scale(head->orientation.up, 0.1f));
-                        Vector3 rightEnd = Vector3Add(head->position, Vector3Scale(head->orientation.right, 0.1f));
+                // Calcular posición de renderizado con bias muy pequeño
+                Vector3 renderPosition = torso->position;
+                Vector3 toCam = Vector3Subtract(camPos, torso->position);
+                float distance = Vector3Length(toCam);
 
-                        DrawLine3D(head->position, forwardEnd, BLUE);
-                        DrawLine3D(head->position, upEnd, GREEN);
-                        DrawLine3D(head->position, rightEnd, RED);
-                    }
+                if (distance > 0.001f) {
+                    Vector3 toCamNorm = Vector3Normalize(toCam);
+                    renderPosition = Vector3Add(torso->position, Vector3Scale(toCamNorm, item->depthBias));
                 }
-            }
-        }
-
-        // Render torsos
-        if (app->renderTorsoBillboards && app->renderTorsosCount > 0) {
-            for (int i = 0; i < app->renderTorsosCount; i++) {
-                const TorsoRenderData* torso = &app->renderTorsos[i];
-                if (!torso->valid || !torso->visible) continue;
 
                 int texIndex = App_GetTextureIndex(app, torso->texturePath);
                 Texture2D currentTex = app->textures[texIndex];
 
-                DrawTorsoBillboard(currentTex, app->camera, torso, app->physCols, app->physRows);
+                TorsoRenderData adjustedTorso = *torso;
+                adjustedTorso.position = renderPosition;
+                DrawTorsoBillboard(currentTex, app->camera, &adjustedTorso, app->physCols, app->physRows);
+            }
+            else if (item->type == 1) { // Bone
+                const BoneRenderData* bone = &app->renderBones[item->index];
 
-                if (app->renderConfig.drawDebugSpheres) {
-                    Color torsoColor = (torso->type == TORSO_CHEST) ? YELLOW : PURPLE;
-                    DrawSphereWires(torso->position, 0.06f, 8, 8, torsoColor);
+                // Calcular posición de renderizado con bias
+                Vector3 renderPosition = bone->position;
+                Vector3 toCam = Vector3Subtract(camPos, bone->position);
+                float distance = Vector3Length(toCam);
 
-                    if (torso->orientation.valid) {
-                        Vector3 forwardEnd = Vector3Add(torso->position, Vector3Scale(torso->orientation.forward, 0.12f));
-                        Vector3 upEnd = Vector3Add(torso->position, Vector3Scale(torso->orientation.up, 0.12f));
-                        Vector3 rightEnd = Vector3Add(torso->position, Vector3Scale(torso->orientation.right, 0.12f));
+                if (distance > 0.001f) {
+                    Vector3 toCamNorm = Vector3Normalize(toCam);
+                    renderPosition = Vector3Add(bone->position, Vector3Scale(toCamNorm, item->depthBias));
+                }
 
-                        DrawLine3D(torso->position, forwardEnd, DARKBLUE);
-                        DrawLine3D(torso->position, upEnd, DARKGREEN);
-                        DrawLine3D(torso->position, rightEnd, MAROON);
+                int texIndex = App_GetTextureIndex(app, bone->texturePath);
+                Texture2D currentTex = app->textures[texIndex];
+
+                float physCellW = (float)currentTex.width / (float)app->physCols;
+                float physCellH = (float)currentTex.height / (float)app->physRows;
+                float logicalCellW = physCellW * (app->physCols / ATLAS_COLS);
+                float logicalCellH = physCellH * (app->physRows / ATLAS_ROWS);
+                float aspect = logicalCellW / logicalCellH;
+                Vector2 worldSize = (Vector2){ bone->size * aspect, bone->size };
+
+                int chosenIndex = 0;
+                float rotation = 0.0f;
+                bool mirrored = false;
+
+                if (bone->orientation.valid) {
+                    CalculateEnhancedBoneRenderData(bone, app->camera, &chosenIndex, &rotation, &mirrored);
+                }
+                else {
+                    CalculateBoneRenderData(bone->position, app->camera, &chosenIndex, &rotation, &mirrored, bone->boneName);
+                }
+
+                int logicalCol = chosenIndex % ATLAS_COLS;
+                int logicalRow = chosenIndex / ATLAS_COLS;
+                bool finalMirror = false;
+                Rectangle src = SrcFromLogical(currentTex, logicalCol, logicalRow, app->physCols, app->physRows, mirrored, &finalMirror);
+
+                char conns[3][32];
+                float prios[3];
+                Vector3 neighborPos = { 0.0f, 0.0f, 0.0f };
+                bool haveNeighbor = false;
+
+                if (GetBoneConnectionsWithPriority(bone->boneName, conns, prios)) {
+                    for (int k = 0; k < 3; k++) {
+                        if (conns[k][0] == '\0') continue;
+                        BoneRenderData* nb = FindRenderBoneByName(app->renderBones, app->renderBonesCount, conns[k]);
+                        if (nb && nb->valid && nb->visible) {
+                            float d = Vector3Distance(bone->position, nb->position);
+                            if (d > 0.001f) {
+                                neighborPos = nb->position;
+                                haveNeighbor = true;
+                                break;
+                            }
+                        }
                     }
                 }
+
+                DrawBonetileCustomWithRoll(currentTex, app->camera, src, renderPosition, worldSize,
+                    rotation, finalMirror, true, haveNeighbor, neighborPos, bone->boneName);
+            }
+            else if (item->type == 2) { // Head
+                const HeadRenderData* head = &app->renderHeads[item->index];
+
+                // Calcular posición de renderizado con bias
+                Vector3 renderPosition = head->position;
+                Vector3 toCam = Vector3Subtract(camPos, head->position);
+                float distance = Vector3Length(toCam);
+
+                if (distance > 0.001f) {
+                    Vector3 toCamNorm = Vector3Normalize(toCam);
+                    renderPosition = Vector3Add(head->position, Vector3Scale(toCamNorm, item->depthBias));
+                }
+
+                int texIndex = App_GetTextureIndex(app, head->texturePath);
+                Texture2D currentTex = app->textures[texIndex];
+
+                HeadRenderData adjustedHead = *head;
+                adjustedHead.position = renderPosition;
+                DrawHeadBillboard(currentTex, app->camera, &adjustedHead, app->physCols, app->physRows);
             }
         }
 
         EndBlendMode();
-        rlEnableDepthMask();
+        //rlEnableDepthTest();
     }
 
     EndMode3D();
