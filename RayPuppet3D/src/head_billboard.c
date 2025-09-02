@@ -5,9 +5,7 @@
 #include <stdlib.h>
 
 Vector3 CalculateHeadPosition(const Person* person) {
-    if (!person || person->boneCount == 0) {
-        return (Vector3) { 0, 0, 0 };
-    }
+    if (!person || person->boneCount == 0) return (Vector3) { 0, 0, 0 };
 
     Vector3 eyeCenter = { 0, 0, 0 };
     int eyeCount = 0;
@@ -20,67 +18,42 @@ Vector3 CalculateHeadPosition(const Person* person) {
         const Bone* bone = &person->bones[i];
         if (!bone->position.valid) continue;
 
-        // Solo ojos para referencia vertical
-        if (strcmp(bone->name, "LEye") == 0 || strcmp(bone->name, "REye") == 0) {
+        const char* name = bone->name;
+        if (strcmp(name, "LEye") == 0 || strcmp(name, "REye") == 0) {
             eyeCenter = Vector3Add(eyeCenter, bone->position.position);
             eyeCount++;
         }
-        // Nariz para referencia frontal (profundidad)
-        else if (strcmp(bone->name, "Nose") == 0) {
+        else if (strcmp(name, "Nose") == 0) {
             nosePos = bone->position.position;
             hasNose = true;
         }
-        // Cuello como base
-        else if (strcmp(bone->name, "Neck") == 0) {
+        else if (strcmp(name, "Neck") == 0) {
             neckPos = bone->position.position;
             hasNeck = true;
         }
     }
 
-    // Cálculo anatómicamente correcto
     if (eyeCount > 0 && hasNeck) {
         eyeCenter = Vector3Scale(eyeCenter, 1.0f / eyeCount);
-
-        Vector3 headCenter;
-
-        // X: Promedio entre cuello y ojos, pero más cerca del cuello
-        headCenter.x = neckPos.x * 0.7f + eyeCenter.x * 0.3f;
-
-        // Y: Mantener altura de ojos (la cabeza está a esa altura)
-        headCenter.y = eyeCenter.y;
-
-        // Z: Atrás de la nariz, cerca del cuello (centro de masa del cráneo)
-        if (hasNose) {
-            // La cabeza está significativamente atrás de la cara
-            headCenter.z = neckPos.z * 0.8f + nosePos.z * 0.2f;  // MÁS hacia atrás
-        }
-        else {
-            // Sin nariz, usar solo referencia de cuello y ojos
-            headCenter.z = neckPos.z * 0.9f + eyeCenter.z * 0.1f; // MÁS hacia atrás
-        }
-
-        return headCenter;
+        return (Vector3) {
+            neckPos.x * 0.7f + eyeCenter.x * 0.3f,
+                eyeCenter.y,
+                hasNose ? neckPos.z * 0.8f + nosePos.z * 0.2f : neckPos.z * 0.9f + eyeCenter.z * 0.1f
+        };
     }
 
-    // Fallbacks progresivos
     if (eyeCount > 0) {
         eyeCenter = Vector3Scale(eyeCenter, 1.0f / eyeCount);
-
-        // Sin cuello, estimar posición hacia atrás desde los ojos
-        Vector3 estimatedHead = eyeCenter;
         if (hasNose) {
-            // Mover hacia atrás desde la línea nariz-ojos
-            Vector3 backOffset = Vector3Subtract(eyeCenter, nosePos);
-            backOffset = Vector3Scale(backOffset, 0.5f); // 50% hacia atrás
-            estimatedHead = Vector3Add(eyeCenter, backOffset);
+            Vector3 backOffset = Vector3Scale(Vector3Subtract(eyeCenter, nosePos), 0.5f);
+            return Vector3Add(eyeCenter, backOffset);
         }
-        return estimatedHead;
+        return eyeCenter;
     }
 
     if (hasNeck) {
-        // Solo cuello disponible, estimar cabeza arriba y adelante
         Vector3 estimatedHead = neckPos;
-        estimatedHead.y += 0.15f; // Aproximadamente 15cm arriba del cuello
+        estimatedHead.y += 0.15f;
         return estimatedHead;
     }
 
@@ -88,31 +61,30 @@ Vector3 CalculateHeadPosition(const Person* person) {
 }
 
 HeadOrientation CalculateHeadOrientation(const Person* person) {
-    HeadOrientation orientation = { 0 };
-    orientation.valid = false;
-
+    HeadOrientation orientation = { .valid = false };
     if (!person || person->boneCount == 0) return orientation;
 
-    bool hasNose = false, hasLEye = false, hasREye = false, hasLEar = false, hasREar = false;
     Vector3 nose = { 0,0,0 }, lEye = { 0,0,0 }, rEye = { 0,0,0 }, lEar = { 0,0,0 }, rEar = { 0,0,0 };
+    bool hasNose = false, hasLEye = false, hasREye = false, hasLEar = false, hasREar = false;
 
     for (int i = 0; i < person->boneCount; i++) {
         const Bone* bone = &person->bones[i];
         if (!bone->position.valid) continue;
 
-        if (strcmp(bone->name, "Nose") == 0) {
+        const char* name = bone->name;
+        if (strcmp(name, "Nose") == 0) {
             nose = bone->position.position; hasNose = true;
         }
-        else if (strcmp(bone->name, "LEye") == 0) {
+        else if (strcmp(name, "LEye") == 0) {
             lEye = bone->position.position; hasLEye = true;
         }
-        else if (strcmp(bone->name, "REye") == 0) {
+        else if (strcmp(name, "REye") == 0) {
             rEye = bone->position.position; hasREye = true;
         }
-        else if (strcmp(bone->name, "LEar") == 0) {
+        else if (strcmp(name, "LEar") == 0) {
             lEar = bone->position.position; hasLEar = true;
         }
-        else if (strcmp(bone->name, "REar") == 0) {
+        else if (strcmp(name, "REar") == 0) {
             rEar = bone->position.position; hasREar = true;
         }
     }
@@ -133,145 +105,93 @@ HeadOrientation CalculateHeadOrientation(const Person* person) {
     if (hasREye) { totalPos = Vector3Add(totalPos, rEye); pointCount++; }
     if (hasLEar) { totalPos = Vector3Add(totalPos, lEar); pointCount++; }
     if (hasREar) { totalPos = Vector3Add(totalPos, rEar); pointCount++; }
-    Vector3 center = Vector3Scale(totalPos, 1.0f / pointCount);
-    orientation.position = center;
 
-    // Calculate right vector
-    Vector3 rightVec = (Vector3){ 1,0,0 };
+    orientation.position = Vector3Scale(totalPos, 1.0f / pointCount);
+
+    // Calculate vectors
+    Vector3 rightVec = { 1,0,0 };
+    Vector3 backRef;
+
     if (hasLEar && hasREar) {
         rightVec = Vector3Normalize(Vector3Subtract(rEar, lEar));
-    }
-    else if (hasLEye && hasREye) {
-        rightVec = Vector3Normalize(Vector3Subtract(rEye, lEye));
-    }
-
-    // Calculate back reference
-    Vector3 backRef;
-    if (hasLEar && hasREar) {
         backRef = Vector3Scale(Vector3Add(lEar, rEar), 0.5f);
     }
     else if (hasLEye && hasREye) {
+        rightVec = Vector3Normalize(Vector3Subtract(rEye, lEye));
         backRef = Vector3Scale(Vector3Add(lEye, rEye), 0.5f);
     }
     else {
-        backRef = center;
+        backRef = orientation.position;
     }
 
-    // Calculate forward vector
     Vector3 forward = Vector3Normalize(Vector3Subtract(nose, backRef));
-    if (Vector3Length(forward) < 1e-6f) {
-        forward = (Vector3){ 0,0,1 };
-    }
+    if (Vector3Length(forward) < 1e-6f) forward = (Vector3){ 0,0,1 };
 
-    // Calculate up vector
     Vector3 up = Vector3Normalize(Vector3CrossProduct(rightVec, forward));
-    if (Vector3Length(up) < 1e-6f) {
-        up = (Vector3){ 0,1,0 };
-    }
+    if (Vector3Length(up) < 1e-6f) up = (Vector3){ 0,1,0 };
 
-    // Re-orthonormalize right
     rightVec = Vector3Normalize(Vector3CrossProduct(forward, up));
 
     orientation.forward = forward;
     orientation.up = up;
     orientation.right = rightVec;
-
-    // Calculate Euler angles
     orientation.yaw = atan2f(forward.x, forward.z);
     orientation.pitch = atan2f(-forward.y, sqrtf(forward.x * forward.x + forward.z * forward.z));
     orientation.roll = atan2f(up.x, sqrtf(up.y * up.y + up.z * up.z));
-
     orientation.valid = true;
+
     return orientation;
 }
 
 void CalculateHeadRenderData(const HeadRenderData* headData, Camera camera,
     int* outChosenIndex, float* outRotation, bool* outMirrored) {
-
     if (!headData->orientation.valid) {
-        CalculateBoneRenderData(headData->position, camera, outChosenIndex, outRotation, outMirrored,"Head");
-        //CalculateBoneRenderData(headPos, camera, &chosenIndex, &rotation, &mirrored, "Head");
+        CalculateBoneRenderData(headData->position, camera, outChosenIndex, outRotation, outMirrored, "Head");
         return;
     }
 
-    const int indices[3][8] = {
+    static const int indices[3][8] = {
         {  0,  4,  5,  6,  7,  6,  5,  4 },
         {  2, 12, 13, 14, 15, 14, 13, 12 },
         {  1,  8,  9, 10, 11, 10,  9,  8 }
     };
-    const int topdownIndex = 3;
-    const int bottomIndex = 15;
-    const float TOPDOWN_ANGLE = 70.0f;
-    const float HIGH_THRESHOLD = 22.5f;
-    const float MAIN_THRESHOLD = -22.5f;
 
     Vector3 camDir = Vector3Subtract(camera.position, headData->position);
 
-    // Transform camera direction to head's local space
-    Vector3 localCamDir;
-    localCamDir.x = Vector3DotProduct(camDir, headData->orientation.right);
-    localCamDir.y = Vector3DotProduct(camDir, headData->orientation.up);
-    localCamDir.z = Vector3DotProduct(camDir, headData->orientation.forward);
-
-    localCamDir.x = -localCamDir.x;
+    // Transform to head's local space
+    Vector3 localCamDir = {
+        -Vector3DotProduct(camDir, headData->orientation.right),
+        Vector3DotProduct(camDir, headData->orientation.up),
+        Vector3DotProduct(camDir, headData->orientation.forward)
+    };
 
     float localYaw = atan2f(localCamDir.x, localCamDir.z);
     if (localYaw < 0.0f) localYaw += 2.0f * PI;
     float localYawDeg = localYaw * RAD2DEG;
 
     float horizDistance = sqrtf(localCamDir.x * localCamDir.x + localCamDir.z * localCamDir.z);
-    float localPitch = atan2f(localCamDir.y, horizDistance);
-    float localPitchDeg = localPitch * RAD2DEG;
+    float localPitchDeg = atan2f(localCamDir.y, horizDistance) * RAD2DEG;
 
-    int chosenRow = -1;
-    bool useTopdown = false;
-    bool isTopView = false;
-
-    if (localPitchDeg >= TOPDOWN_ANGLE) {
-        useTopdown = true;
-        isTopView = true;
-    }
-    else if (localPitchDeg >= HIGH_THRESHOLD) {
-        chosenRow = 2;
-    }
-    else if (localPitchDeg >= MAIN_THRESHOLD) {
-        chosenRow = 0;
-    }
-    else if (localPitchDeg >= -TOPDOWN_ANGLE) {
-        chosenRow = 1;
-    }
-    else {
-        useTopdown = true;
-        isTopView = false;
-    }
-
-    int sector = 0;
+    // Determine sector
     float normalizedYaw = localYawDeg + 22.5f;
     if (normalizedYaw >= 360.0f) normalizedYaw -= 360.0f;
+    int sector = (int)(normalizedYaw / 45.0f);
 
-    if (normalizedYaw < 45.0f) sector = 0;
-    else if (normalizedYaw < 90.0f) sector = 1;
-    else if (normalizedYaw < 135.0f) sector = 2;
-    else if (normalizedYaw < 180.0f) sector = 3;
-    else if (normalizedYaw < 225.0f) sector = 4;
-    else if (normalizedYaw < 270.0f) sector = 5;
-    else if (normalizedYaw < 315.0f) sector = 6;
-    else sector = 7;
-
-    if (useTopdown) {
-        if (isTopView) {
-            *outChosenIndex = topdownIndex;
-            *outRotation = sector * 45.0f + 180.0f;
-            *outMirrored = false;
-        }
-        else {
-            *outChosenIndex = bottomIndex;
-            *outRotation = (8 - sector) * 45.0f + 180.0f;
-            if (*outRotation >= 360.0f) *outRotation -= 360.0f;
-            *outMirrored = true;
-        }
+    // Handle special views
+    if (localPitchDeg >= 70.0f) {
+        *outChosenIndex = 3;  // topdown
+        *outRotation = sector * 45.0f + 180.0f;
+        *outMirrored = false;
+    }
+    else if (localPitchDeg <= -70.0f) {
+        *outChosenIndex = 15; // bottom
+        *outRotation = (8 - sector) * 45.0f + 180.0f;
+        if (*outRotation >= 360.0f) *outRotation -= 360.0f;
+        *outMirrored = true;
     }
     else {
+        // Choose row based on pitch
+        int chosenRow = (localPitchDeg >= 22.5f) ? 2 : (localPitchDeg >= -22.5f) ? 0 : 1;
         *outChosenIndex = indices[chosenRow][sector];
         *outRotation = 0.0f;
         *outMirrored = !(sector >= 5 && sector <= 7);
@@ -286,11 +206,10 @@ bool ShouldRenderHead(const Person* person) {
         const Bone* bone = &person->bones[i];
         if (!bone->position.valid) continue;
 
-        if (strcmp(bone->name, "Nose") == 0 ||
-            strcmp(bone->name, "LEye") == 0 ||
-            strcmp(bone->name, "REye") == 0 ||
-            strcmp(bone->name, "LEar") == 0 ||
-            strcmp(bone->name, "REar") == 0) {
+        char firstChar = bone->name[0];
+        if ((firstChar == 'N' && strcmp(bone->name, "Nose") == 0) ||
+            ((firstChar == 'L' || firstChar == 'R') &&
+                (strstr(bone->name, "Eye") || strstr(bone->name, "Ear")))) {
             facialPoints++;
         }
     }
@@ -311,17 +230,16 @@ void DrawHeadBillboard(Texture2D texture, Camera camera, const HeadRenderData* h
     int logicalCol = chosenIndex % ATLAS_COLS;
     int logicalRow = chosenIndex / ATLAS_COLS;
 
-    bool finalMirror = false;
+    bool finalMirror;
     Rectangle src = SrcFromLogical(texture, logicalCol, logicalRow, physCols, physRows, mirrored, &finalMirror);
+    Vector2 worldSize = { headData->size, headData->size };
 
-    Vector2 worldSize = (Vector2){ headData->size, headData->size };
     DrawBonetileCustom(texture, camera, src, headData->position, worldSize, rotation, finalMirror, "Head");
 }
 
 void CollectHeadsForRendering(const BonesAnimation* animation, HeadRenderData** heads,
     int* headCount, int* headCapacity, BoneConfig* boneConfigs, int boneConfigCount) {
     *headCount = 0;
-
     if (!animation->isLoaded) return;
 
     int currentFrame = BonesGetCurrentFrame(animation);
@@ -330,7 +248,7 @@ void CollectHeadsForRendering(const BonesAnimation* animation, HeadRenderData** 
     const AnimationFrame* frame = &animation->frames[currentFrame];
 
     if (*headCapacity < frame->personCount) {
-        HeadRenderData* newArray = (HeadRenderData*)realloc(*heads, sizeof(HeadRenderData) * frame->personCount);
+        HeadRenderData* newArray = realloc(*heads, sizeof(HeadRenderData) * frame->personCount);
         if (!newArray) return;
         *heads = newArray;
         *headCapacity = frame->personCount;
@@ -343,6 +261,7 @@ void CollectHeadsForRendering(const BonesAnimation* animation, HeadRenderData** 
         const Person* person = &frame->persons[p];
         if (!ShouldRenderHead(person)) continue;
 
+        // Check for duplicates
         bool alreadyProcessed = false;
         for (int i = 0; i < processedCount; i++) {
             if (strcmp(processedHeads[i], person->personId) == 0) {
@@ -364,9 +283,7 @@ void CollectHeadsForRendering(const BonesAnimation* animation, HeadRenderData** 
         headData->position = CalculateHeadPosition(person);
         headData->orientation = CalculateHeadOrientation(person);
 
-        if (!headData->orientation.valid && Vector3Length(headData->position) < 1e-6f) {
-            continue;
-        }
+        if (!headData->orientation.valid && Vector3Length(headData->position) < 1e-6f) continue;
 
         headData->valid = true;
         headData->visible = true;

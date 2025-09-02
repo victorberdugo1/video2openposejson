@@ -1,181 +1,147 @@
-// torso_billboard.c - Sistema de torsos con orientación real basada en OpenPose
+// torso_billboard.c - Sistema de torsos con orientación real basada en OpenPose (OPTIMIZADO CORREGIDO)
 #include "torso_billboard.h"
 #include "bonetile.h"
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
 
+// Constantes para evitar recálculos
+static const float CHEST_OFFSET_Y = -0.06f;
+static const float CHEST_OFFSET_Z = 0.015f;
+static const float CHEST_FALLBACK_Y = -0.08f;
+static const int ATLAS_INDICES[3][8] = {
+    {  0,  4,  5,  6,  7,  6,  5,  4 },
+    {  2, 12, 13, 14, 15, 14, 13, 12 },
+    {  1,  8,  9, 10, 11, 10,  9,  8 }
+};
+static const int TOPDOWN_INDEX = 3;
+static const int BOTTOM_INDEX = 15;
+static const float ANGLE_THRESHOLDS[] = { 70.0f, 22.5f, -22.5f, -70.0f };
+
+// Estructura para cachear búsquedas de bones
+typedef struct {
+    Vector3 neck, lShoulder, rShoulder, lHip, rHip;
+    bool hasNeck, hasLShoulder, hasRShoulder, hasLHip, hasRHip;
+    int shoulderCount, hipCount;
+} CachedBones;
+
+// Función auxiliar para buscar y cachear bones
+static CachedBones CacheBones(const Person* person) {
+    CachedBones cache = { 0 };
+
+    for (int i = 0; i < person->boneCount; i++) {
+        const Bone* bone = &person->bones[i];
+        if (!bone->position.valid) continue;
+
+        const char* name = bone->name;
+        Vector3 pos = bone->position.position;
+
+        if (strcmp(name, "Neck") == 0) {
+            cache.neck = pos; cache.hasNeck = true;
+        }
+        else if (strcmp(name, "LShoulder") == 0) {
+            cache.lShoulder = pos; cache.hasLShoulder = true; cache.shoulderCount++;
+        }
+        else if (strcmp(name, "RShoulder") == 0) {
+            cache.rShoulder = pos; cache.hasRShoulder = true; cache.shoulderCount++;
+        }
+        else if (strcmp(name, "LHip") == 0) {
+            cache.lHip = pos; cache.hasLHip = true; cache.hipCount++;
+        }
+        else if (strcmp(name, "RHip") == 0) {
+            cache.rHip = pos; cache.hasRHip = true; cache.hipCount++;
+        }
+    }
+    return cache;
+}
+
 Vector3 CalculateChestPosition(const Person* person) {
-    if (!person || person->boneCount == 0) {
-        return (Vector3) { 0, 0, 0 };
+    if (!person || person->boneCount == 0) return (Vector3) { 0, 0, 0 };
+
+    CachedBones cache = CacheBones(person);
+
+    if (cache.hasNeck && cache.shoulderCount > 0) {
+        Vector3 shoulderCenter = cache.hasLShoulder && cache.hasRShoulder ?
+            Vector3Scale(Vector3Add(cache.lShoulder, cache.rShoulder), 0.5f) :
+            (cache.hasLShoulder ? cache.lShoulder : cache.rShoulder);
+
+        return (Vector3) {
+            (cache.neck.x + shoulderCenter.x) * 0.5f,
+                cache.neck.y + CHEST_OFFSET_Y,
+                cache.neck.z + CHEST_OFFSET_Z
+        };
     }
 
-    // Buscar cuello y hombros
-    Vector3 neckPos = { 0, 0, 0 };
-    Vector3 shoulderCenter = { 0, 0, 0 };
-    bool hasNeck = false;
-    int shoulderCount = 0;
+    // Fallback
+    if (cache.shoulderCount > 0 || cache.hasNeck) {
+        Vector3 total = { 0,0,0 };
+        int count = 0;
 
-    for (int i = 0; i < person->boneCount; i++) {
-        const Bone* bone = &person->bones[i];
-        if (!bone->position.valid) continue;
+        if (cache.hasNeck) { total = Vector3Add(total, cache.neck); count++; }
+        if (cache.hasLShoulder) { total = Vector3Add(total, cache.lShoulder); count++; }
+        if (cache.hasRShoulder) { total = Vector3Add(total, cache.rShoulder); count++; }
 
-        if (strcmp(bone->name, "Neck") == 0) {
-            neckPos = bone->position.position;
-            hasNeck = true;
-        }
-        else if (strcmp(bone->name, "LShoulder") == 0 || strcmp(bone->name, "RShoulder") == 0) {
-            shoulderCenter = Vector3Add(shoulderCenter, bone->position.position);
-            shoulderCount++;
-        }
-    }
-
-    if (hasNeck && shoulderCount > 0) {
-        // Promedio de hombros
-        shoulderCenter = Vector3Scale(shoulderCenter, 1.0f / shoulderCount);
-
-        // Pecho: desde el cuello hacia abajo, en dirección a los hombros
-        // Aproximadamente 10-15cm hacia abajo del cuello
-        Vector3 chestPos = neckPos;
-        chestPos.y -= 0.06f; // 12cm hacia abajo del cuello
-
-        // Ligeramente hacia adelante (pecho sale hacia adelante)
-        chestPos.z += 0.015f; // 3cm hacia adelante
-
-        // Centrar horizontalmente con los hombros
-        chestPos.x = (neckPos.x + shoulderCenter.x) * 0.5f;
-
-        return chestPos;
-    }
-
-    // Fallback al método original si no hay suficientes puntos
-    Vector3 totalPos = { 0, 0, 0 };
-    int pointCount = 0;
-
-    for (int i = 0; i < person->boneCount; i++) {
-        const Bone* bone = &person->bones[i];
-        if (!bone->position.valid) continue;
-
-        if (strcmp(bone->name, "LShoulder") == 0 ||
-            strcmp(bone->name, "RShoulder") == 0 ||
-            strcmp(bone->name, "Neck") == 0) {
-
-            totalPos = Vector3Add(totalPos, bone->position.position);
-            pointCount++;
-        }
-    }
-
-    if (pointCount > 0) {
-        Vector3 chestPos = Vector3Scale(totalPos, 1.0f / pointCount);
-        chestPos.y -= 0.08f; // Bajar un poco desde el promedio
-        return chestPos;
+        Vector3 result = Vector3Scale(total, 1.0f / count);
+        result.y += CHEST_FALLBACK_Y;
+        return result;
     }
 
     return (Vector3) { 0, 0, 0 };
 }
 
 Vector3 CalculateHipPosition(const Person* person) {
-    if (!person || person->boneCount == 0) {
-        return (Vector3) { 0, 0, 0 };
+    if (!person || person->boneCount == 0) return (Vector3) { 0, 0, 0 };
+
+    CachedBones cache = CacheBones(person);
+
+    if (cache.hipCount == 0) return (Vector3) { 0, 0, 0 };
+
+    if (cache.hasLHip && cache.hasRHip) {
+        return Vector3Scale(Vector3Add(cache.lHip, cache.rHip), 0.5f);
     }
 
-    Vector3 totalPos = { 0, 0, 0 };
-    int pointCount = 0;
-
-    for (int i = 0; i < person->boneCount; i++) {
-        const Bone* bone = &person->bones[i];
-        if (!bone->position.valid) continue;
-
-        if (strcmp(bone->name, "LHip") == 0 ||
-            strcmp(bone->name, "RHip") == 0) {
-
-            totalPos = Vector3Add(totalPos, bone->position.position);
-            pointCount++;
-        }
-    }
-
-    if (pointCount > 0) {
-        return Vector3Scale(totalPos, 1.0f / pointCount);
-    }
-
-    return (Vector3) { 0, 0, 0 };
+    return cache.hasLHip ? cache.lHip : cache.rHip;
 }
 
 VirtualSpine CalculateVirtualSpine(const Person* person) {
     VirtualSpine spine = { 0 };
-    spine.valid = false;
-
     if (!person || person->boneCount == 0) return spine;
 
-    bool hasLShoulder = false, hasRShoulder = false, hasNeck = false;
-    bool hasLHip = false, hasRHip = false;
-    Vector3 lShoulder = { 0 }, rShoulder = { 0 }, neck = { 0 };
-    Vector3 lHip = { 0 }, rHip = { 0 };
+    CachedBones cache = CacheBones(person);
 
-    for (int i = 0; i < person->boneCount; i++) {
-        const Bone* bone = &person->bones[i];
-        if (!bone->position.valid) continue;
-
-        if (strcmp(bone->name, "LShoulder") == 0) {
-            lShoulder = bone->position.position; hasLShoulder = true;
-        }
-        else if (strcmp(bone->name, "RShoulder") == 0) {
-            rShoulder = bone->position.position; hasRShoulder = true;
-        }
-        else if (strcmp(bone->name, "Neck") == 0) {
-            neck = bone->position.position; hasNeck = true;
-        }
-        else if (strcmp(bone->name, "LHip") == 0) {
-            lHip = bone->position.position; hasLHip = true;
-        }
-        else if (strcmp(bone->name, "RHip") == 0) {
-            rHip = bone->position.position; hasRHip = true;
-        }
-    }
-
-    if ((!hasLShoulder || !hasRShoulder) || (!hasLHip || !hasRHip)) {
+    if (!cache.hasLShoulder || !cache.hasRShoulder || !cache.hasLHip || !cache.hasRHip) {
         return spine;
     }
 
-    spine.chestPosition = Vector3Scale(Vector3Add(lShoulder, rShoulder), 0.5f);
-    spine.hipPosition = Vector3Scale(Vector3Add(lHip, rHip), 0.5f);
+    spine.chestPosition = Vector3Scale(Vector3Add(cache.lShoulder, cache.rShoulder), 0.5f);
+    spine.hipPosition = Vector3Scale(Vector3Add(cache.lHip, cache.rHip), 0.5f);
 
-    if (hasNeck) {
+    if (cache.hasNeck) {
         spine.chestPosition = Vector3Scale(
-            Vector3Add(Vector3Add(lShoulder, rShoulder), neck),
-            1.0f / 3.0f
-        );
+            Vector3Add(Vector3Add(cache.lShoulder, cache.rShoulder), cache.neck), 1.0f / 3.0f);
     }
 
     Vector3 spineVec = Vector3Subtract(spine.chestPosition, spine.hipPosition);
     float spineLength = Vector3Length(spineVec);
-
-    if (spineLength < 1e-4f) {
-        return spine;
-    }
+    if (spineLength < EPSILON) return spine;
 
     spine.spineDirection = Vector3Scale(spineVec, 1.0f / spineLength);
 
-    Vector3 shoulderLine = Vector3Subtract(rShoulder, lShoulder);
+    Vector3 shoulderLine = Vector3Subtract(cache.rShoulder, cache.lShoulder);
     float shoulderLength = Vector3Length(shoulderLine);
-
-    if (shoulderLength < 1e-4f) {
-        return spine;
-    }
+    if (shoulderLength < EPSILON) return spine;
 
     spine.spineRight = Vector3Scale(shoulderLine, 1.0f / shoulderLength);
     spine.spineForward = Vector3CrossProduct(spine.spineRight, spine.spineDirection);
-    float forwardLength = Vector3Length(spine.spineForward);
 
-    if (forwardLength < 1e-6f) {
-        return spine;
-    }
+    float forwardLength = Vector3Length(spine.spineForward);
+    if (forwardLength < EPSILON) return spine;
 
     spine.spineForward = Vector3Scale(spine.spineForward, 1.0f / forwardLength);
     spine.spineRight = Vector3CrossProduct(spine.spineDirection, spine.spineForward);
-    float rightLength = Vector3Length(spine.spineRight);
 
-    if (rightLength > 1e-6f) {
+    float rightLength = Vector3Length(spine.spineRight);
+    if (rightLength > EPSILON) {
         spine.spineRight = Vector3Scale(spine.spineRight, 1.0f / rightLength);
     }
 
@@ -183,76 +149,49 @@ VirtualSpine CalculateVirtualSpine(const Person* person) {
     return spine;
 }
 
-TorsoOrientation CalculateChestOrientation(const Person* person) {
+// Función auxiliar para calcular orientación
+static TorsoOrientation CreateOrientation(Vector3 pos, Vector3 forward, Vector3 up, Vector3 right) {
     TorsoOrientation orientation = { 0 };
-    orientation.valid = false;
+    orientation.position = pos;
+    orientation.forward = forward;
+    orientation.up = up;
+    orientation.right = right;
 
-    VirtualSpine spine = CalculateVirtualSpine(person);
-    if (!spine.valid) {
-        Vector3 chestPos = CalculateChestPosition(person);
-        if (Vector3Length(chestPos) > 0.0f) {
-            orientation.position = chestPos;
-            orientation.forward = (Vector3){ 0, 0, 1 };
-            orientation.up = (Vector3){ 0, 1, 0 };
-            orientation.right = (Vector3){ 1, 0, 0 };
-            orientation.valid = true;
-        }
-        return orientation;
-    }
+    orientation.yaw = atan2f(forward.x, forward.z);
 
-    orientation.position = spine.chestPosition;
-    orientation.forward = spine.spineForward;
-    orientation.up = spine.spineDirection;
-    orientation.right = spine.spineRight;
+    float horizDistance = sqrtf(forward.x * forward.x + forward.z * forward.z);
+    orientation.pitch = atan2f(-forward.y, horizDistance);
 
-    orientation.yaw = atan2f(orientation.forward.x, orientation.forward.z);
-
-    float horizDistance = sqrtf(orientation.forward.x * orientation.forward.x +
-        orientation.forward.z * orientation.forward.z);
-    orientation.pitch = atan2f(-orientation.forward.y, horizDistance);
-
-    orientation.roll = atan2f(orientation.right.y,
-        sqrtf(orientation.right.x * orientation.right.x +
-            orientation.right.z * orientation.right.z));
+    orientation.roll = atan2f(right.y, sqrtf(right.x * right.x + right.z * right.z));
 
     orientation.valid = true;
     return orientation;
 }
 
-TorsoOrientation CalculateHipOrientation(const Person* person) {
-    TorsoOrientation orientation = { 0 };
-    orientation.valid = false;
+TorsoOrientation CalculateChestOrientation(const Person* person) {
+    VirtualSpine spine = CalculateVirtualSpine(person);
+    if (!spine.valid) {
+        Vector3 chestPos = CalculateChestPosition(person);
+        if (Vector3Length(chestPos) > 0.0f) {
+            return CreateOrientation(chestPos, (Vector3) { 0, 0, 1 }, (Vector3) { 0, 1, 0 }, (Vector3) { 1, 0, 0 });
+        }
+        return (TorsoOrientation) { 0 };
+    }
 
+    return CreateOrientation(spine.chestPosition, spine.spineForward, spine.spineDirection, spine.spineRight);
+}
+
+TorsoOrientation CalculateHipOrientation(const Person* person) {
     VirtualSpine spine = CalculateVirtualSpine(person);
     if (!spine.valid) {
         Vector3 hipPos = CalculateHipPosition(person);
         if (Vector3Length(hipPos) > 0.0f) {
-            orientation.position = hipPos;
-            orientation.forward = (Vector3){ 0, 0, 1 };
-            orientation.up = (Vector3){ 0, 1, 0 };
-            orientation.right = (Vector3){ 1, 0, 0 };
-            orientation.valid = true;
+            return CreateOrientation(hipPos, (Vector3) { 0, 0, 1 }, (Vector3) { 0, 1, 0 }, (Vector3) { 1, 0, 0 });
         }
-        return orientation;
+        return (TorsoOrientation) { 0 };
     }
 
-    orientation.position = spine.hipPosition;
-    orientation.forward = spine.spineForward;
-    orientation.up = spine.spineDirection;
-    orientation.right = spine.spineRight;
-
-    orientation.yaw = atan2f(orientation.forward.x, orientation.forward.z);
-
-    float horizDistance = sqrtf(orientation.forward.x * orientation.forward.x +
-        orientation.forward.z * orientation.forward.z);
-    orientation.pitch = atan2f(-orientation.forward.y, horizDistance);
-
-    orientation.roll = atan2f(orientation.right.y,
-        sqrtf(orientation.right.x * orientation.right.x +
-            orientation.right.z * orientation.right.z));
-
-    orientation.valid = true;
-    return orientation;
+    return CreateOrientation(spine.hipPosition, spine.spineForward, spine.spineDirection, spine.spineRight);
 }
 
 void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
@@ -263,60 +202,47 @@ void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
         return;
     }
 
-    const int indices[3][8] = {
-        {  0,  4,  5,  6,  7,  6,  5,  4 },
-        {  2, 12, 13, 14, 15, 14, 13, 12 },
-        {  1,  8,  9, 10, 11, 10,  9,  8 }
-    };
-    const int topdownIndex = 3;
-    const int bottomIndex = 15;
-    const float TOPDOWN_ANGLE = 70.0f;
-    const float HIGH_THRESHOLD = 22.5f;
-    const float MAIN_THRESHOLD = -22.5f;
-
     Vector3 camDir = Vector3Subtract(camera.position, torsoData->position);
 
-    Vector3 localCamDir;
-    localCamDir.x = Vector3DotProduct(camDir, torsoData->orientation.right);
-    localCamDir.y = Vector3DotProduct(camDir, torsoData->orientation.up);
-    localCamDir.z = Vector3DotProduct(camDir, torsoData->orientation.forward);
-
-    localCamDir.x = -localCamDir.x;
+    // Transformar a espacio local del torso
+    Vector3 localCamDir = {
+        -Vector3DotProduct(camDir, torsoData->orientation.right),
+        Vector3DotProduct(camDir, torsoData->orientation.up),
+        Vector3DotProduct(camDir, torsoData->orientation.forward)
+    };
 
     float localYaw = atan2f(-localCamDir.x, localCamDir.z);
     if (localYaw < 0.0f) localYaw += 2.0f * PI;
-    float localYawDeg = localYaw * RAD2DEG;
 
     float horizDistance = sqrtf(localCamDir.x * localCamDir.x + localCamDir.z * localCamDir.z);
-    float localPitch = atan2f(localCamDir.y, horizDistance);
-    float localPitchDeg = localPitch * RAD2DEG;
+    float localPitchDeg = atan2f(localCamDir.y, horizDistance) * RAD2DEG;
 
+    // Determinar fila y vista
     int chosenRow = -1;
     bool useTopdown = false;
     bool isTopView = false;
 
-    if (localPitchDeg >= TOPDOWN_ANGLE) {
-        useTopdown = true;
-        isTopView = true;
+    if (localPitchDeg >= ANGLE_THRESHOLDS[0]) {
+        useTopdown = true; isTopView = true;
     }
-    else if (localPitchDeg >= HIGH_THRESHOLD) {
+    else if (localPitchDeg >= ANGLE_THRESHOLDS[1]) {
         chosenRow = 2;
     }
-    else if (localPitchDeg >= MAIN_THRESHOLD) {
+    else if (localPitchDeg >= ANGLE_THRESHOLDS[2]) {
         chosenRow = 0;
     }
-    else if (localPitchDeg >= -TOPDOWN_ANGLE) {
+    else if (localPitchDeg >= ANGLE_THRESHOLDS[3]) {
         chosenRow = 1;
     }
     else {
-        useTopdown = true;
-        isTopView = false;
+        useTopdown = true; isTopView = false;
     }
 
-    int sector = 0;
-    float normalizedYaw = localYawDeg + 22.5f + 180.0f;
+    // Calcular sector (igual que el original para compatibilidad exacta)
+    float normalizedYaw = localYaw * RAD2DEG + 22.5f + 180.0f;
     if (normalizedYaw >= 360.0f) normalizedYaw -= 360.0f;
 
+    int sector = 0;
     if (normalizedYaw < 45.0f) sector = 0;
     else if (normalizedYaw < 90.0f) sector = 1;
     else if (normalizedYaw < 135.0f) sector = 2;
@@ -328,19 +254,19 @@ void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
 
     if (useTopdown) {
         if (isTopView) {
-            *outChosenIndex = topdownIndex;
+            *outChosenIndex = TOPDOWN_INDEX;
             *outRotation = sector * 45.0f + 180.0f;
             *outMirrored = false;
         }
         else {
-            *outChosenIndex = bottomIndex;
+            *outChosenIndex = BOTTOM_INDEX;
             *outRotation = (8 - sector) * 45.0f + 180.0f;
             if (*outRotation >= 360.0f) *outRotation -= 360.0f;
             *outMirrored = true;
         }
     }
     else {
-        *outChosenIndex = indices[chosenRow][sector];
+        *outChosenIndex = ATLAS_INDICES[chosenRow][sector];
         *outRotation = 0.0f;
         *outMirrored = !(sector >= 5 && sector <= 7);
     }
@@ -348,35 +274,12 @@ void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
 
 bool ShouldRenderChest(const Person* person) {
     if (!person || !person->active) return false;
-
-    int shoulderCount = 0;
-
-    for (int i = 0; i < person->boneCount; i++) {
-        const Bone* bone = &person->bones[i];
-        if (!bone->position.valid) continue;
-
-        if (strcmp(bone->name, "LShoulder") == 0 || strcmp(bone->name, "RShoulder") == 0) {
-            shoulderCount++;
-        }
-    }
-
-    return shoulderCount >= 1;
+    return CacheBones(person).shoulderCount >= 1;
 }
 
 bool ShouldRenderHip(const Person* person) {
     if (!person || !person->active) return false;
-
-    int hipCount = 0;
-    for (int i = 0; i < person->boneCount; i++) {
-        const Bone* bone = &person->bones[i];
-        if (!bone->position.valid) continue;
-
-        if (strcmp(bone->name, "LHip") == 0 || strcmp(bone->name, "RHip") == 0) {
-            hipCount++;
-        }
-    }
-
-    return hipCount >= 1;
+    return CacheBones(person).hipCount >= 1;
 }
 
 void DrawTorsoBillboard(Texture2D texture, Camera camera, const TorsoRenderData* torsoData, int physCols, int physRows) {
@@ -385,32 +288,30 @@ void DrawTorsoBillboard(Texture2D texture, Camera camera, const TorsoRenderData*
     int chosenIndex;
     float rotation;
     bool mirrored;
-
     CalculateTorsoRenderData(torsoData, camera, &chosenIndex, &rotation, &mirrored);
 
     int logicalCol = chosenIndex % ATLAS_COLS;
     int logicalRow = chosenIndex / ATLAS_COLS;
 
-    bool finalMirror = false;
+    bool finalMirror;
     Rectangle src = SrcFromLogical(texture, logicalCol, logicalRow, physCols, physRows, mirrored, &finalMirror);
+    Vector2 worldSize = { torsoData->size, torsoData->size };
 
-    Vector2 worldSize = (Vector2){ torsoData->size, torsoData->size };
     DrawBonetileCustom(texture, camera, src, torsoData->position, worldSize, rotation, finalMirror, "");
 }
 
 void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData** torsos,
-    int* torsoCount, int* torsoCapacity, BoneConfig* boneConfigs,
-    int boneConfigCount) {
-    *torsoCount = 0;
+    int* torsoCount, int* torsoCapacity, BoneConfig* boneConfigs, int boneConfigCount) {
 
+    *torsoCount = 0;
     if (!animation->isLoaded) return;
 
     int currentFrame = BonesGetCurrentFrame(animation);
     if (!BonesIsValidFrame(animation, currentFrame)) return;
 
     const AnimationFrame* frame = &animation->frames[currentFrame];
-
     int estimatedTorsos = frame->personCount * 2;
+
     if (*torsoCapacity < estimatedTorsos) {
         TorsoRenderData* newArray = (TorsoRenderData*)realloc(*torsos, sizeof(TorsoRenderData) * estimatedTorsos);
         if (!newArray) return;
@@ -418,6 +319,7 @@ void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData*
         *torsoCapacity = estimatedTorsos;
     }
 
+    // Volver al sistema original de detección de duplicados para compatibilidad exacta
     static char processedTorsos[200][25];
     int processedCount = 0;
 

@@ -10,33 +10,19 @@
 #include <stddef.h>
 #include "bonetile.h" 
 
-
 #define MAX_BONES_PER_PERSON 32
 #define MAX_FRAMES 10000
 #define MAX_PERSONS 10
+
 #ifndef MAX_FILE_PATH_LENGTH
 #define MAX_BONE_NAME_LENGTH 32
 #define MAX_FILE_PATH_LENGTH 512
 #endif
 
-
-typedef struct {
-    char boneName[MAX_BONE_NAME_LENGTH];
-    char texturePath[MAX_FILE_PATH_LENGTH];
-    bool visible;
-    float size;
-} BoneTextureConfig;
-
-typedef struct {
-    BoneTextureConfig* configs;
-    int configCount;
-    int configCapacity;
-    bool loaded;
-    time_t lastModified;
-} SimpleTextureSystem;
-
-
-
+// Verification at compile time instead of runtime function
+#if MAX_BONE_NAME_LENGTH < 32
+#error "MAX_BONE_NAME_LENGTH debe ser al menos 32 bytes"
+#endif
 
 typedef enum {
     BONES_SUCCESS = 0,
@@ -100,7 +86,22 @@ typedef struct {
     bool showInvalidBones;
 } BonesRenderConfig;
 
-// Declaraciones de funciones...
+typedef struct {
+    char boneName[MAX_BONE_NAME_LENGTH];
+    char texturePath[MAX_FILE_PATH_LENGTH];
+    bool visible;
+    float size;
+} BoneTextureConfig;
+
+typedef struct {
+    BoneTextureConfig* configs;
+    int configCount;
+    int configCapacity;
+    bool loaded;
+    time_t lastModified;
+} SimpleTextureSystem;
+
+// Core animation functions
 BonesError BonesInit(BonesAnimation* animation, int maxFrames);
 void BonesFree(BonesAnimation* animation);
 BonesError BonesLoadFromJSON(BonesAnimation* animation, const char* jsonFilePath);
@@ -110,27 +111,31 @@ int BonesGetCurrentFrame(const BonesAnimation* animation);
 int BonesGetFrameCount(const BonesAnimation* animation);
 bool BonesIsValidFrame(const BonesAnimation* animation, int frameNumber);
 
-
+// Utility functions
 bool BonesIsPositionValid(Vector3 position);
-
 BonesRenderConfig BonesGetDefaultRenderConfig(void);
 void BonesSetRenderConfig(const BonesRenderConfig* config);
 
+// Error handling
 const char* BonesGetErrorString(BonesError error);
 void BonesLogError(BonesError error, const char* context);
 
-void CheckBoneNameLength(void);
+// Texture system functions
 void CleanupTextureSystem(SimpleTextureSystem* textureSystem, BoneConfig** boneConfigs, int* boneConfigCount);
 time_t GetFileModificationTime(const char* filename);
-
 bool LoadSimpleTextureConfig(SimpleTextureSystem* system, const char* filename);
 void LoadBoneConfigurations(SimpleTextureSystem* textureSystem, BoneConfig** boneConfigs, int* boneConfigCount);
+
+// Bone configuration functions
 BoneConfig* FindBoneConfig(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName);
 const char* GetTexturePathForBone(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName);
 bool IsBoneVisible(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName);
 float GetBoneSize(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName);
+
+// Rendering functions
 bool ResizeRenderBonesArray(BoneRenderData** renderBones, int* renderBonesCapacity, int newCapacity);
 int CompareBonesByDistance(const void* a, const void* b);
-void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, BoneRenderData** renderBones, int* renderBonesCount, int* renderBonesCapacity, BoneConfig* boneConfigs, int boneConfigCount);
+void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, BoneRenderData** renderBones,
+    int* renderBonesCount, int* renderBonesCapacity, BoneConfig* boneConfigs, int boneConfigCount);
 
 #endif
