@@ -1,5 +1,6 @@
 #include "bonetile.h"
 #include "bones3d.h" 
+#include "head_billboard.h"
 #include <string.h>
 #include <math.h>
 
@@ -20,7 +21,7 @@ static const struct {
     {"RHip", {"RHip", "RKnee", ""}, {1.0f, 0.8f, 0.0f}},
     {"RKnee", {"RKnee", "RAnkle", ""}, {1.0f, 0.8f, 0.0f}},
     {"RAnkle", {"RKnee", "RAnkle", ""}, {1.0f, 0.8f, 0.0f}},
-    {"Neck", {"Head", "Neck", ""},  {0.8f, 1.0f, 0.0f}},
+    {"Neck", {"Neck", "Head", ""},  {0.8f, 1.0f, 0.0f}},
     {"", {"", "", ""}, {0.0f, 0.0f, 0.0f}}
 };
 
@@ -34,25 +35,25 @@ static const struct {
     bool useStableOrientation;       // Usar orientación estable para evitar oscilaciones
 } BONE_ORIENTATIONS[] = {
     // Brazos 
-    {"LShoulder", "LElbow", "Neck", true, true, false},
-    {"LElbow", "Neck", "LWrist", false, true, false},
+    {"LShoulder", "LElbow", "Neck", true, true, true},
+    {"LElbow", "Neck", "LWrist", false, true, true},
     {"LWrist", "LElbow", "", true, true, true},
 
     {"RShoulder", "RElbow", "Neck", false, true, true},
-    {"RElbow", "Neck", "RWrist", true, true, false},
+    {"RElbow", "Neck", "RWrist", true, true, true},
     {"RWrist", "RElbow", "", true, true, true},
 
     // Piernas 
-    {"LHip", "LKnee", "Hip", true, true, false},
+    {"LHip", "LKnee", "Hip", true, true, true},
     {"LKnee", "LAnkle", "LHip", false, true, true},
     {"LAnkle", "LKnee", "", true, false, true},
 
-    {"RHip", "RKnee", "Hip", false, true, false},
-    {"RKnee", "RAnkle", "RHip", false, false, false},
-    {"RAnkle", "RKnee", "", true, true, true},
+    {"RHip", "RKnee", "Hip", false, true, true},
+    {"RKnee", "RAnkle", "RHip", false, false, true},
+    {"RAnkle", "RKnee", "", true, false, true},
 
     // Cuello 
-    {"Neck", "", "Head", false, false, true},
+    {"Neck", "HEAD_CALCULATED", "", true, false, true},
 
     {"", "", "", false, false, false}
 };
@@ -79,7 +80,7 @@ static const struct {
     {"RHip", 45.0f, -90.0f, 110.0f},
     {"RKnee", 90.0f, 0.0f, -90.0f},
     {"RAnkle", 90.0f, 0.0f, 110.0f},
-    {"Neck", 180.0f, 0.0f, 0.0f},
+    {"Neck", -90.0f, 180.0f, -90.0f},
     {"", 0.0f, 0.0f, 0.0f}
 };
 
@@ -101,38 +102,9 @@ bool GetBoneConnectionsWithPriority(const char* boneName, char connections[3][32
 static Vector3 GetBonePositionByName(const Person* person, const char* boneName) {
     if (!person || !boneName) return (Vector3) { 0, 0, 0 };
 
-    // Casos especiales para bones calculados
+    // Casos especiales para bones calculados - USAR FUNCIÓN EXISTENTE
     if (strcmp(boneName, "HEAD_CALCULATED") == 0) {
-        // Calcular posición de cabeza basada en características faciales
-        Vector3 nose = { 0 }, leftEye = { 0 }, rightEye = { 0 };
-        bool hasNose = false, hasEyes = false;
-
-        for (int i = 0; i < person->boneCount; i++) {
-            const Bone* bone = &person->bones[i];
-            if (bone->position.valid) {
-                if (strcmp(bone->name, "Nose") == 0) {
-                    nose = bone->position.position;
-                    hasNose = true;
-                }
-                else if (strcmp(bone->name, "LEye") == 0) {
-                    leftEye = bone->position.position;
-                    hasEyes = true;
-                }
-                else if (strcmp(bone->name, "REye") == 0) {
-                    rightEye = bone->position.position;
-                }
-            }
-        }
-
-        if (hasNose) {
-            // Usar posición de la nariz como aproximación de la cabeza
-            return Vector3Add(nose, (Vector3) { 0, -0.05f, 0 }); // Ligeramente arriba de la nariz
-        }
-        else if (hasEyes) {
-            // Usar punto medio entre los ojos
-            Vector3 midEyes = Vector3Scale(Vector3Add(leftEye, rightEye), 0.5f);
-            return Vector3Add(midEyes, (Vector3) { 0, -0.02f, 0 });
-        }
+        return CalculateHeadPosition(person); // ¡Usar la función que ya existe!
     }
 
     // Buscar bone normal
@@ -548,8 +520,10 @@ void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, Camera came
     };
 
     // Calcular dirección INVERTIDA de la cámara en espacio local del bone
-    Vector3 camDir = Vector3Subtract(boneData->position, camera.position); // INVERTIDO: bone - camera
+    Vector3 camDir = Vector3Subtract(boneData->position, camera.position);
     camDir = SafeNormalize(camDir);
+
+    // CASO ESPECIAL PARA EL CUELLO: usar dirección normal en lugar de invertida
 
     // Transformar a coordenadas locales del bone
     Vector3 localCamDir = {
@@ -565,12 +539,12 @@ void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, Camera came
     float localPitchDeg = atan2f(localCamDir.y,
         sqrtf(localCamDir.x * localCamDir.x + localCamDir.z * localCamDir.z)) * RAD2DEG;
 
-    // Normalizar yaw para el sistema de sectores (INVERTIDO)
+    // Normalizar yaw para el sistema de sectores
     float normalizedYaw = localYaw * RAD2DEG + 22.5f;
     if (normalizedYaw >= 360.0f) normalizedYaw -= 360.0f;
 
     int sector = (int)(normalizedYaw / 45.0f) % 8;
-    sector = (8 - sector) % 8; // INVERTIR sector
+
 
     // Seleccionar sprite basado en el ángulo de pitch
     if (localPitchDeg >= 70.0f) {
@@ -580,7 +554,7 @@ void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, Camera came
     }
     else if (localPitchDeg <= -70.0f) {
         *outChosenIndex = 15; // Vista desde abajo
-        *outRotation = sector * 45.0f; // Ya no necesitamos invertir aquí
+        *outRotation = sector * 45.0f;
         *outMirrored = true;
     }
     else {

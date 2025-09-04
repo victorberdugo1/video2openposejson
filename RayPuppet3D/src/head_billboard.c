@@ -35,26 +35,16 @@ Vector3 CalculateHeadPosition(const Person* person) {
 
     if (eyeCount > 0 && hasNeck) {
         eyeCenter = Vector3Scale(eyeCenter, 1.0f / eyeCount);
-        return (Vector3) {
+
+        Vector3 headPos = {
             neckPos.x * 0.7f + eyeCenter.x * 0.3f,
-                eyeCenter.y,
-                hasNose ? neckPos.z * 0.8f + nosePos.z * 0.2f : neckPos.z * 0.9f + eyeCenter.z * 0.1f
+            eyeCenter.y,
+            hasNose ? neckPos.z * 0.8f + nosePos.z * 0.2f : neckPos.z * 0.9f + eyeCenter.z * 0.1f
         };
-    }
 
-    if (eyeCount > 0) {
-        eyeCenter = Vector3Scale(eyeCenter, 1.0f / eyeCount);
-        if (hasNose) {
-            Vector3 backOffset = Vector3Scale(Vector3Subtract(eyeCenter, nosePos), 0.5f);
-            return Vector3Add(eyeCenter, backOffset);
-        }
-        return eyeCenter;
-    }
+        headPos.z += 0.01f; // valor para más/menos adelanto
 
-    if (hasNeck) {
-        Vector3 estimatedHead = neckPos;
-        estimatedHead.y += 0.15f;
-        return estimatedHead;
+        return headPos;
     }
 
     return (Vector3) { 0, 0, 0 };
