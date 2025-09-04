@@ -138,4 +138,6 @@ int CompareBonesByDistance(const void* a, const void* b);
 void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, BoneRenderData** renderBones,
     int* renderBonesCount, int* renderBonesCapacity, BoneConfig* boneConfigs, int boneConfigCount);
 
+void EnrichBoneRenderDataWithOrientation(BoneRenderData* renderBone, const Person* person);
+
 #endif

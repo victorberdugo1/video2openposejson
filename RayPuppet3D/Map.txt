@@ -6,14 +6,14 @@ Medio        10     11     12      13       14       m13         m12         m11
 Med-Bajo     15     16     17      18       19       m18         m17         m16
 Bajo         20     21     22      23       24       m23         m22         m21
 
-new texture 8 x 8
+new texture 4 x 4
 Altura ↓    
 ------------------------------------------------------------------------
-Main	00 front_mid	01 front_low	02 front_high	03 topdown	
-Med	    04 diag45_mid	05 side90_mid	06 back135_mid	07 back_mid	
-Low	    08 diag45_low	09 side90_low	10 back135_low	11 back_low	
-High	12 diag45_high	13 side90_high	14 back135_high	15 back_high	
+Main	00 front_mid	01 front_low	02 front_high	03 top	
+Med	04 diag45_mid	05 side90_mid	06 back135_mid	07 back_mid	
+Low	08 diag45_low	09 side90_low	10 back135_low	11 back_low	
+High	12 diag45_high	13 side90_high	14 back135_high	15 back_high&down
 
 Mirror	04 diag315_mid	05 side270_mid	06 back225_mid
-	    08 diag315_low	09 side270_low	10 back225_low
+	08 diag315_low	09 side270_low	10 back225_low
         12 diag315_high	13 side270_high	14 back225_high

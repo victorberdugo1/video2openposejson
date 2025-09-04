@@ -9,19 +9,78 @@ static const struct {
     float priority[3];
 } BONE_CONNECTIONS[] = {
     {"LShoulder", {"LShoulder", "LElbow", ""}, {1.0f, 0.8f, 0.0f}},
-    {"LElbow", {"LElbow", "LWrist", ""}, {0.8f, 1.0f, 0.0f}},
-    {"LWrist", {"LElbow", "", ""}, {1.0f, 0.0f, 0.0f}},
+    {"LElbow", {"LElbow", "LWrist", ""}, {1.0f, 0.8f, 0.0f}},
+    {"LWrist", {"LElbow", "LWrist", ""}, {1.0f, 0.0f, 0.0f}},
     {"RShoulder", {"RShoulder", "RElbow", ""}, {1.0f, 0.8f, 0.0f}},
-    {"RElbow", {"RElbow", "RWrist", ""}, {0.8f, 1.0f, 0.0f}},
-    {"RWrist", {"RElbow", "", ""}, {1.0f, 0.0f, 0.0f}},
+    {"RElbow", {"RElbow", "RWrist", ""}, {1.0f, 0.8f, 0.0f}},
+    {"RWrist", {"RElbow", "RWrist", ""}, {1.0f, 0.0f, 0.0f}},
     {"LHip", {"LHip", "LKnee", ""}, {1.0f, 0.8f, 0.0f}},
-    {"LKnee", {"LKnee", "LAnkle", ""}, {0.8f, 1.0f, 0.0f}},
-    {"LAnkle", {"LKnee", "", ""}, {1.0f, 0.0f, 0.0f}},
+    {"LKnee", {"LKnee", "LAnkle", ""}, {1.0f, 0.8f, 0.0f}},
+    {"LAnkle", {"LKnee", "LAnkle", ""}, {1.0f, 0.8f, 0.0f}},
     {"RHip", {"RHip", "RKnee", ""}, {1.0f, 0.8f, 0.0f}},
-    {"RKnee", {"RKnee", "RAnkle", ""}, {0.8f, 1.0f, 0.0f}},
-    {"RAnkle", {"RKnee", "", ""}, {1.0f, 0.0f, 0.0f}},
+    {"RKnee", {"RKnee", "RAnkle", ""}, {1.0f, 0.8f, 0.0f}},
+    {"RAnkle", {"RKnee", "RAnkle", ""}, {1.0f, 0.8f, 0.0f}},
     {"Neck", {"Head", "Neck", ""},  {0.8f, 1.0f, 0.0f}},
     {"", {"", "", ""}, {0.0f, 0.0f, 0.0f}}
+};
+
+// Estructura mejorada para definir orientaciones de bones
+static const struct {
+    const char* boneName;
+    const char* primaryConnection;    // Bone hacia el que apunta el bone (forward)
+    const char* secondaryConnection; // Bone para calcular el up vector
+    bool reverseForward;             // Si hay que invertir la dirección forward
+    bool isLimb;                     // Si es una extremidad (brazo/pierna)
+    bool useStableOrientation;       // Usar orientación estable para evitar oscilaciones
+} BONE_ORIENTATIONS[] = {
+    // Brazos 
+    {"LShoulder", "LElbow", "Neck", true, true, false},
+    {"LElbow", "Neck", "LWrist", false, true, false},
+    {"LWrist", "LElbow", "", true, true, true},
+
+    {"RShoulder", "RElbow", "Neck", false, true, true},
+    {"RElbow", "Neck", "RWrist", true, true, false},
+    {"RWrist", "RElbow", "", true, true, true},
+
+    // Piernas 
+    {"LHip", "LKnee", "Hip", true, true, false},
+    {"LKnee", "LAnkle", "LHip", false, true, true},
+    {"LAnkle", "LKnee", "", true, false, true},
+
+    {"RHip", "RKnee", "Hip", false, true, false},
+    {"RKnee", "RAnkle", "RHip", false, false, false},
+    {"RAnkle", "RKnee", "", true, true, true},
+
+    // Cuello 
+    {"Neck", "", "Head", false, false, true},
+
+    {"", "", "", false, false, false}
+};
+
+// Offsets simplificados y más estables
+static const struct {
+    const char* boneName;
+    float yawOffset;    // ROTACIÓN HORIZONTAL (grados)
+    float pitchOffset;  // ROTACIÓN VERTICAL (grados) 
+    float rollOffset;   // ROTACIÓN DE GIRO (grados)
+} BONE_ANGLE_OFFSETS[] = {
+    // BRAZOS
+    {"LShoulder", 90.0f, 0.0f, -70.0f},
+    {"LElbow", 90.0f, 0.0f, -100.0f},
+    {"LWrist", 90.0f, 0.0f, 70.0f}, 
+    {"RShoulder", 90.0f, 0.0f, 70.0f},
+    {"RElbow", 90.0f, 0.0f, 100.0f},
+    {"RWrist", 100.0f, 0.0f, -70.0f},
+
+    // PIERNAS
+    {"LHip", 90.0f, -45.0f, -110.0f},
+    {"LKnee", 90.0f, 0.0f, 90.0f},  
+    {"LAnkle", 90.0f, -45.0f, 110.0f},
+    {"RHip", 45.0f, -90.0f, 110.0f},
+    {"RKnee", 90.0f, 0.0f, -90.0f},
+    {"RAnkle", 90.0f, 0.0f, 110.0f},
+    {"Neck", 180.0f, 0.0f, 0.0f},
+    {"", 0.0f, 0.0f, 0.0f}
 };
 
 bool GetBoneConnectionsWithPriority(const char* boneName, char connections[3][32], float priorities[3]) {
@@ -38,52 +97,267 @@ bool GetBoneConnectionsWithPriority(const char* boneName, char connections[3][32
     return false;
 }
 
-void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, Camera camera,
-    int* outChosenIndex, float* outRotation, bool* outMirrored) {
+// Función auxiliar mejorada para obtener posición de un bone por nombre
+static Vector3 GetBonePositionByName(const Person* person, const char* boneName) {
+    if (!person || !boneName) return (Vector3) { 0, 0, 0 };
 
-    if (!boneData->orientation.valid) {
-        CalculateBoneRenderData(boneData->position, camera, outChosenIndex, outRotation, outMirrored, "");
-        return;
+    // Casos especiales para bones calculados
+    if (strcmp(boneName, "HEAD_CALCULATED") == 0) {
+        // Calcular posición de cabeza basada en características faciales
+        Vector3 nose = { 0 }, leftEye = { 0 }, rightEye = { 0 };
+        bool hasNose = false, hasEyes = false;
+
+        for (int i = 0; i < person->boneCount; i++) {
+            const Bone* bone = &person->bones[i];
+            if (bone->position.valid) {
+                if (strcmp(bone->name, "Nose") == 0) {
+                    nose = bone->position.position;
+                    hasNose = true;
+                }
+                else if (strcmp(bone->name, "LEye") == 0) {
+                    leftEye = bone->position.position;
+                    hasEyes = true;
+                }
+                else if (strcmp(bone->name, "REye") == 0) {
+                    rightEye = bone->position.position;
+                }
+            }
+        }
+
+        if (hasNose) {
+            // Usar posición de la nariz como aproximación de la cabeza
+            return Vector3Add(nose, (Vector3) { 0, -0.05f, 0 }); // Ligeramente arriba de la nariz
+        }
+        else if (hasEyes) {
+            // Usar punto medio entre los ojos
+            Vector3 midEyes = Vector3Scale(Vector3Add(leftEye, rightEye), 0.5f);
+            return Vector3Add(midEyes, (Vector3) { 0, -0.02f, 0 });
+        }
     }
 
-    static const int indices[3][8] = {
-        {0,4,5,6,7,6,5,4},{2,12,13,14,15,14,13,12},{1,8,9,10,11,10,9,8} };
+    // Buscar bone normal
+    for (int i = 0; i < person->boneCount; i++) {
+        const Bone* bone = &person->bones[i];
+        if (bone->position.valid && strcmp(bone->name, boneName) == 0) {
+            return bone->position.position;
+        }
+    }
+    return (Vector3) { 0, 0, 0 };
+}
 
-    Vector3 camDir = Vector3Subtract(camera.position, boneData->position);
-    Vector3 localCamDir = {
-        -Vector3DotProduct(camDir, boneData->orientation.right),
-        Vector3DotProduct(camDir, boneData->orientation.up),
-        Vector3DotProduct(camDir, boneData->orientation.forward)
+// Función auxiliar mejorada para normalizar un vector
+static Vector3 SafeNormalize(Vector3 v) {
+    float length = Vector3Length(v);
+    if (length < 1e-6f) return (Vector3) { 0, 0, 1 }; // Vector forward por defecto
+    return Vector3Scale(v, 1.0f / length);
+}
+
+// Función auxiliar mejorada para crear un vector perpendicular estable
+static Vector3 GetStablePerpendicularVector(Vector3 forward) {
+    forward = SafeNormalize(forward);
+
+    // Encontrar el eje más perpendicular al forward
+    Vector3 candidates[3] = {
+        {1, 0, 0}, // X axis
+        {0, 1, 0}, // Y axis (up)
+        {0, 0, 1}  // Z axis
     };
 
-    float localYaw = atan2f(localCamDir.x, localCamDir.z);
-    if (localYaw < 0.0f) localYaw += 2.0f * PI;
+    Vector3 bestCandidate = candidates[1]; // Default to Y up
+    float minDot = fabs(Vector3DotProduct(forward, candidates[1]));
 
-    float localPitchDeg = atan2f(localCamDir.y, sqrtf(localCamDir.x * localCamDir.x + localCamDir.z * localCamDir.z)) * RAD2DEG;
-
-    float normalizedYaw = localYaw * RAD2DEG + 22.5f;
-    if (normalizedYaw >= 360.0f) normalizedYaw -= 360.0f;
-
-    int sector = (int)(normalizedYaw / 45.0f);
-
-    if (localPitchDeg >= 70.0f) {
-        *outChosenIndex = 3;
-        *outRotation = sector * 45.0f + 180.0f;
-        *outMirrored = false;
+    for (int i = 0; i < 3; i++) {
+        float dot = fabs(Vector3DotProduct(forward, candidates[i]));
+        if (dot < minDot) {
+            minDot = dot;
+            bestCandidate = candidates[i];
+        }
     }
-    else if (localPitchDeg <= -70.0f) {
-        *outChosenIndex = 15;
-        *outRotation = (8 - sector) * 45.0f + 180.0f;
-        if (*outRotation >= 360.0f) *outRotation -= 360.0f;
-        *outMirrored = true;
-    }
-    else {
-        int row = (localPitchDeg >= 22.5f) ? 2 : (localPitchDeg >= -22.5f) ? 0 : 1;
-        *outChosenIndex = indices[row][sector];
-        *outRotation = 0.0f;
-        *outMirrored = sector < 5 || sector > 7;
-    }
+
+    return bestCandidate;
 }
+
+// Función auxiliar para rotar un vector alrededor de un eje (mejorada)
+static Vector3 RotateVectorAroundAxis(Vector3 vector, Vector3 axis, float angle) {
+    if (fabs(angle) < 1e-6f) return vector; // No rotation needed
+
+    float cosAngle = cosf(angle);
+    float sinAngle = sinf(angle);
+    float oneMinusCos = 1.0f - cosAngle;
+
+    // Normalizar el eje
+    axis = SafeNormalize(axis);
+
+    // Fórmula de rotación de Rodrigues
+    Vector3 result;
+    result.x = vector.x * (cosAngle + axis.x * axis.x * oneMinusCos) +
+        vector.y * (axis.x * axis.y * oneMinusCos - axis.z * sinAngle) +
+        vector.z * (axis.x * axis.z * oneMinusCos + axis.y * sinAngle);
+
+    result.y = vector.x * (axis.y * axis.x * oneMinusCos + axis.z * sinAngle) +
+        vector.y * (cosAngle + axis.y * axis.y * oneMinusCos) +
+        vector.z * (axis.y * axis.z * oneMinusCos - axis.x * sinAngle);
+
+    result.z = vector.x * (axis.z * axis.x * oneMinusCos - axis.y * sinAngle) +
+        vector.y * (axis.z * axis.y * oneMinusCos + axis.x * sinAngle) +
+        vector.z * (cosAngle + axis.z * axis.z * oneMinusCos);
+
+    return result;
+}
+
+// Función COMPLETAMENTE REESCRITA para calcular orientación de bones
+BoneOrientation CalculateBoneOrientation(const char* boneName, const Person* person, Vector3 bonePosition) {
+    BoneOrientation orientation = { 0 };
+    orientation.position = bonePosition;
+    orientation.valid = false;
+
+    if (!boneName || !person) return orientation;
+
+    // Buscar la configuración de orientación para este bone
+    const char* primaryConn = NULL;
+    const char* secondaryConn = NULL;
+    bool reverseForward = false;
+
+    for (int i = 0; BONE_ORIENTATIONS[i].boneName[0] != '\0'; i++) {
+        if (strcmp(BONE_ORIENTATIONS[i].boneName, boneName) == 0) {
+            primaryConn = BONE_ORIENTATIONS[i].primaryConnection;
+            secondaryConn = BONE_ORIENTATIONS[i].secondaryConnection;
+            reverseForward = BONE_ORIENTATIONS[i].reverseForward;
+            // isLimb y useStable están definidos en la estructura pero no se usan en esta implementación
+            break;
+        }
+    }
+
+    Vector3 forward = { 0, 0, 1 }; // Forward por defecto
+    Vector3 up = { 0, 1, 0 };      // Up por defecto
+    Vector3 right = { 1, 0, 0 };   // Right por defecto
+
+    if (primaryConn && strlen(primaryConn) > 0) {
+        // Obtener posición del bone primario de conexión
+        Vector3 primaryPos = GetBonePositionByName(person, primaryConn);
+        float primaryDistance = Vector3Length(Vector3Subtract(primaryPos, bonePosition));
+
+        if (primaryDistance > 1e-4f) { // Threshold más alto para estabilidad
+            // Calcular vector forward
+            forward = Vector3Subtract(primaryPos, bonePosition);
+            if (reverseForward) {
+                forward = Vector3Scale(forward, -1.0f);
+            }
+            forward = SafeNormalize(forward);
+
+            // Calcular vector up basado en conexión secundaria o usando método estable
+            if (secondaryConn && strlen(secondaryConn) > 0) {
+                Vector3 secondaryPos = GetBonePositionByName(person, secondaryConn);
+                float secondaryDistance = Vector3Length(Vector3Subtract(secondaryPos, bonePosition));
+
+                if (secondaryDistance > 1e-4f) {
+                    Vector3 toSecondary = Vector3Subtract(secondaryPos, bonePosition);
+                    toSecondary = SafeNormalize(toSecondary);
+
+                    // Crear un vector right perpendicular
+                    right = Vector3CrossProduct(forward, toSecondary);
+                    float rightLength = Vector3Length(right);
+
+                    if (rightLength > 1e-4f) {
+                        right = Vector3Scale(right, 1.0f / rightLength);
+                        up = Vector3CrossProduct(right, forward);
+                        up = SafeNormalize(up);
+                    }
+                    else {
+                        // Si los vectores son paralelos, usar método alternativo
+                        Vector3 tempUp = GetStablePerpendicularVector(forward);
+                        right = Vector3CrossProduct(forward, tempUp);
+                        right = SafeNormalize(right);
+                        up = Vector3CrossProduct(right, forward);
+                        up = SafeNormalize(up);
+                    }
+                }
+                else {
+                    // Usar método estable si no hay conexión secundaria válida
+                    Vector3 tempUp = GetStablePerpendicularVector(forward);
+                    right = Vector3CrossProduct(forward, tempUp);
+                    right = SafeNormalize(right);
+                    up = Vector3CrossProduct(right, forward);
+                    up = SafeNormalize(up);
+                }
+            }
+            else {
+                // Sin conexión secundaria, usar método estable
+                Vector3 tempUp = GetStablePerpendicularVector(forward);
+                right = Vector3CrossProduct(forward, tempUp);
+                right = SafeNormalize(right);
+                up = Vector3CrossProduct(right, forward);
+                up = SafeNormalize(up);
+            }
+        }
+        else {
+            // Distancia muy pequeña, usar orientación por defecto
+            forward = (Vector3){ 0, 0, 1 };
+            up = (Vector3){ 0, 1, 0 };
+            right = (Vector3){ 1, 0, 0 };
+        }
+    }
+
+    // Aplicar offsets de ángulos de manera más controlada
+    for (int i = 0; BONE_ANGLE_OFFSETS[i].boneName[0] != '\0'; i++) {
+        if (strcmp(BONE_ANGLE_OFFSETS[i].boneName, boneName) == 0) {
+            // Convertir offsets de grados a radianes
+            float yawRad = BONE_ANGLE_OFFSETS[i].yawOffset * (PI / 180.0f);
+            float pitchRad = BONE_ANGLE_OFFSETS[i].pitchOffset * (PI / 180.0f);
+            float rollRad = BONE_ANGLE_OFFSETS[i].rollOffset * (PI / 180.0f);
+
+            // Aplicar rotaciones de manera más estable
+            if (fabs(yawRad) > 1e-6f) {
+                forward = RotateVectorAroundAxis(forward, up, yawRad);
+                right = RotateVectorAroundAxis(right, up, yawRad);
+            }
+
+            if (fabs(pitchRad) > 1e-6f) {
+                forward = RotateVectorAroundAxis(forward, right, pitchRad);
+                up = RotateVectorAroundAxis(up, right, pitchRad);
+            }
+
+            if (fabs(rollRad) > 1e-6f) {
+                right = RotateVectorAroundAxis(right, forward, rollRad);
+                up = RotateVectorAroundAxis(up, forward, rollRad);
+            }
+            break;
+        }
+    }
+
+    // Renormalizar para asegurar ortogonalidad perfecta
+    forward = SafeNormalize(forward);
+    right = SafeNormalize(right);
+    up = SafeNormalize(up);
+
+    // Re-ortogonalizar usando Gram-Schmidt
+    right = Vector3CrossProduct(forward, up);
+    right = SafeNormalize(right);
+    up = Vector3CrossProduct(right, forward);
+    up = SafeNormalize(up);
+
+    // Asignar vectores finales
+    orientation.forward = forward;
+    orientation.up = up;
+    orientation.right = right;
+
+    // Calcular ángulos finales de manera más estable
+    orientation.yaw = atan2f(forward.x, forward.z);
+    float horizDistance = sqrtf(forward.x * forward.x + forward.z * forward.z);
+    orientation.pitch = atan2f(-forward.y, fmaxf(horizDistance, 1e-6f)); // Evitar división por cero
+
+    // Roll más estable
+    Vector3 worldUp = { 0, 1, 0 };
+    Vector3 projectedRight = Vector3Subtract(right, Vector3Scale(forward, Vector3DotProduct(right, forward)));
+    projectedRight = SafeNormalize(projectedRight);
+    orientation.roll = atan2f(Vector3DotProduct(projectedRight, worldUp),
+        Vector3DotProduct(projectedRight, Vector3CrossProduct(forward, worldUp)));
+
+    orientation.valid = true;
+    return orientation;
+}
+
+
 
 static void DrawQuadTextured3D(Texture2D tex, Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3,
     float u0, float v0t, float u1, float v1t) {
@@ -146,43 +420,7 @@ static bool ShouldFlipBoneTexture(const char* boneName) {
     return false;
 }
 
-void CalculateBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex,
-    float* outRotation, bool* outMirrored, const char* boneName) {
-    static const int indices[3][8] = {
-        {0,4,5,6,7,6,5,4},{2,12,13,14,15,14,13,12},{1,8,9,10,11,10,9,8} };
 
-    Vector3 camDir = Vector3Subtract(camera.position, bonePos);
-    float yaw = atan2f(camDir.x, camDir.z);
-    if (yaw < 0.0f) yaw += 2.0f * PI;
-
-    float pitchDeg = atan2f(camDir.y, sqrtf(camDir.x * camDir.x + camDir.z * camDir.z)) * RAD2DEG;
-
-    float normalizedYaw = yaw * RAD2DEG + 22.5f;
-    if (normalizedYaw >= 360.0f) normalizedYaw -= 360.0f;
-
-    int sector = (int)(normalizedYaw / 45.0f);
-
-    bool needsVFlip = boneName && ShouldFlipBoneTexture(boneName);
-
-    if (pitchDeg >= 70.0f) {
-        *outChosenIndex = 3;
-        *outRotation = sector * 45.0f + 180.0f;
-        *outMirrored = false;
-    }
-    else if (pitchDeg <= -70.0f) {
-        *outChosenIndex = 15;
-        *outRotation = (8 - sector) * 45.0f + 180.0f;
-        if (*outRotation >= 360.0f) *outRotation -= 360.0f;
-        *outMirrored = true;
-    }
-    else {
-        if (needsVFlip) sector = (8 - sector) % 8;
-        int row = (pitchDeg >= 22.5f) ? 2 : (pitchDeg >= -22.5f) ? 0 : 1;
-        *outChosenIndex = indices[row][sector];
-        *outRotation = 0.0f;
-        *outMirrored = sector < 5 || sector > 7;
-    }
-}
 
 void DrawBonetileCustom(Texture2D tex, Camera camera, Rectangle src, Vector3 pos, Vector2 size,
     float rotationDeg, bool mirrored, const char* boneName) {
@@ -270,4 +508,175 @@ BoneRenderData* FindRenderBoneByName(BoneRenderData* bones, int count, const cha
         }
     }
     return NULL;
+}
+
+// Nueva función para renderizar un bone con orientación completa
+void DrawBoneWithOrientation(Texture2D texture, Camera camera, const BoneRenderData* boneData, int physCols, int physRows) {
+    if (!boneData || !boneData->valid || !boneData->visible) return;
+
+    int chosenIndex;
+    float rotation;
+    bool mirrored;
+
+    if (boneData->orientation.valid) {
+        CalculateEnhancedBoneRenderData(boneData, camera, &chosenIndex, &rotation, &mirrored);
+    }
+    else {
+        CalculateBoneRenderData(boneData->position, camera, &chosenIndex, &rotation, &mirrored, boneData->boneName);
+    }
+
+    int logicalCol = chosenIndex % ATLAS_COLS;
+    int logicalRow = chosenIndex / ATLAS_COLS;
+
+    bool finalMirror;
+    Rectangle src = SrcFromLogical(texture, logicalCol, logicalRow, physCols, physRows, mirrored, &finalMirror);
+    Vector2 worldSize = { boneData->size, boneData->size };
+
+    DrawBonetileCustom(texture, camera, src, boneData->position, worldSize, rotation, finalMirror, boneData->boneName);
+}
+
+void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, Camera camera,
+    int* outChosenIndex, float* outRotation, bool* outMirrored) {
+
+    if (!boneData->orientation.valid) {
+        CalculateBoneRenderData(boneData->position, camera, outChosenIndex, outRotation, outMirrored, boneData->boneName);
+        return;
+    }
+
+    static const int indices[3][8] = {
+        {0,4,5,6,7,6,5,4},{2,12,13,14,15,14,13,12},{1,8,9,10,11,10,9,8}
+    };
+
+    // Calcular dirección INVERTIDA de la cámara en espacio local del bone
+    Vector3 camDir = Vector3Subtract(boneData->position, camera.position); // INVERTIDO: bone - camera
+    camDir = SafeNormalize(camDir);
+
+    // Transformar a coordenadas locales del bone
+    Vector3 localCamDir = {
+        Vector3DotProduct(camDir, boneData->orientation.right),
+        Vector3DotProduct(camDir, boneData->orientation.up),
+        Vector3DotProduct(camDir, boneData->orientation.forward)
+    };
+
+    // Calcular ángulos en el espacio local
+    float localYaw = atan2f(localCamDir.x, localCamDir.z);
+    if (localYaw < 0.0f) localYaw += 2.0f * PI;
+
+    float localPitchDeg = atan2f(localCamDir.y,
+        sqrtf(localCamDir.x * localCamDir.x + localCamDir.z * localCamDir.z)) * RAD2DEG;
+
+    // Normalizar yaw para el sistema de sectores (INVERTIDO)
+    float normalizedYaw = localYaw * RAD2DEG + 22.5f;
+    if (normalizedYaw >= 360.0f) normalizedYaw -= 360.0f;
+
+    int sector = (int)(normalizedYaw / 45.0f) % 8;
+    sector = (8 - sector) % 8; // INVERTIR sector
+
+    // Seleccionar sprite basado en el ángulo de pitch
+    if (localPitchDeg >= 70.0f) {
+        *outChosenIndex = 3;  // Vista desde arriba
+        *outRotation = sector * 45.0f;
+        *outMirrored = false;
+    }
+    else if (localPitchDeg <= -70.0f) {
+        *outChosenIndex = 15; // Vista desde abajo
+        *outRotation = sector * 45.0f; // Ya no necesitamos invertir aquí
+        *outMirrored = true;
+    }
+    else {
+        // Vista lateral/frontal
+        int row = (localPitchDeg >= 22.5f) ? 2 : (localPitchDeg >= -22.5f) ? 0 : 1;
+        *outChosenIndex = indices[row][sector];
+        *outRotation = 0.0f;
+        *outMirrored = (sector >= 1 && sector <= 4);
+    }
+}
+
+void CalculateBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex,
+    float* outRotation, bool* outMirrored, const char* boneName) {
+    static const int indices[3][8] = {
+        {0,4,5,6,7,6,5,4},{2,12,13,14,15,14,13,12},{1,8,9,10,11,10,9,8}
+    };
+
+    // Dirección de la cámara (NORMAL)
+    Vector3 camDir = Vector3Subtract(camera.position, bonePos);
+    camDir = SafeNormalize(camDir);
+
+    // Buscar offsets específicos para este bone
+    float yawOffsetRad = 0.0f;
+    float pitchOffsetRad = 0.0f;
+
+    if (boneName) {
+        for (int i = 0; BONE_ANGLE_OFFSETS[i].boneName[0] != '\0'; i++) {
+            if (strcmp(BONE_ANGLE_OFFSETS[i].boneName, boneName) == 0) {
+                yawOffsetRad = BONE_ANGLE_OFFSETS[i].yawOffset * (PI / 180.0f);
+                pitchOffsetRad = BONE_ANGLE_OFFSETS[i].pitchOffset * (PI / 180.0f);
+                break;
+            }
+        }
+    }
+
+    // Aplicar offset de yaw
+    if (fabs(yawOffsetRad) > 1e-6f) {
+        float cosYaw = cosf(yawOffsetRad);
+        float sinYaw = sinf(yawOffsetRad);
+        float newX = camDir.x * cosYaw - camDir.z * sinYaw;
+        float newZ = camDir.x * sinYaw + camDir.z * cosYaw;
+        camDir.x = newX;
+        camDir.z = newZ;
+    }
+
+    // Aplicar offset de pitch
+    if (fabs(pitchOffsetRad) > 1e-6f) {
+        float horizDist = sqrtf(camDir.x * camDir.x + camDir.z * camDir.z);
+        if (horizDist > 1e-6f) {
+            float cosPitch = cosf(pitchOffsetRad);
+            float sinPitch = sinf(pitchOffsetRad);
+            float newY = camDir.y * cosPitch - horizDist * sinPitch;
+            float newHorizDist = camDir.y * sinPitch + horizDist * cosPitch;
+
+            float scale = newHorizDist / horizDist;
+            camDir.x *= scale;
+            camDir.z *= scale;
+            camDir.y = newY;
+        }
+    }
+
+    // SWAP de coordenadas X y Z para intercambiar los giros de cámara
+    float tempX = camDir.x;
+    camDir.x = camDir.z;  // X toma el valor de Z
+    camDir.z = tempX;     // Z toma el valor de X
+    // Y se mantiene igual (subir/bajar no se afecta)
+
+    // Recalcular ángulos con el swap aplicado
+    float yaw = atan2f(camDir.x, camDir.z);
+    if (yaw < 0.0f) yaw += 2.0f * PI;
+
+    float pitchDeg = atan2f(camDir.y, sqrtf(camDir.x * camDir.x + camDir.z * camDir.z)) * RAD2DEG;
+
+    float normalizedYaw = yaw * RAD2DEG + 22.5f;
+    if (normalizedYaw >= 360.0f) normalizedYaw -= 360.0f;
+
+    int sector = (int)(normalizedYaw / 45.0f) % 8;
+
+    bool needsVFlip = boneName && ShouldFlipBoneTexture(boneName);
+
+    if (pitchDeg >= 70.0f) {
+        *outChosenIndex = 3;
+        *outRotation = sector * 45.0f + 180.0f;
+        *outMirrored = false;
+    }
+    else if (pitchDeg <= -70.0f) {
+        *outChosenIndex = 15;
+        *outRotation = (8 - sector) * 45.0f + 180.0f;
+        if (*outRotation >= 360.0f) *outRotation -= 360.0f;
+        *outMirrored = true;
+    }
+    else {
+        if (needsVFlip) sector = (8 - sector) % 8;
+        int row = (pitchDeg >= 22.5f) ? 2 : (pitchDeg >= -22.5f) ? 0 : 1;
+        *outChosenIndex = indices[row][sector];
+        *outRotation = 0.0f;
+        *outMirrored = (sector >= 1 && sector <= 4);
+    }
 }

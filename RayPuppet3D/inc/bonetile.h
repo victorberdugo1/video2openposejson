@@ -75,4 +75,6 @@ BoneRenderData* FindRenderBoneByName(BoneRenderData* bones, int count, const cha
 void CalculateDirectionalBoneRenderData(Vector3 bonePos, Vector3 neighborPos, bool hasNeighbor,
     Camera camera, const char* boneName, int* outChosenIndex, float* outRotation, bool* outMirrored);
 
+BoneOrientation CalculateBoneOrientation(const char* boneName, const Person* person, Vector3 bonePosition);
+
 #endif /* BONETILE_H */

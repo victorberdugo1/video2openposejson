@@ -573,12 +573,41 @@ void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, Bo
             renderBone->boneName[MAX_BONE_NAME_LENGTH - 1] = '\0';
             strncpy(renderBone->personId, person->personId, 15);
             renderBone->personId[15] = '\0';
-
+            EnrichBoneRenderDataWithOrientation(renderBone, person);
             (*renderBonesCount)++;
         }
     }
 
     if (*renderBonesCount > 1) {
         qsort(*renderBones, *renderBonesCount, sizeof(BoneRenderData), CompareBonesByDistance);
+    }
+}
+// Nueva función para enriquecer BoneRenderData con orientación
+void EnrichBoneRenderDataWithOrientation(BoneRenderData* renderBone, const Person* person) {
+    if (!renderBone || !person) return;
+
+    // Calcular orientación basada en conexiones
+    BoneOrientation orientation = CalculateBoneOrientation(renderBone->boneName, person, renderBone->position);
+
+    if (orientation.valid) {
+        renderBone->orientation.position = orientation.position;
+        renderBone->orientation.forward = orientation.forward;
+        renderBone->orientation.up = orientation.up;
+        renderBone->orientation.right = orientation.right;
+        renderBone->orientation.yaw = orientation.yaw;
+        renderBone->orientation.pitch = orientation.pitch;
+        renderBone->orientation.roll = orientation.roll;
+        renderBone->orientation.valid = true;
+    }
+    else {
+        // Orientación por defecto si no se puede calcular
+        renderBone->orientation.position = renderBone->position;
+        renderBone->orientation.forward = (Vector3){ 0, 0, 1 };
+        renderBone->orientation.up = (Vector3){ 0, 1, 0 };
+        renderBone->orientation.right = (Vector3){ 1, 0, 0 };
+        renderBone->orientation.yaw = 0.0f;
+        renderBone->orientation.pitch = 0.0f;
+        renderBone->orientation.roll = 0.0f;
+        renderBone->orientation.valid = true;
     }
 }
