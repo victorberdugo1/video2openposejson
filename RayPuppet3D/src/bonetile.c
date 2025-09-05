@@ -25,10 +25,9 @@ static const struct {
     {"", {"", "", ""}, {0.0f, 0.0f, 0.0f}}
 };
 
-// Estructura mejorada para definir orientaciones de bones
 static const struct {
     const char* boneName;
-    const char* primaryConnection;    // Bone hacia el que apunta el bone (forward)
+    const char* primaryConnection;
     const char* secondaryConnection; // Bone para calcular el up vector
     bool reverseForward;             // Si hay que invertir la dirección forward
     bool isLimb;                     // Si es una extremidad (brazo/pierna)
