@@ -11,7 +11,7 @@ static const struct {
 } BONE_CONNECTIONS[] = {
     {"LShoulder", {"LShoulder", "LElbow", ""}, {1.0f, 0.8f, 0.0f}},
     {"LElbow", {"LElbow", "LWrist", ""}, {1.0f, 0.8f, 0.0f}},
-    {"LWrist", {"LElbow", "LWrist", ""}, {1.0f, 0.0f, 0.0f}},
+    {"LWrist", {"LWrist", "LElbow", ""}, {1.0f, 0.0f, 0.0f}},
     {"RShoulder", {"RShoulder", "RElbow", ""}, {1.0f, 0.8f, 0.0f}},
     {"RElbow", {"RElbow", "RWrist", ""}, {1.0f, 0.8f, 0.0f}},
     {"RWrist", {"RElbow", "RWrist", ""}, {1.0f, 0.0f, 0.0f}},
@@ -35,21 +35,21 @@ static const struct {
     bool useStableOrientation;       // Usar orientación estable para evitar oscilaciones
 } BONE_ORIENTATIONS[] = {
     // Brazos 
-    {"LShoulder", "LElbow", "Neck", true, true, true},
-    {"LElbow", "Neck", "LWrist", false, true, true},
-    {"LWrist", "LElbow", "", true, true, true},
+    {"LShoulder", "LElbow", "Neck", false, true, true},
+    {"LElbow", "Neck", "LWrist", true, true, true},
+    {"LWrist", "LElbow", "", true, false, true},
 
     {"RShoulder", "RElbow", "Neck", false, true, true},
     {"RElbow", "Neck", "RWrist", true, true, true},
-    {"RWrist", "RElbow", "", true, true, true},
+    {"RWrist", "RElbow", "", true, false, true},
 
     // Piernas 
     {"LHip", "LKnee", "Hip", true, true, true},
-    {"LKnee", "LAnkle", "LHip", false, true, true},
+    {"LKnee", "LAnkle", "LHip", true, true, true},
     {"LAnkle", "LKnee", "", true, false, true},
 
     {"RHip", "RKnee", "Hip", false, true, true},
-    {"RKnee", "RAnkle", "RHip", false, false, true},
+    {"RKnee", "RAnkle", "RHip", true, true, true},
     {"RAnkle", "RKnee", "", true, false, true},
 
     // Cuello 
@@ -66,20 +66,23 @@ static const struct {
     float rollOffset;   // ROTACIÓN DE GIRO (grados)
 } BONE_ANGLE_OFFSETS[] = {
     // BRAZOS
-    {"LShoulder", 90.0f, 0.0f, -70.0f},
-    {"LElbow", 90.0f, 0.0f, -100.0f},
+    {"LShoulder", 90.0f, 180.0f, -70.0f},
+    {"LElbow", 90.0f, 180.0f, -70.0f},
     {"LWrist", 90.0f, 0.0f, 70.0f}, 
-    {"RShoulder", 90.0f, 0.0f, 70.0f},
-    {"RElbow", 90.0f, 0.0f, 100.0f},
-    {"RWrist", 100.0f, 0.0f, -70.0f},
+
+    {"RShoulder", -90.0f, 180.0f, 70.0f},
+    {"RElbow", -90.0f, 180.0f, 70.0f},
+    {"RWrist", 90.0f, 0.0f, 70.0f},
 
     // PIERNAS
-    {"LHip", 90.0f, -45.0f, -110.0f},
-    {"LKnee", 90.0f, 0.0f, 90.0f},  
-    {"LAnkle", 90.0f, -45.0f, 110.0f},
-    {"RHip", 45.0f, -90.0f, 110.0f},
-    {"RKnee", 90.0f, 0.0f, -90.0f},
+    {"LHip", 90.0f, -45.0f, 90.0f},
+    {"LKnee", 90.0f, 135.0f, 90.0f},  
+    {"LAnkle",  90.0f, -90.0f, 110.0f},
+
+    {"RHip", -90.0f, -90.0f, 90.0f},
+    {"RKnee", 90.0f, 135.0f, 90.0f},
     {"RAnkle", 90.0f, 0.0f, 110.0f},
+    
     {"Neck", -90.0f, 180.0f, -90.0f},
     {"", 0.0f, 0.0f, 0.0f}
 };
@@ -523,8 +526,6 @@ void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, Camera came
     Vector3 camDir = Vector3Subtract(boneData->position, camera.position);
     camDir = SafeNormalize(camDir);
 
-    // CASO ESPECIAL PARA EL CUELLO: usar dirección normal en lugar de invertida
-
     // Transformar a coordenadas locales del bone
     Vector3 localCamDir = {
         Vector3DotProduct(camDir, boneData->orientation.right),
@@ -539,12 +540,28 @@ void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, Camera came
     float localPitchDeg = atan2f(localCamDir.y,
         sqrtf(localCamDir.x * localCamDir.x + localCamDir.z * localCamDir.z)) * RAD2DEG;
 
+    // INVERSIÓN ESPECÍFICA DE PITCH para ciertos bones
+    bool shouldInvertPitch = false;
+    if (boneData->boneName[0] != '\0') {
+        // Bones que necesitan inversión de pitch: todos EXCEPTO cuello, manos y pies
+        if (strcmp(boneData->boneName, "Neck") != 0 &&
+            strcmp(boneData->boneName, "LWrist") != 0 &&
+            strcmp(boneData->boneName, "RWrist") != 0 &&
+            strcmp(boneData->boneName, "LAnkle") != 0 &&
+            strcmp(boneData->boneName, "RAnkle") != 0) {
+            shouldInvertPitch = true;
+        }
+    }
+
+    if (shouldInvertPitch) {
+        localPitchDeg = -localPitchDeg;  // Invertir solo el pitch
+    }
+
     // Normalizar yaw para el sistema de sectores
     float normalizedYaw = localYaw * RAD2DEG + 22.5f;
     if (normalizedYaw >= 360.0f) normalizedYaw -= 360.0f;
 
     int sector = (int)(normalizedYaw / 45.0f) % 8;
-
 
     // Seleccionar sprite basado en el ángulo de pitch
     if (localPitchDeg >= 70.0f) {
