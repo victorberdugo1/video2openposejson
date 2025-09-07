@@ -42,7 +42,7 @@ Vector3 CalculateHeadPosition(const Person* person) {
             hasNose ? neckPos.z * 0.8f + nosePos.z * 0.2f : neckPos.z * 0.9f + eyeCenter.z * 0.1f
         };
 
-        headPos.z += 0.01f; // valor para más/menos adelanto
+        //headPos.z += 0.01f; // valor para más/menos adelanto
 
         return headPos;
     }

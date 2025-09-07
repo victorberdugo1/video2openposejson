@@ -319,14 +319,16 @@ static void App_UpdateCamera(AppState* app, float dt) {
             app->orbitPitch = Clamp(app->orbitPitch - mouseDelta.y * FPS_SENSITIVITY, FPS_MIN_PITCH, FPS_MAX_PITCH);
         }
 
-        // Precalcular vectores de dirección
+        // Precalcular vectores de dirección (ARREGLADO)
         float cosP = cosf(app->orbitPitch);
         float sinP = sinf(app->orbitPitch);
         float cosY = cosf(app->orbitYaw);
         float sinY = sinf(app->orbitYaw);
 
         Vector3 forward = { sinY * cosP, sinP, cosY * cosP };
-        Vector3 right = { sinY - PI * 0.5f, 0, cosY - PI * 0.5f };
+        // ARREGLO: Cálculo correcto del vector right para movimiento lateral
+        Vector3 right = { cosY, 0, -sinY };  // Perpendicular al forward en el plano XZ
+
         forward = Vector3Normalize(forward);
         right = Vector3Normalize(right);
 

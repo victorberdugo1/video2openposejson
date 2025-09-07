@@ -11,8 +11,8 @@ REye tex/texC.png 0 0.20
 LEar tex/texC.png 0 0.15
 REar tex/texC.png 0 0.15
 Neck tex/Neck.png 1 0.085
-LShoulder tex/texA.png 1 0.1
-RShoulder tex/texA.png 1 0.1
+LShoulder tex/Arm.png 1 0.11
+RShoulder tex/Arm.png 1 0.11
 Chest tex/Chest.png 1 0.15
 LElbow tex/texB.png 1 0.1
 RElbow tex/texB.png 1 0.1

@@ -38,7 +38,7 @@ static const struct {
     {"LElbow", "Neck", "LWrist", true, true, true},
     {"LWrist", "LElbow", "", true, false, true},
 
-    {"RShoulder", "RElbow", "Neck", false, true, true},
+    {"RShoulder", "RElbow", "Neck", true, true, true},
     {"RElbow", "Neck", "RWrist", true, true, true},
     {"RWrist", "RElbow", "", true, false, true},
 
@@ -69,7 +69,7 @@ static const struct {
     {"LElbow", 90.0f, 180.0f, -70.0f},
     {"LWrist", 90.0f, 0.0f, 70.0f}, 
 
-    {"RShoulder", -90.0f, 180.0f, 70.0f},
+    {"RShoulder", -90.0f, 180.0f, -70.0f},
     {"RElbow", -90.0f, 180.0f, 70.0f},
     {"RWrist", 90.0f, 0.0f, 70.0f},
 
