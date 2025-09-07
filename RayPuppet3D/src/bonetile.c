@@ -65,7 +65,7 @@ static const struct {
     float rollOffset;   // ROTACIÓN DE GIRO (grados)
 } BONE_ANGLE_OFFSETS[] = {
     // BRAZOS
-    {"LShoulder", 90.0f, 180.0f, -70.0f},
+    /*{"LShoulder", 90.0f, 180.0f, -70.0f},
     {"LElbow", 90.0f, 180.0f, -70.0f},
     {"LWrist", 90.0f, 0.0f, 70.0f}, 
 
@@ -83,9 +83,48 @@ static const struct {
     {"RAnkle", 90.0f, 0.0f, 110.0f},
     
     {"Neck", -90.0f, 180.0f, -90.0f},
+    {"", 0.0f, 0.0f, 0.0f}*/
+    {"LShoulder", 85.0f, 175.0f, -75.0f},   // -5°, -5°, -5°
+    {"LElbow", 85.0f, 175.0f, -65.0f},      // -5°, -5°, +5°
+    {"LWrist", 95.0f, 5.0f, 75.0f},         // +5°, +5°, +5°
+
+    {"RShoulder", -85.0f, 175.0f, -75.0f},  // +5°, -5°, -5°
+    {"RElbow", -85.0f, 175.0f, 75.0f},      // +5°, -5°, +5°
+    {"RWrist", 95.0f, 5.0f, 75.0f},         // +5°, +5°, +5°
+
+    // PIERNAS - Ajustes menores
+    {"LHip", 85.0f, -40.0f, 85.0f},         // -5°, +5°, -5°
+    {"LKnee", 85.0f, 130.0f, 85.0f},        // -5°, -5°, -5°
+    {"LAnkle", 85.0f, -85.0f, 105.0f},      // -5°, +5°, -5°
+
+    {"RHip", -85.0f, -85.0f, 85.0f},        // +5°, +5°, -5°
+    {"RKnee", 85.0f, 130.0f, 85.0f},        // -5°, -5°, -5°
+    {"RAnkle", 85.0f, -5.0f, 105.0f},       // -5°, -5°, -5°
+    
+    {"Neck", -85.0f, 175.0f, -85.0f},       // +5°, -5°, +5°
     {"", 0.0f, 0.0f, 0.0f}
 };
+/*
+BONE_ANGLE_OFFSETS - Corrección de orientación para texturas 2D de huesos
 
+Problema: Las texturas circulares de huesos se ven mal orientadas sin corrección
+Solución: 3 ángulos por hueso (Yaw, Pitch, Roll)
+
+YAW (±85°): Rotación horizontal - hacia dónde "apunta" el hueso
+- Izquierdo: +85° (gira izquierda), Derecho: -85° (gira derecha)
+
+PITCH: Rotación vertical - hacia dónde "mira" el hueso  
+- 175°: huesos que miran "hacia abajo" (hombros, codos)
+- 5°: huesos que miran "hacia adelante" (muñecas)
+- 130°: valor intermedio (piernas)
+
+ROLL (±65°-110°): Giro para simular curvatura 3D natural
+
+Ejemplo: LShoulder (85°, 175°, -75°)
+= Gira izquierda + mira hacia abajo + inclinación curva
+
+Resultado: Texturas 2D que se ven como huesos 3D reales desde cualquier ángulo
+*/
 bool GetBoneConnectionsWithPriority(const char* boneName, char connections[3][32], float priorities[3]) {
     for (int i = 0; BONE_CONNECTIONS[i].boneName[0]; i++) {
         if (strcmp(BONE_CONNECTIONS[i].boneName, boneName) == 0) {
