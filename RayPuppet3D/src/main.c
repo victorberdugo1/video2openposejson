@@ -12,7 +12,7 @@
 
 #define BASE_WIDTH 1920
 #define BASE_HEIGHT 1080
-#define MAX_TEXTURES 10
+#define MAX_TEXTURES 13
 #define MAX_RENDER_ITEMS 512
 
 // Constantes optimizadas

@@ -36,16 +36,16 @@ static const struct {
     // Brazos 
     {"LShoulder", "LElbow", "Neck", false, true, true},
     {"LElbow", "Neck", "LWrist", true, true, true},
-    {"LWrist", "LElbow", "", true, false, true},
+    {"LWrist", "LElbow", "", false, false, true},
 
     {"RShoulder", "RElbow", "Neck", true, true, true},
     {"RElbow", "Neck", "RWrist", true, true, true},
-    {"RWrist", "RElbow", "", true, false, true},
+    {"RWrist", "RElbow", "", false, false, true},
 
     // Piernas 
     {"LHip", "LKnee", "Hip", true, true, true},
     {"LKnee", "LAnkle", "LHip", true, true, true},
-    {"LAnkle", "LKnee", "", true, false, true},
+    {"LAnkle", "LKnee", "", false, false, true},
 
     {"RHip", "RKnee", "Hip", false, true, true},
     {"RKnee", "RAnkle", "RHip", true, true, true},
@@ -86,16 +86,16 @@ static const struct {
     {"", 0.0f, 0.0f, 0.0f}*/
     {"LShoulder", 85.0f, 175.0f, -75.0f},   // -5°, -5°, -5°
     {"LElbow", 85.0f, 175.0f, -65.0f},      // -5°, -5°, +5°
-    {"LWrist", 95.0f, 5.0f, 75.0f},         // +5°, +5°, +5°
+    {"LWrist", 95.0f, 175.0f, 75.0f},         // +5°, +5°, +5°
 
     {"RShoulder", -85.0f, 175.0f, -75.0f},  // +5°, -5°, -5°
     {"RElbow", -85.0f, 175.0f, 75.0f},      // +5°, -5°, +5°
-    {"RWrist", 95.0f, 5.0f, 75.0f},         // +5°, +5°, +5°
+    {"RWrist", 95.0f, 175.0f, 105.0f},         // +5°, +5°, +5°
 
     // PIERNAS - Ajustes menores
     {"LHip", 85.0f, -40.0f, 85.0f},         // -5°, +5°, -5°
     {"LKnee", 85.0f, 130.0f, 85.0f},        // -5°, -5°, -5°
-    {"LAnkle", 85.0f, -85.0f, 105.0f},      // -5°, +5°, -5°
+    {"LAnkle", -85.0f, -85.0f, 105.0f},      // -5°, +5°, -5°
 
     {"RHip", -85.0f, -85.0f, 85.0f},        // +5°, +5°, -5°
     {"RKnee", 85.0f, 130.0f, 85.0f},        // -5°, -5°, -5°
@@ -583,8 +583,6 @@ void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, Camera came
     if (boneData->boneName[0] != '\0') {
         // Bones que necesitan inversión de pitch: todos EXCEPTO cuello, manos y pies
         if (strcmp(boneData->boneName, "Neck") != 0 &&
-            strcmp(boneData->boneName, "LWrist") != 0 &&
-            strcmp(boneData->boneName, "RWrist") != 0 &&
             strcmp(boneData->boneName, "LAnkle") != 0 &&
             strcmp(boneData->boneName, "RAnkle") != 0) {
             shouldInvertPitch = true;
