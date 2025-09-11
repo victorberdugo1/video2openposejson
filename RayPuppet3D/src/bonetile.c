@@ -1,3 +1,4 @@
+
 #include "bonetile.h"
 #include "bones3d.h" 
 #include "head_billboard.h"
@@ -67,7 +68,7 @@ static const struct {
     // BRAZOS
     /*{"LShoulder", 90.0f, 180.0f, -70.0f},
     {"LElbow", 90.0f, 180.0f, -70.0f},
-    {"LWrist", 90.0f, 0.0f, 70.0f}, 
+    {"LWrist", 90.0f, 0.0f, 70.0f},
 
     {"RShoulder", -90.0f, 180.0f, -70.0f},
     {"RElbow", -90.0f, 180.0f, 70.0f},
@@ -75,22 +76,22 @@ static const struct {
 
     // PIERNAS
     {"LHip", 90.0f, -45.0f, 90.0f},
-    {"LKnee", 90.0f, 135.0f, 90.0f},  
+    {"LKnee", 90.0f, 135.0f, 90.0f},
     {"LAnkle",  90.0f, -90.0f, 110.0f},
 
     {"RHip", -90.0f, -90.0f, 90.0f},
     {"RKnee", 90.0f, 135.0f, 90.0f},
     {"RAnkle", 90.0f, 0.0f, 110.0f},
-    
+
     {"Neck", -90.0f, 180.0f, -90.0f},
     {"", 0.0f, 0.0f, 0.0f}*/
     {"LShoulder", 85.0f, 175.0f, -75.0f},   // -5°, -5°, -5°
     {"LElbow", 85.0f, 175.0f, -65.0f},      // -5°, -5°, +5°
-    {"LWrist", 95.0f, 175.0f, 75.0f},         // +5°, +5°, +5°
+    {"LWrist", 90.0f, 180.0f, 90.0f},         // +5°, +5°, +5°
 
     {"RShoulder", -85.0f, 175.0f, -75.0f},  // +5°, -5°, -5°
     {"RElbow", -85.0f, 175.0f, 75.0f},      // +5°, -5°, +5°
-    {"RWrist", 95.0f, 175.0f, 105.0f},         // +5°, +5°, +5°
+    {"RWrist", 90.0f, 180.0f, 90.0f},         // +5°, +5°, +5°
 
     // PIERNAS - Ajustes menores
     {"LHip", 85.0f, -40.0f, 85.0f},         // -5°, +5°, -5°
@@ -100,10 +101,11 @@ static const struct {
     {"RHip", -85.0f, -85.0f, 85.0f},        // +5°, +5°, -5°
     {"RKnee", 85.0f, 130.0f, 85.0f},        // -5°, -5°, -5°
     {"RAnkle", 85.0f, -5.0f, 105.0f},       // -5°, -5°, -5°
-    
+
     {"Neck", -85.0f, 175.0f, -85.0f},       // +5°, -5°, +5°
     {"", 0.0f, 0.0f, 0.0f}
 };
+
 /*
 BONE_ANGLE_OFFSETS - Corrección de orientación para texturas 2D de huesos
 
@@ -113,7 +115,7 @@ Solución: 3 ángulos por hueso (Yaw, Pitch, Roll)
 YAW (±85°): Rotación horizontal - hacia dónde "apunta" el hueso
 - Izquierdo: +85° (gira izquierda), Derecho: -85° (gira derecha)
 
-PITCH: Rotación vertical - hacia dónde "mira" el hueso  
+PITCH: Rotación vertical - hacia dónde "mira" el hueso
 - 175°: huesos que miran "hacia abajo" (hombros, codos)
 - 5°: huesos que miran "hacia adelante" (muñecas)
 - 130°: valor intermedio (piernas)
@@ -218,7 +220,7 @@ static Vector3 RotateVectorAroundAxis(Vector3 vector, Vector3 axis, float angle)
     return result;
 }
 
-// Función COMPLETAMENTE REESCRITA para calcular orientación de bones
+// Nueva función para calcular orientación de bones
 BoneOrientation CalculateBoneOrientation(const char* boneName, const Person* person, Vector3 bonePosition) {
     BoneOrientation orientation = { 0 };
     orientation.position = bonePosition;
@@ -387,21 +389,33 @@ static void DrawQuadTextured3D(Texture2D tex, Vector3 v0, Vector3 v1, Vector3 v2
 
 Rectangle SrcFromLogical(Texture2D tex, int logicalCol, int logicalRow, int physCols, int physRows,
     bool mirrored, bool* outMirrored) {
-    logicalCol = (logicalCol < 0) ? 0 : (logicalCol >= ATLAS_COLS) ? ATLAS_COLS - 1 : logicalCol;
-    logicalRow = (logicalRow < 0) ? 0 : (logicalRow >= ATLAS_ROWS) ? ATLAS_ROWS - 1 : logicalRow;
+    // Mejor manejo: physCols/physRows representan el número TOTAL de celdas
+    // en la textura física que queremos usar (por ejemplo 5x5 para las manos).
+    // logicalCol/logicalRow se interpretan en ese mismo espacio cuando physCols/physRows
+    // se especifican. Esto evita division entera que daba 0 cuando physCols < ATLAS_COLS.
 
-    float physCellW = (float)tex.width / physCols;
-    float physCellH = (float)tex.height / physRows;
+    // Clamp lógico
+    if (logicalCol < 0) logicalCol = 0;
+    if (logicalRow < 0) logicalRow = 0;
 
-    int blockW = physCols / ATLAS_COLS;
-    int blockH = physRows / ATLAS_ROWS;
+    // Evitar división por cero
+    if (physCols <= 0) physCols = ATLAS_COLS;
+    if (physRows <= 0) physRows = ATLAS_ROWS;
+
+    // Usar physCols/physRows directamente como la grilla física
+    float cellW = (float)tex.width / (float)physCols;
+    float cellH = (float)tex.height / (float)physRows;
+
+    // Si logicalCol/Row exceden, clamped al rango
+    if (logicalCol >= physCols) logicalCol = physCols - 1;
+    if (logicalRow >= physRows) logicalRow = physRows - 1;
 
     if (outMirrored) *outMirrored = mirrored;
     return (Rectangle) {
-        logicalCol* blockW* physCellW,
-            logicalRow* blockH* physCellH,
-            physCellW* blockW,
-            physCellH* blockH
+        logicalCol* cellW,
+            logicalRow* cellH,
+            cellW,
+            cellH
     };
 }
 
@@ -433,6 +447,14 @@ static bool ShouldFlipBoneTexture(const char* boneName) {
     return false;
 }
 
+// ------------------------------------------------------------------
+// NUEVO: helper para detectar sólo huesos de la muñeca (wrist)
+// Si quieres incluir 'LHand'/'RHand' u otros nombres, añádelos aquí.
+static bool IsWristBone(const char* boneName) {
+    if (!boneName) return false;
+    return (strcmp(boneName, "LWrist") == 0) || (strcmp(boneName, "RWrist") == 0);
+}
+// ------------------------------------------------------------------
 
 
 void DrawBonetileCustom(Texture2D tex, Camera camera, Rectangle src, Vector3 pos, Vector2 size,
@@ -523,8 +545,7 @@ BoneRenderData* FindRenderBoneByName(BoneRenderData* bones, int count, const cha
     return NULL;
 }
 
-// Nueva función para renderizar un bone con orientación completa
-void DrawBoneWithOrientation(Texture2D texture, Camera camera, const BoneRenderData* boneData, int physCols, int physRows) {
+void DrawBoneWithOrientation(Texture2D texture, Camera camera, const BoneRenderData* boneData) {
     if (!boneData || !boneData->valid || !boneData->visible) return;
 
     int chosenIndex;
@@ -538,15 +559,31 @@ void DrawBoneWithOrientation(Texture2D texture, Camera camera, const BoneRenderD
         CalculateBoneRenderData(boneData->position, camera, &chosenIndex, &rotation, &mirrored, boneData->boneName);
     }
 
-    int logicalCol = chosenIndex % ATLAS_COLS;
-    int logicalRow = chosenIndex / ATLAS_COLS;
+    // --- LÓGICA FORZADA: por defecto 4x4 para TODO excepto muñecas (LWrist/RWrist) que usan 5x5 ---
+    bool isWrist = IsWristBone(boneData->boneName);
+    const int DEFAULT_NON_WRIST_COLS = 4;
+    const int DEFAULT_NON_WRIST_ROWS = 4;
+    int usedPhysCols = isWrist ? 5 : DEFAULT_NON_WRIST_COLS;
+    int usedPhysRows = isWrist ? 5 : DEFAULT_NON_WRIST_ROWS;
+    bool passMirrored = isWrist ? false : mirrored; // forzar NO mirror sólo para muñecas
+
+    // Garantizar que el índice elegido encaje en la rejilla seleccionada
+    int maxIndex = usedPhysCols * usedPhysRows - 1;
+    if (chosenIndex < 0) chosenIndex = 0;
+    if (chosenIndex > maxIndex) chosenIndex = chosenIndex % (maxIndex + 1);
+
+    // Calcular columna/fila lógicas respecto a la grilla física que vamos a usar
+    int logicalCol = chosenIndex % usedPhysCols;
+    int logicalRow = chosenIndex / usedPhysCols;
 
     bool finalMirror;
-    Rectangle src = SrcFromLogical(texture, logicalCol, logicalRow, physCols, physRows, mirrored, &finalMirror);
+    Rectangle src = SrcFromLogical(texture, logicalCol, logicalRow, usedPhysCols, usedPhysRows, passMirrored, &finalMirror);
     Vector2 worldSize = { boneData->size, boneData->size };
 
     DrawBonetileCustom(texture, camera, src, boneData->position, worldSize, rotation, finalMirror, boneData->boneName);
 }
+
+
 
 void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, Camera camera,
     int* outChosenIndex, float* outRotation, bool* outMirrored) {
@@ -557,7 +594,9 @@ void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, Camera came
     }
 
     static const int indices[3][8] = {
-        {0,4,5,6,7,6,5,4},{2,12,13,14,15,14,13,12},{1,8,9,10,11,10,9,8}
+        {0,4,5,6,7,6,5,4},
+        {2,12,13,14,15,14,13,12},
+        {1,8,9,10,11,10,9,8}
     };
 
     // Calcular dirección INVERTIDA de la cámara en espacio local del bone
@@ -619,20 +658,34 @@ void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, Camera came
     }
 }
 
+// En la función CalculateBoneRenderData, reemplaza el mapeo indicesH existente:
+
+// Reemplaza la función CalculateBoneRenderData existente con esta versión mejorada:
+
 void CalculateBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex,
     float* outRotation, bool* outMirrored, const char* boneName) {
-    static const int indices[3][8] = {
-        {0,4,5,6,7,6,5,4},{2,12,13,14,15,14,13,12},{1,8,9,10,11,10,9,8}
+
+    // MAPEO PARA MANOS 5x5 - TU ARRAY PERSONALIZADO CON 3 FILAS
+    static const int handIndices[3][8] = {
+        {13, 5, 5, 6, 7, 6, 5, 5},      // Fila 0: Vista superior
+        {2, 12, 0, 5, 15, 14, 13, 12}, // Fila 1: Vista frontal/lateral  
+        {1, 8, 9, 10, 11, 10, 9, 8}     // Fila 2: Vista inferior
     };
 
-    // Dirección de la cámara (NORMAL)
+    // DEBUG: Verificar que el índice 4 NO está en el array
+    if (boneName && IsWristBone(boneName)) {
+        printf("DEBUG: Función CalculateBoneRenderData llamada para %s\n", boneName);
+    }
+
+    // Dirección de la cámara (desde el bone hacia la cámara)
     Vector3 camDir = Vector3Subtract(camera.position, bonePos);
     camDir = SafeNormalize(camDir);
 
-    // Buscar offsets específicos para este bone
-    float yawOffsetRad = 0.0f;
-    float pitchOffsetRad = 0.0f;
+    // Detectar muñeca
+    bool isWrist = (boneName != NULL) && IsWristBone(boneName);
 
+    // Aplicar offsets si existen
+    float yawOffsetRad = 0.0f, pitchOffsetRad = 0.0f;
     if (boneName) {
         for (int i = 0; BONE_ANGLE_OFFSETS[i].boneName[0] != '\0'; i++) {
             if (strcmp(BONE_ANGLE_OFFSETS[i].boneName, boneName) == 0) {
@@ -643,67 +696,99 @@ void CalculateBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex
         }
     }
 
-    // Aplicar offset de yaw
+    // Aplicar offsets
     if (fabs(yawOffsetRad) > 1e-6f) {
-        float cosYaw = cosf(yawOffsetRad);
-        float sinYaw = sinf(yawOffsetRad);
+        float cosYaw = cosf(yawOffsetRad), sinYaw = sinf(yawOffsetRad);
         float newX = camDir.x * cosYaw - camDir.z * sinYaw;
         float newZ = camDir.x * sinYaw + camDir.z * cosYaw;
-        camDir.x = newX;
-        camDir.z = newZ;
+        camDir.x = newX; camDir.z = newZ;
     }
 
-    // Aplicar offset de pitch
     if (fabs(pitchOffsetRad) > 1e-6f) {
         float horizDist = sqrtf(camDir.x * camDir.x + camDir.z * camDir.z);
         if (horizDist > 1e-6f) {
-            float cosPitch = cosf(pitchOffsetRad);
-            float sinPitch = sinf(pitchOffsetRad);
-            float newY = camDir.y * cosPitch - horizDist * sinPitch;
-            float newHorizDist = camDir.y * sinPitch + horizDist * cosPitch;
-
-            float scale = newHorizDist / horizDist;
-            camDir.x *= scale;
-            camDir.z *= scale;
-            camDir.y = newY;
+            float cosP = cosf(pitchOffsetRad), sinP = sinf(pitchOffsetRad);
+            float newY = camDir.y * cosP - horizDist * sinP;
+            float newHoriz = camDir.y * sinP + horizDist * cosP;
+            float scale = newHoriz / horizDist;
+            camDir.x *= scale; camDir.z *= scale; camDir.y = newY;
         }
     }
 
-    // SWAP de coordenadas X y Z para intercambiar los giros de cámara
-    float tempX = camDir.x;
-    camDir.x = camDir.z;  // X toma el valor de Z
-    camDir.z = tempX;     // Z toma el valor de X
-    // Y se mantiene igual (subir/bajar no se afecta)
+    // Solo intercambiar X/Z para bones que NO son muñeca
+    if (!isWrist) {
+        float tmp = camDir.x; camDir.x = camDir.z; camDir.z = tmp;
+    }
 
-    // Recalcular ángulos con el swap aplicado
+    // Calcular ángulos
     float yaw = atan2f(camDir.x, camDir.z);
     if (yaw < 0.0f) yaw += 2.0f * PI;
-
     float pitchDeg = atan2f(camDir.y, sqrtf(camDir.x * camDir.x + camDir.z * camDir.z)) * RAD2DEG;
 
+    // Calcular sector
     float normalizedYaw = yaw * RAD2DEG + 22.5f;
     if (normalizedYaw >= 360.0f) normalizedYaw -= 360.0f;
-
     int sector = (int)(normalizedYaw / 45.0f) % 8;
 
-    bool needsVFlip = boneName && ShouldFlipBoneTexture(boneName);
+    if (isWrist) {
+        // Sistema para muñecas: 3 rangos de pitch
+        int pitchRow;
 
-    if (pitchDeg >= 70.0f) {
-        *outChosenIndex = 3;
-        *outRotation = sector * 45.0f + 180.0f;
-        *outMirrored = false;
-    }
-    else if (pitchDeg <= -70.0f) {
-        *outChosenIndex = 15;
-        *outRotation = (8 - sector) * 45.0f + 180.0f;
-        if (*outRotation >= 360.0f) *outRotation -= 360.0f;
-        *outMirrored = true;
-    }
-    else {
-        if (needsVFlip) sector = (8 - sector) % 8;
-        int row = (pitchDeg >= 22.5f) ? 2 : (pitchDeg >= -22.5f) ? 0 : 1;
-        *outChosenIndex = indices[row][sector];
+        if (pitchDeg >= 22.5f) {
+            pitchRow = 0;        // Vista superior
+        }
+        else if (pitchDeg >= -22.5f) {
+            pitchRow = 1;        // Vista frontal/lateral
+        }
+        else {
+            pitchRow = 2;        // Vista inferior
+        }
+
+        // Validación de seguridad
+        if (pitchRow < 0) pitchRow = 0;
+        if (pitchRow > 2) pitchRow = 2;
+        if (sector < 0) sector = 0;
+        if (sector > 7) sector = 7;
+
+        *outChosenIndex = handIndices[pitchRow][sector];
         *outRotation = 0.0f;
-        *outMirrored = (sector >= 1 && sector <= 4);
+        *outMirrored = false;
+
+        // DEBUG CRÍTICO: Mostrar exactamente qué está pasando
+        printf("DEBUG %s: pitchDeg=%.2f, pitchRow=%d, sector=%d, chosenIndex=%d\n",
+            boneName, pitchDeg, pitchRow, sector, *outChosenIndex);
+
+        // VERIFICACIÓN ADICIONAL: Si sale 4, algo está mal
+        if (*outChosenIndex == 4) {
+            printf("ERROR: ¡Índice 4 detectado! Esto no debería pasar.\n");
+            printf("       handIndices[%d][%d] = %d\n", pitchRow, sector, handIndices[pitchRow][sector]);
+        }
+
+        // Validar rango
+        if (*outChosenIndex < 0) *outChosenIndex = 0;
+        if (*outChosenIndex > 24) *outChosenIndex = *outChosenIndex % 25;
+
+        return;
+    }
+
+    // Para otros bones: lógica estándar
+    else {
+        const float TOP_THRESHOLD = 70.0f;
+        const float BOTTOM_THRESHOLD = -70.0f;
+
+
+
+        if (pitchDeg >= TOP_THRESHOLD) {
+            *outChosenIndex = 3;
+            *outRotation = sector * 45.0f + 180.0f;
+            *outMirrored = false;
+        }
+        else if (pitchDeg <= BOTTOM_THRESHOLD) {
+            *outChosenIndex = 15;
+            *outRotation = (8 - sector) * 45.0f + 180.0f;
+            if (*outRotation >= 360.0f) *outRotation -= 360.0f;
+            *outMirrored = true;
+        }
+
     }
 }

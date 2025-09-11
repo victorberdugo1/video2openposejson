@@ -13,7 +13,7 @@ REar NULLg 0 0.15
 Neck tex/Neck.png 1 0.095
 LShoulder tex/Arm.png 1 0.13
 RShoulder tex/Arm.png 1 0.13
-Chest tex/Chest.png 1 0.18
+Chest tex/Chest.png 1 0.17
 LElbow tex/Forearm.png 1 0.13
 RElbow tex/Forearm.png 1 0.13
 LWrist tex/HandR.png 1 0.07

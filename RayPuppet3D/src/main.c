@@ -97,6 +97,13 @@ static bool DetectZFighting(RenderItem* items, int itemCount);
 static void SortRenderItems(RenderItem* items, int itemCount);
 static void App_Draw(AppState* app);
 
+// <<< CH: helper local para detectar muñeca (wrist)
+static bool IsWristBone(const char* boneName) {
+    if (!boneName) return false;
+    return (strcmp(boneName, "LWrist") == 0) || (strcmp(boneName, "RWrist") == 0);
+}
+// <<< /CH
+
 static bool App_Init(AppState* app) {
     if (!app) return false;
     memset(app, 0, sizeof(*app));
@@ -109,7 +116,7 @@ static bool App_Init(AppState* app) {
     MaximizeWindow();
     SetTargetFPS(60);
 
-    // Inicialización optimizada de cámara
+    // Inicializaci?n optimizada de c?mara
     app->camera = (Camera){
         .position = {0.0f, 0.6f, 2.5f},
         .target = {0.0f, 0.6f, 0.0f},
@@ -124,8 +131,12 @@ static bool App_Init(AppState* app) {
     app->orbitPitch = -0.2f;
     app->renderHeadBillboards = true;
     app->renderTorsoBillboards = true;
-    app->physCols = 8;
-    app->physRows = 8;
+
+    // <<< CH: DEFAULT GLOBAL GRID = 4x4 (todo usa 4x4 por defecto)
+    app->physCols = 4;
+    app->physRows = 4;
+    // <<< /CH
+
     app->autoPlaySpeed = 0.1f;
     app->lastProcessedFrame = -1;
 
@@ -236,7 +247,7 @@ static void App_HandleInput(AppState* app, float dt) {
         }
     }
 
-    // Controles de configuración
+    // Controles de configuraci?n
     if (IsKeyPressed(KEY_F5)) {
         if (LoadSimpleTextureConfig(&app->textureSystem, "bone_textures.txt")) {
             LoadBoneConfigurations(&app->textureSystem, &app->boneConfigs, &app->boneConfigCount);
@@ -298,7 +309,7 @@ static void App_UpdateCamera(AppState* app, float dt) {
             app->orbitRadius = Clamp(app->orbitRadius - wheel * ZOOM_SENSITIVITY, MIN_ORBIT_RADIUS, MAX_ORBIT_RADIUS);
         }
 
-        // Cálculo optimizado de posición
+        // C?lculo optimizado de posici?n
         float cosP = cosf(app->orbitPitch);
         float sinP = sinf(app->orbitPitch);
         float cosY = cosf(app->orbitYaw);
@@ -319,14 +330,14 @@ static void App_UpdateCamera(AppState* app, float dt) {
             app->orbitPitch = Clamp(app->orbitPitch - mouseDelta.y * FPS_SENSITIVITY, FPS_MIN_PITCH, FPS_MAX_PITCH);
         }
 
-        // Precalcular vectores de dirección (ARREGLADO)
+        // Precalcular vectores de direcci?n (ARREGLADO)
         float cosP = cosf(app->orbitPitch);
         float sinP = sinf(app->orbitPitch);
         float cosY = cosf(app->orbitYaw);
         float sinY = sinf(app->orbitYaw);
 
         Vector3 forward = { sinY * cosP, sinP, cosY * cosP };
-        // ARREGLO: Cálculo correcto del vector right para movimiento lateral
+        // ARREGLO: C?lculo correcto del vector right para movimiento lateral
         Vector3 right = { cosY, 0, -sinY };  // Perpendicular al forward en el plano XZ
 
         forward = Vector3Normalize(forward);
@@ -378,7 +389,7 @@ static void App_UpdateAutoCenter(AppState* app) {
             }
         }
 
-        // Añadir posiciones calculadas
+        // A?adir posiciones calculadas
         if (hasValidHead) { totalPos = Vector3Add(totalPos, headPos); validBoneCount++; }
         if (hasValidChest) { totalPos = Vector3Add(totalPos, chestPos); validBoneCount++; }
         if (hasValidHip) { totalPos = Vector3Add(totalPos, hipPos); validBoneCount++; }
@@ -458,7 +469,7 @@ static void SortRenderItems(RenderItem* items, int itemCount) {
                 swapped = true;
             }
         }
-        if (!swapped) break; // Early exit si ya está ordenado
+        if (!swapped) break; // Early exit si ya est? ordenado
     }
 }
 
@@ -468,21 +479,25 @@ static void App_Draw(AppState* app) {
     BeginDrawing();
     ClearBackground(RAYWHITE);
 
-    // UI optimizada
+    // UI
     const char* modeText = "CLASSIC MODE";
-    const char* controlsText = "M: Toggle Morphing | H: Toggle Heads | T: Toggle Torsos | C: Mouse Control | 1/2: Camera Mode | Space: Play/Pause";
+    const char* controlsText =
+        "M: Toggle Morphing | H: Toggle Heads | T: Toggle Torsos | "
+        "C: Mouse Control | 1/2: Camera Mode | Space: Play/Pause";
 
     DrawText(modeText, 10, 10, 20, BLUE);
     DrawText(controlsText, 10, 35, 16, DARKGRAY);
 
     char frameText[64];
     snprintf(frameText, sizeof(frameText), "Frame: %d/%d %s",
-        app->currentFrame + 1, app->maxFrames, app->autoPlay ? "(Playing)" : "(Paused)");
+        app->currentFrame + 1, app->maxFrames,
+        app->autoPlay ? "(Playing)" : "(Paused)");
     DrawText(frameText, 10, 55, 16, DARKGRAY);
 
     char statsText[256];
     snprintf(statsText, sizeof(statsText),
-        "Bones: %d | Heads: %s (%d) | Torsos: %s (%d) | Camera Mode: %d | Mouse Control: %s",
+        "Bones: %d | Heads: %s (%d) | Torsos: %s (%d) | "
+        "Camera Mode: %d | Mouse Control: %s",
         app->renderBonesCount,
         app->renderHeadBillboards ? "ON" : "OFF", app->renderHeadsCount,
         app->renderTorsoBillboards ? "ON" : "OFF", app->renderTorsosCount,
@@ -495,50 +510,47 @@ static void App_Draw(AppState* app) {
         DrawSphereWires(app->autoCenter, 0.05f, 8, 8, ORANGE);
     }
 
-    int totalItems = app->renderBonesCount + app->renderHeadsCount + app->renderTorsosCount;
+    int totalItems =
+        app->renderBonesCount + app->renderHeadsCount + app->renderTorsosCount;
     if (totalItems > 0) {
         static RenderItem renderItems[MAX_RENDER_ITEMS];
         int itemCount = 0;
         Vector3 camPos = app->camera.position;
 
-        // Crear items de renderizado
-        for (int i = 0; i < app->renderTorsosCount && itemCount < MAX_RENDER_ITEMS; i++) {
+        // ---- recopilar torsos
+        for (int i = 0; i < app->renderTorsosCount && itemCount < MAX_RENDER_ITEMS;
+            i++) {
             const TorsoRenderData* torso = &app->renderTorsos[i];
             if (!torso->valid || !torso->visible) continue;
-
-            renderItems[itemCount] = (RenderItem){
-                .type = 0, .index = i,
+            renderItems[itemCount++] = (RenderItem){
+                .type = 0,
+                .index = i,
                 .distance = Vector3Distance(camPos, torso->position),
-                .depthBias = TORSO_BIAS + (INDEX_BIAS * i),
-                .hasZFighting = false
-            };
-            itemCount++;
+                .depthBias = TORSO_BIAS + (INDEX_BIAS * i) };
         }
 
-        for (int i = 0; i < app->renderBonesCount && itemCount < MAX_RENDER_ITEMS; i++) {
+        // ---- recopilar bones
+        for (int i = 0; i < app->renderBonesCount && itemCount < MAX_RENDER_ITEMS;
+            i++) {
             const BoneRenderData* bone = &app->renderBones[i];
             if (!bone->valid || !bone->visible) continue;
-
-            renderItems[itemCount] = (RenderItem){
-                .type = 1, .index = i,
+            renderItems[itemCount++] = (RenderItem){
+                .type = 1,
+                .index = i,
                 .distance = Vector3Distance(camPos, bone->position),
-                .depthBias = BONE_BIAS + (INDEX_BIAS * i),
-                .hasZFighting = false
-            };
-            itemCount++;
+                .depthBias = BONE_BIAS + (INDEX_BIAS * i) };
         }
 
-        for (int i = 0; i < app->renderHeadsCount && itemCount < MAX_RENDER_ITEMS; i++) {
+        // ---- recopilar heads
+        for (int i = 0; i < app->renderHeadsCount && itemCount < MAX_RENDER_ITEMS;
+            i++) {
             const HeadRenderData* head = &app->renderHeads[i];
             if (!head->valid || !head->visible) continue;
-
-            renderItems[itemCount] = (RenderItem){
-                .type = 2, .index = i,
+            renderItems[itemCount++] = (RenderItem){
+                .type = 2,
+                .index = i,
                 .distance = Vector3Distance(camPos, head->position),
-                .depthBias = HEAD_BIAS + (INDEX_BIAS * i),
-                .hasZFighting = false
-            };
-            itemCount++;
+                .depthBias = HEAD_BIAS + (INDEX_BIAS * i) };
         }
 
         DetectZFighting(renderItems, itemCount);
@@ -547,89 +559,195 @@ static void App_Draw(AppState* app) {
         BeginBlendMode(BLEND_ALPHA);
         rlDisableDepthTest();
 
-        // Renderizado optimizado
+        // ==============================
+        // PRIMERA PASADA: dibujar solo el Neck
+        // ==============================
         for (int i = 0; i < itemCount; i++) {
             RenderItem* item = &renderItems[i];
-            Vector3 toCam = Vector3Subtract(camPos,
-                item->type == 0 ? app->renderTorsos[item->index].position :
-                item->type == 1 ? app->renderBones[item->index].position :
-                app->renderHeads[item->index].position);
+            if (item->type != 1) continue;
+            const BoneRenderData* bone = &app->renderBones[item->index];
+            if (strcmp(bone->boneName, "Neck") != 0) continue;
+
+            // --- mismo pipeline de hueso pero solo para Neck ---
+            Vector3 toCam = Vector3Subtract(camPos, bone->position);
+            float distance = Vector3Length(toCam);
+            Vector3 renderOffset = { 0 };
+            if (distance > MIN_DISTANCE_THRESHOLD) {
+                Vector3 toCamNorm = Vector3Normalize(toCam);
+                renderOffset = Vector3Scale(toCamNorm, item->depthBias);
+            }
+            Vector3 renderPosition = Vector3Add(bone->position, renderOffset);
+
+            int texIndex = App_GetTextureIndex(app, bone->texturePath);
+            Texture2D currentTex = app->textures[texIndex];
+
+            bool isWrist = IsWristBone(bone->boneName);
+            int usedCols = isWrist ? 5 : app->physCols;
+            int usedRows = isWrist ? 5 : app->physRows;
+
+            float physCellW = (float)currentTex.width / (float)usedCols;
+            float physCellH = (float)currentTex.height / (float)usedRows;
+            float aspect = physCellW / physCellH;
+            Vector2 worldSize = { bone->size * aspect, bone->size };
+
+            int chosenIndex = 0;
+            float rotation = 0.0f;
+            bool mirrored = false;
+
+
+            if (IsWristBone(bone->boneName)) {
+                CalculateBoneRenderData(bone->position, app->camera, &chosenIndex, &rotation, &mirrored, bone->boneName);
+            }
+            else if (bone->orientation.valid) {
+                CalculateEnhancedBoneRenderData(bone, app->camera, &chosenIndex, &rotation, &mirrored);
+            }
+
+
+
+            int maxIndex = usedCols * usedRows - 1;
+            if (chosenIndex < 0) chosenIndex = 0;
+            if (chosenIndex > maxIndex) chosenIndex %= (maxIndex + 1);
+
+            int logicalCol = chosenIndex % usedCols;
+            int logicalRow = chosenIndex / usedCols;
+            bool finalMirror = isWrist ? false : mirrored;
+            Rectangle src = SrcFromLogical(currentTex, logicalCol, logicalRow,
+                usedCols, usedRows, finalMirror,
+                &finalMirror);
+
+            // vecino opcional
+            char conns[3][32];
+            float prios[3];
+            Vector3 neighborPos = { 0 };
+            bool haveNeighbor = false;
+            if (GetBoneConnectionsWithPriority(bone->boneName, conns, prios)) {
+                for (int k = 0; k < 3 && !haveNeighbor; k++) {
+                    if (conns[k][0] == '\0') continue;
+                    BoneRenderData* nb = FindRenderBoneByName(
+                        app->renderBones, app->renderBonesCount, conns[k]);
+                    if (nb && nb->valid && nb->visible &&
+                        Vector3Distance(bone->position, nb->position) >
+                        MIN_DISTANCE_THRESHOLD) {
+                        neighborPos = nb->position;
+                        haveNeighbor = true;
+                    }
+                }
+            }
+
+            DrawBonetileCustomWithRoll(currentTex, app->camera, src,
+                renderPosition, worldSize, rotation,
+                finalMirror, haveNeighbor, neighborPos,
+                bone->boneName);
+        }
+
+        // ==============================
+        // SEGUNDA PASADA: todo lo demás
+        // ==============================
+        for (int i = 0; i < itemCount; i++) {
+            RenderItem* item = &renderItems[i];
+
+            // saltar Neck (ya se pintó antes)
+            if (item->type == 1) {
+                const BoneRenderData* bone = &app->renderBones[item->index];
+                if (strcmp(bone->boneName, "Neck") == 0) continue;
+            }
+
+            // ---- aquí reutilizamos tu código original para torso, huesos, heads ----
+            Vector3 toCam =
+                Vector3Subtract(camPos, item->type == 0
+                    ? app->renderTorsos[item->index].position
+                    : item->type == 1
+                    ? app->renderBones[item->index].position
+                    : app->renderHeads[item->index].position);
 
             float distance = Vector3Length(toCam);
-            Vector3 renderOffset = { 0, 0, 0 };
-
+            Vector3 renderOffset = { 0 };
             if (distance > MIN_DISTANCE_THRESHOLD) {
                 Vector3 toCamNorm = Vector3Normalize(toCam);
                 renderOffset = Vector3Scale(toCamNorm, item->depthBias);
             }
 
-            if (item->type == 0) { // Torso
+            if (item->type == 0) {
+                // torso
                 const TorsoRenderData* torso = &app->renderTorsos[item->index];
-                TorsoRenderData adjustedTorso = *torso;
-                adjustedTorso.position = Vector3Add(torso->position, renderOffset);
-
+                TorsoRenderData adjusted = *torso;
+                adjusted.position = Vector3Add(torso->position, renderOffset);
                 int texIndex = App_GetTextureIndex(app, torso->texturePath);
-                DrawTorsoBillboard(app->textures[texIndex], app->camera, &adjustedTorso, app->physCols, app->physRows);
+                DrawTorsoBillboard(app->textures[texIndex], app->camera,
+                    &adjusted, app->physCols, app->physRows);
             }
-            else if (item->type == 1) { // Bone
+            else if (item->type == 1) {
+                // bone normal (no Neck)
                 const BoneRenderData* bone = &app->renderBones[item->index];
-                Vector3 renderPosition = Vector3Add(bone->position, renderOffset);
+                Vector3 renderPosition =
+                    Vector3Add(bone->position, renderOffset);
 
                 int texIndex = App_GetTextureIndex(app, bone->texturePath);
                 Texture2D currentTex = app->textures[texIndex];
 
-                // Calcular tamaño y orientación
-                float physCellW = (float)currentTex.width / app->physCols;
-                float physCellH = (float)currentTex.height / app->physRows;
-                float logicalCellW = physCellW * (app->physCols / ATLAS_COLS);
-                float logicalCellH = physCellH * (app->physRows / ATLAS_ROWS);
-                float aspect = logicalCellW / logicalCellH;
+                bool isWrist = IsWristBone(bone->boneName);
+                int usedCols = isWrist ? 5 : app->physCols;
+                int usedRows = isWrist ? 5 : app->physRows;
+
+                float physCellW = (float)currentTex.width / (float)usedCols;
+                float physCellH = (float)currentTex.height / (float)usedRows;
+                float aspect = physCellW / physCellH;
                 Vector2 worldSize = { bone->size * aspect, bone->size };
 
                 int chosenIndex = 0;
                 float rotation = 0.0f;
                 bool mirrored = false;
-
-                if (bone->orientation.valid) {
-                    CalculateEnhancedBoneRenderData(bone, app->camera, &chosenIndex, &rotation, &mirrored);
-                }
-                else {
+                if (IsWristBone(bone->boneName)) {
                     CalculateBoneRenderData(bone->position, app->camera, &chosenIndex, &rotation, &mirrored, bone->boneName);
                 }
+                else if (bone->orientation.valid) {
+                    CalculateEnhancedBoneRenderData(bone, app->camera, &chosenIndex, &rotation, &mirrored);
+                }
 
-                int logicalCol = chosenIndex % ATLAS_COLS;
-                int logicalRow = chosenIndex / ATLAS_COLS;
-                bool finalMirror = false;
-                Rectangle src = SrcFromLogical(currentTex, logicalCol, logicalRow, app->physCols, app->physRows, mirrored, &finalMirror);
+                int maxIndex = usedCols * usedRows - 1;
+                if (chosenIndex < 0) chosenIndex = 0;
+                if (chosenIndex > maxIndex) chosenIndex %= (maxIndex + 1);
 
-                // Buscar neighbor optimizado
+                int logicalCol = chosenIndex % usedCols;
+                int logicalRow = chosenIndex / usedCols;
+                bool finalMirror = isWrist ? false : mirrored;
+                Rectangle src = SrcFromLogical(currentTex, logicalCol, logicalRow,
+                    usedCols, usedRows, finalMirror,
+                    &finalMirror);
+
                 char conns[3][32];
                 float prios[3];
-                Vector3 neighborPos = { 0, 0, 0 };
+                Vector3 neighborPos = { 0 };
                 bool haveNeighbor = false;
-
                 if (GetBoneConnectionsWithPriority(bone->boneName, conns, prios)) {
                     for (int k = 0; k < 3 && !haveNeighbor; k++) {
                         if (conns[k][0] == '\0') continue;
-                        BoneRenderData* nb = FindRenderBoneByName(app->renderBones, app->renderBonesCount, conns[k]);
+                        BoneRenderData* nb =
+                            FindRenderBoneByName(app->renderBones,
+                                app->renderBonesCount, conns[k]);
                         if (nb && nb->valid && nb->visible &&
-                            Vector3Distance(bone->position, nb->position) > MIN_DISTANCE_THRESHOLD) {
+                            Vector3Distance(bone->position, nb->position) >
+                            MIN_DISTANCE_THRESHOLD) {
                             neighborPos = nb->position;
                             haveNeighbor = true;
                         }
                     }
                 }
 
-                DrawBonetileCustomWithRoll(currentTex, app->camera, src, renderPosition, worldSize,
-                    rotation, finalMirror, haveNeighbor, neighborPos, bone->boneName);
+                DrawBonetileCustomWithRoll(currentTex, app->camera, src,
+                    renderPosition, worldSize, rotation,
+                    finalMirror, haveNeighbor,
+                    neighborPos, bone->boneName);
             }
-            else if (item->type == 2) { // Head
+            else if (item->type == 2) {
+                // head
                 const HeadRenderData* head = &app->renderHeads[item->index];
-                HeadRenderData adjustedHead = *head;
-                adjustedHead.position = Vector3Add(head->position, renderOffset);
-
+                HeadRenderData adjusted = *head;
+                adjusted.position =
+                    Vector3Add(head->position, renderOffset);
                 int texIndex = App_GetTextureIndex(app, head->texturePath);
-                DrawHeadBillboard(app->textures[texIndex], app->camera, &adjustedHead, app->physCols, app->physRows);
+                DrawHeadBillboard(app->textures[texIndex], app->camera,
+                    &adjusted, app->physCols, app->physRows);
             }
         }
 
@@ -639,6 +757,7 @@ static void App_Draw(AppState* app) {
     EndMode3D();
     EndDrawing();
 }
+
 
 int main(void) {
     AppState app;

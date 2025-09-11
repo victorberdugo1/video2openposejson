@@ -1,11 +1,11 @@
-// torso_billboard.c - Sistema de torsos con orientación real basada en OpenPose (OPTIMIZADO CORREGIDO)
+// torso_billboard.c - Sistema de torsos con orientaci?n real basada en OpenPose (OPTIMIZADO CORREGIDO)
 #include "torso_billboard.h"
 #include "bonetile.h"
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
 
-// Constantes para evitar recálculos
+// Constantes para evitar rec?lculos
 static const float CHEST_OFFSET_Y = -0.06f;
 static const float CHEST_OFFSET_Z = 0.015f;
 static const float CHEST_FALLBACK_Y = -0.08f;
@@ -18,14 +18,14 @@ static const int TOPDOWN_INDEX = 3;
 static const int BOTTOM_INDEX = 15;
 static const float ANGLE_THRESHOLDS[] = { 70.0f, 22.5f, -22.5f, -70.0f };
 
-// Estructura para cachear búsquedas de bones
+// Estructura para cachear b?squedas de bones
 typedef struct {
     Vector3 neck, lShoulder, rShoulder, lHip, rHip;
     bool hasNeck, hasLShoulder, hasRShoulder, hasLHip, hasRHip;
     int shoulderCount, hipCount;
 } CachedBones;
 
-// Función auxiliar para buscar y cachear bones
+// Funci?n auxiliar para buscar y cachear bones
 static CachedBones CacheBones(const Person* person) {
     CachedBones cache = { 0 };
 
@@ -149,7 +149,7 @@ VirtualSpine CalculateVirtualSpine(const Person* person) {
     return spine;
 }
 
-// Función auxiliar para calcular orientación
+// Funci?n auxiliar para calcular orientaci?n
 static TorsoOrientation CreateOrientation(Vector3 pos, Vector3 forward, Vector3 up, Vector3 right) {
     TorsoOrientation orientation = { 0 };
     orientation.position = pos;
@@ -319,7 +319,7 @@ void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData*
         *torsoCapacity = estimatedTorsos;
     }
 
-    // Volver al sistema original de detección de duplicados para compatibilidad exacta
+    // Volver al sistema original de detecci?n de duplicados para compatibilidad exacta
     static char processedTorsos[200][25];
     int processedCount = 0;
 
