@@ -545,45 +545,6 @@ BoneRenderData* FindRenderBoneByName(BoneRenderData* bones, int count, const cha
     return NULL;
 }
 
-void DrawBoneWithOrientation(Texture2D texture, Camera camera, const BoneRenderData* boneData) {
-    if (!boneData || !boneData->valid || !boneData->visible) return;
-
-    int chosenIndex;
-    float rotation;
-    bool mirrored;
-
-    if (boneData->orientation.valid) {
-        CalculateEnhancedBoneRenderData(boneData, camera, &chosenIndex, &rotation, &mirrored);
-    }
-    else {
-        CalculateBoneRenderData(boneData->position, camera, &chosenIndex, &rotation, &mirrored, boneData->boneName);
-    }
-
-    // --- LÓGICA FORZADA: por defecto 4x4 para TODO excepto muñecas (LWrist/RWrist) que usan 5x5 ---
-    bool isWrist = IsWristBone(boneData->boneName);
-    const int DEFAULT_NON_WRIST_COLS = 4;
-    const int DEFAULT_NON_WRIST_ROWS = 4;
-    int usedPhysCols = isWrist ? 5 : DEFAULT_NON_WRIST_COLS;
-    int usedPhysRows = isWrist ? 5 : DEFAULT_NON_WRIST_ROWS;
-    bool passMirrored = isWrist ? false : mirrored; // forzar NO mirror sólo para muñecas
-
-    // Garantizar que el índice elegido encaje en la rejilla seleccionada
-    int maxIndex = usedPhysCols * usedPhysRows - 1;
-    if (chosenIndex < 0) chosenIndex = 0;
-    if (chosenIndex > maxIndex) chosenIndex = chosenIndex % (maxIndex + 1);
-
-    // Calcular columna/fila lógicas respecto a la grilla física que vamos a usar
-    int logicalCol = chosenIndex % usedPhysCols;
-    int logicalRow = chosenIndex / usedPhysCols;
-
-    bool finalMirror;
-    Rectangle src = SrcFromLogical(texture, logicalCol, logicalRow, usedPhysCols, usedPhysRows, passMirrored, &finalMirror);
-    Vector2 worldSize = { boneData->size, boneData->size };
-
-    DrawBonetileCustom(texture, camera, src, boneData->position, worldSize, rotation, finalMirror, boneData->boneName);
-}
-
-
 
 void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, Camera camera,
     int* outChosenIndex, float* outRotation, bool* outMirrored) {
@@ -662,20 +623,19 @@ void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, Camera came
 
 // Reemplaza la función CalculateBoneRenderData existente con esta versión mejorada:
 
+// Modifica la función CalculateBoneRenderData para incluir orientación dinámica de muñecas:
+
+// MANTÉN CalculateBoneRenderData EXACTAMENTE como estaba (SIN el parámetro BoneOrientation):
+
 void CalculateBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex,
     float* outRotation, bool* outMirrored, const char* boneName) {
 
     // MAPEO PARA MANOS 5x5 - TU ARRAY PERSONALIZADO CON 3 FILAS
     static const int handIndices[3][8] = {
-        {13, 5, 5, 6, 7, 6, 5, 5},      // Fila 0: Vista superior
-        {2, 12, 0, 5, 15, 14, 13, 12}, // Fila 1: Vista frontal/lateral  
-        {1, 8, 9, 10, 11, 10, 9, 8}     // Fila 2: Vista inferior
+        {23, 22, 2, 15, 16, 17, 18, 24},      // Fila 0: Vista inferior
+        {9, 4, 0, 5, 6, 7, 8, 14}, // Fila 1: Vista frontal/lateral  
+        {20, 19, 1, 10, 11, 12, 13, 21}     // Fila 2: Vista  superior
     };
-
-    // DEBUG: Verificar que el índice 4 NO está en el array
-    if (boneName && IsWristBone(boneName)) {
-        printf("DEBUG: Función CalculateBoneRenderData llamada para %s\n", boneName);
-    }
 
     // Dirección de la cámara (desde el bone hacia la cámara)
     Vector3 camDir = Vector3Subtract(camera.position, bonePos);
@@ -754,16 +714,6 @@ void CalculateBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex
         *outRotation = 0.0f;
         *outMirrored = false;
 
-        // DEBUG CRÍTICO: Mostrar exactamente qué está pasando
-        printf("DEBUG %s: pitchDeg=%.2f, pitchRow=%d, sector=%d, chosenIndex=%d\n",
-            boneName, pitchDeg, pitchRow, sector, *outChosenIndex);
-
-        // VERIFICACIÓN ADICIONAL: Si sale 4, algo está mal
-        if (*outChosenIndex == 4) {
-            printf("ERROR: ¡Índice 4 detectado! Esto no debería pasar.\n");
-            printf("       handIndices[%d][%d] = %d\n", pitchRow, sector, handIndices[pitchRow][sector]);
-        }
-
         // Validar rango
         if (*outChosenIndex < 0) *outChosenIndex = 0;
         if (*outChosenIndex > 24) *outChosenIndex = *outChosenIndex % 25;
@@ -776,19 +726,57 @@ void CalculateBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex
         const float TOP_THRESHOLD = 70.0f;
         const float BOTTOM_THRESHOLD = -70.0f;
 
-
-
         if (pitchDeg >= TOP_THRESHOLD) {
             *outChosenIndex = 3;
             *outRotation = sector * 45.0f + 180.0f;
             *outMirrored = false;
         }
         else if (pitchDeg <= BOTTOM_THRESHOLD) {
-            *outChosenIndex = 15;
+            *outChosenIndex = 22;
             *outRotation = (8 - sector) * 45.0f + 180.0f;
             if (*outRotation >= 360.0f) *outRotation -= 360.0f;
             *outMirrored = true;
         }
-
     }
+}
+
+// Y SOLO modifica DrawBoneWithOrientation para que las muñecas usen CalculateEnhancedBoneRenderData:
+
+void DrawBoneWithOrientation(Texture2D texture, Camera camera, const BoneRenderData* boneData) {
+    if (!boneData || !boneData->valid || !boneData->visible) return;
+
+    int chosenIndex;
+    float rotation;
+    bool mirrored;
+
+    if (boneData->orientation.valid) {
+        // CAMBIO CLAVE: Todas las bones con orientación válida usan CalculateEnhancedBoneRenderData
+        // Esto incluye las muñecas que ahora tendrán orientación dinámica
+        CalculateEnhancedBoneRenderData(boneData, camera, &chosenIndex, &rotation, &mirrored);
+    }
+    else {
+        // Bones sin orientación usan el sistema original
+        CalculateBoneRenderData(boneData->position, camera, &chosenIndex, &rotation, &mirrored, boneData->boneName);
+    }
+
+    // --- RESTO SIN CAMBIOS ---
+    bool isWrist = IsWristBone(boneData->boneName);
+    const int DEFAULT_NON_WRIST_COLS = 4;
+    const int DEFAULT_NON_WRIST_ROWS = 4;
+    int usedPhysCols = isWrist ? 5 : DEFAULT_NON_WRIST_COLS;
+    int usedPhysRows = isWrist ? 5 : DEFAULT_NON_WRIST_ROWS;
+    bool passMirrored = isWrist ? false : mirrored;
+
+    int maxIndex = usedPhysCols * usedPhysRows - 1;
+    if (chosenIndex < 0) chosenIndex = 0;
+    if (chosenIndex > maxIndex) chosenIndex = chosenIndex % (maxIndex + 1);
+
+    int logicalCol = chosenIndex % usedPhysCols;
+    int logicalRow = chosenIndex / usedPhysCols;
+
+    bool finalMirror;
+    Rectangle src = SrcFromLogical(texture, logicalCol, logicalRow, usedPhysCols, usedPhysRows, passMirrored, &finalMirror);
+    Vector2 worldSize = { boneData->size, boneData->size };
+
+    DrawBonetileCustom(texture, camera, src, boneData->position, worldSize, rotation, finalMirror, boneData->boneName);
 }
