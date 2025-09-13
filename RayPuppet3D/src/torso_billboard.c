@@ -1,31 +1,24 @@
-// torso_billboard.c - Sistema de torsos con orientaci?n real basada en OpenPose (OPTIMIZADO CORREGIDO)
+// torso_billboard.c - Sistema de torsos con orientación real basada en OpenPose (OPTIMIZADO CORREGIDO)
 #include "torso_billboard.h"
 #include "bonetile.h"
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
 
-// Constantes para evitar rec?lculos
+// Constantes para evitar recálculos
 static const float CHEST_OFFSET_Y = -0.06f;
 static const float CHEST_OFFSET_Z = 0.015f;
 static const float CHEST_FALLBACK_Y = -0.08f;
-static const int ATLAS_INDICES[3][8] = {
-    {  0,  4,  5,  6,  7,  6,  5,  4 },
-    {  2, 12, 13, 14, 15, 14, 13, 12 },
-    {  1,  8,  9, 10, 11, 10,  9,  8 }
-};
-static const int TOPDOWN_INDEX = 3;
-static const int BOTTOM_INDEX = 15;
-static const float ANGLE_THRESHOLDS[] = { 70.0f, 22.5f, -22.5f, -70.0f };
 
-// Estructura para cachear b?squedas de bones
+
+// Estructura para cachear búsquedas de bones
 typedef struct {
     Vector3 neck, lShoulder, rShoulder, lHip, rHip;
     bool hasNeck, hasLShoulder, hasRShoulder, hasLHip, hasRHip;
     int shoulderCount, hipCount;
 } CachedBones;
 
-// Funci?n auxiliar para buscar y cachear bones
+// Función auxiliar para buscar y cachear bones
 static CachedBones CacheBones(const Person* person) {
     CachedBones cache = { 0 };
 
@@ -149,7 +142,7 @@ VirtualSpine CalculateVirtualSpine(const Person* person) {
     return spine;
 }
 
-// Funci?n auxiliar para calcular orientaci?n
+// Función auxiliar para calcular orientación
 static TorsoOrientation CreateOrientation(Vector3 pos, Vector3 forward, Vector3 up, Vector3 right) {
     TorsoOrientation orientation = { 0 };
     orientation.position = pos;
@@ -194,6 +187,13 @@ TorsoOrientation CalculateHipOrientation(const Person* person) {
     return CreateOrientation(spine.hipPosition, spine.spineForward, spine.spineDirection, spine.spineRight);
 }
 
+// Función auxiliar para normalizar un vector de forma segura (igual que en bonetile.c)
+static Vector3 SafeNormalizeTorso(Vector3 v) {
+    float length = Vector3Length(v);
+    if (length < 1e-6f) return (Vector3) { 0, 0, 1 }; // Vector forward por defecto
+    return Vector3Scale(v, 1.0f / length);
+}
+
 void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
     int* outChosenIndex, float* outRotation, bool* outMirrored) {
 
@@ -202,74 +202,66 @@ void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
         return;
     }
 
-    Vector3 camDir = Vector3Subtract(camera.position, torsoData->position);
+    // Usar el mismo sistema que bonetile.c para orientación válida
+    static const int indices[3][8] = {
+        {0,4,5,6,7,6,5,4},
+        {2,12,13,14,15,14,13,12},
+        {1,8,9,10,11,10,9,8}
+    };
 
-    // Transformar a espacio local del torso
+    // Calcular dirección INVERTIDA de la cámara en espacio local del torso (igual que bonetile.c)
+    Vector3 camDir = Vector3Subtract(torsoData->position, camera.position);
+    camDir = SafeNormalizeTorso(camDir);
+
+    // Transformar a coordenadas locales del torso
     Vector3 localCamDir = {
-        -Vector3DotProduct(camDir, torsoData->orientation.right),
+        Vector3DotProduct(camDir, torsoData->orientation.right),
         Vector3DotProduct(camDir, torsoData->orientation.up),
         Vector3DotProduct(camDir, torsoData->orientation.forward)
     };
 
-    float localYaw = atan2f(-localCamDir.x, localCamDir.z);
+    // Calcular ángulos en el espacio local
+    float localYaw = atan2f(localCamDir.x, localCamDir.z);
     if (localYaw < 0.0f) localYaw += 2.0f * PI;
 
-    float horizDistance = sqrtf(localCamDir.x * localCamDir.x + localCamDir.z * localCamDir.z);
-    float localPitchDeg = atan2f(localCamDir.y, horizDistance) * RAD2DEG;
+    float localPitchDeg = atan2f(localCamDir.y,
+        sqrtf(localCamDir.x * localCamDir.x + localCamDir.z * localCamDir.z)) * RAD2DEG;
 
-    // Determinar fila y vista
-    int chosenRow = -1;
-    bool useTopdown = false;
-    bool isTopView = false;
+    // INVERSIÓN ESPECÍFICA DE PITCH para torsos (igual que en bonetile.c para bones que no son cuello/manos/pies)
+    localPitchDeg = -localPitchDeg;  // Invertir el pitch para torsos
 
-    if (localPitchDeg >= ANGLE_THRESHOLDS[0]) {
-        useTopdown = true; isTopView = true;
-    }
-    else if (localPitchDeg >= ANGLE_THRESHOLDS[1]) {
-        chosenRow = 2;
-    }
-    else if (localPitchDeg >= ANGLE_THRESHOLDS[2]) {
-        chosenRow = 0;
-    }
-    else if (localPitchDeg >= ANGLE_THRESHOLDS[3]) {
-        chosenRow = 1;
-    }
-    else {
-        useTopdown = true; isTopView = false;
-    }
-
-    // Calcular sector (igual que el original para compatibilidad exacta)
-    float normalizedYaw = localYaw * RAD2DEG + 22.5f + 180.0f;
+    // Normalizar yaw para el sistema de sectores
+    float normalizedYaw = localYaw * RAD2DEG + 22.5f;
     if (normalizedYaw >= 360.0f) normalizedYaw -= 360.0f;
 
-    int sector = 0;
-    if (normalizedYaw < 45.0f) sector = 0;
-    else if (normalizedYaw < 90.0f) sector = 1;
-    else if (normalizedYaw < 135.0f) sector = 2;
-    else if (normalizedYaw < 180.0f) sector = 3;
-    else if (normalizedYaw < 225.0f) sector = 4;
-    else if (normalizedYaw < 270.0f) sector = 5;
-    else if (normalizedYaw < 315.0f) sector = 6;
-    else sector = 7;
+    int sector = (int)(normalizedYaw / 45.0f) % 8;
 
-    if (useTopdown) {
-        if (isTopView) {
-            *outChosenIndex = TOPDOWN_INDEX;
-            *outRotation = sector * 45.0f + 180.0f;
-            *outMirrored = false;
-        }
-        else {
-            *outChosenIndex = BOTTOM_INDEX;
-            *outRotation = (8 - sector) * 45.0f + 180.0f;
-            if (*outRotation >= 360.0f) *outRotation -= 360.0f;
-            *outMirrored = true;
-        }
+    // Seleccionar sprite basado en el ángulo de pitch (igual que bonetile.c)
+    if (localPitchDeg >= 70.0f) {
+        *outChosenIndex = 3;  // Vista desde arriba
+        *outRotation = sector * 45.0f;
+        *outMirrored = false;
+    }
+    else if (localPitchDeg <= -70.0f) {
+        *outChosenIndex = 15; // Vista desde abajo
+        *outRotation = sector * 45.0f;
+        *outMirrored = true;
     }
     else {
-        *outChosenIndex = ATLAS_INDICES[chosenRow][sector];
+        // Vista lateral/frontal
+        int row = (localPitchDeg >= 22.5f) ? 2 : (localPitchDeg >= -22.5f) ? 0 : 1;
+        *outChosenIndex = indices[row][sector];
         *outRotation = 0.0f;
-        *outMirrored = !(sector >= 5 && sector <= 7);
+        *outMirrored = (sector >= 1 && sector <= 4);
     }
+
+    /*/ AGREGAR ROTACIÓN CONTINUA SOLO PARA HIP
+    if (torsoData->type == TORSO_HIP) {
+        float currentTime = GetTime();
+        float spinSpeed = 90.0f; // Grados por segundo
+        float spinRotation = fmodf(currentTime * spinSpeed, 360.0f);
+        *outRotation += spinRotation;
+    }*/
 }
 
 bool ShouldRenderChest(const Person* person) {
@@ -319,7 +311,7 @@ void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData*
         *torsoCapacity = estimatedTorsos;
     }
 
-    // Volver al sistema original de detecci?n de duplicados para compatibilidad exacta
+    // Volver al sistema original de detección de duplicados para compatibilidad exacta
     static char processedTorsos[200][25];
     int processedCount = 0;
 
