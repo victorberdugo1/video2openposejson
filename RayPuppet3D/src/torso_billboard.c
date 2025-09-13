@@ -1,24 +1,24 @@
-// torso_billboard.c - Sistema de torsos con orientación real basada en OpenPose (OPTIMIZADO CORREGIDO)
+// torso_billboard.c - Sistema de torsos con orientaciÃ³n real basada en OpenPose (OPTIMIZADO CORREGIDO)
 #include "torso_billboard.h"
 #include "bonetile.h"
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
 
-// Constantes para evitar recálculos
+// Constantes para evitar recÃ¡lculos
 static const float CHEST_OFFSET_Y = -0.06f;
 static const float CHEST_OFFSET_Z = 0.015f;
 static const float CHEST_FALLBACK_Y = -0.08f;
 
 
-// Estructura para cachear búsquedas de bones
+// Estructura para cachear bÃºsquedas de bones
 typedef struct {
     Vector3 neck, lShoulder, rShoulder, lHip, rHip;
     bool hasNeck, hasLShoulder, hasRShoulder, hasLHip, hasRHip;
     int shoulderCount, hipCount;
 } CachedBones;
 
-// Función auxiliar para buscar y cachear bones
+// FunciÃ³n auxiliar para buscar y cachear bones
 static CachedBones CacheBones(const Person* person) {
     CachedBones cache = { 0 };
 
@@ -142,7 +142,7 @@ VirtualSpine CalculateVirtualSpine(const Person* person) {
     return spine;
 }
 
-// Función auxiliar para calcular orientación
+// FunciÃ³n auxiliar para calcular orientaciÃ³n
 static TorsoOrientation CreateOrientation(Vector3 pos, Vector3 forward, Vector3 up, Vector3 right) {
     TorsoOrientation orientation = { 0 };
     orientation.position = pos;
@@ -187,12 +187,15 @@ TorsoOrientation CalculateHipOrientation(const Person* person) {
     return CreateOrientation(spine.hipPosition, spine.spineForward, spine.spineDirection, spine.spineRight);
 }
 
-// Función auxiliar para normalizar un vector de forma segura (igual que en bonetile.c)
+// FunciÃ³n auxiliar para normalizar un vector de forma segura (igual que en bonetile.c)
 static Vector3 SafeNormalizeTorso(Vector3 v) {
     float length = Vector3Length(v);
     if (length < 1e-6f) return (Vector3) { 0, 0, 1 }; // Vector forward por defecto
     return Vector3Scale(v, 1.0f / length);
 }
+
+// ModificaciÃ³n en la funciÃ³n CalculateTorsoRenderData
+// Reemplazar la secciÃ³n existente de "ORIENTACIÃ“N DEL HIP BASADA EN EL CHEST"
 
 void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
     int* outChosenIndex, float* outRotation, bool* outMirrored) {
@@ -202,20 +205,20 @@ void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
         return;
     }
 
-    // Calcular y imprimir la posición del chest
+    // Calcular y imprimir la posiciÃ³n del chest
     if (torsoData->person) {
         Vector3 chestPosition = CalculateChestPosition(torsoData->person);
         printf("Chest Position: (%.3f, %.3f, %.3f)\n", chestPosition.x, chestPosition.y, chestPosition.z);
     }
 
-    // Usar el mismo sistema que bonetile.c para orientación válida
+    // Usar el mismo sistema que bonetile.c para orientaciÃ³n vÃ¡lida
     static const int indices[3][8] = {
         {0,4,5,6,7,6,5,4},
         {2,12,13,14,15,14,13,12},
         {1,8,9,10,11,10,9,8}
     };
 
-    // Calcular dirección INVERTIDA de la cámara en espacio local del torso (igual que bonetile.c)
+    // Calcular direcciÃ³n INVERTIDA de la cÃ¡mara en espacio local del torso (igual que bonetile.c)
     Vector3 camDir = Vector3Subtract(torsoData->position, camera.position);
     camDir = SafeNormalizeTorso(camDir);
 
@@ -226,14 +229,14 @@ void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
         Vector3DotProduct(camDir, torsoData->orientation.forward)
     };
 
-    // Calcular ángulos en el espacio local
+    // Calcular Ã¡ngulos en el espacio local
     float localYaw = atan2f(localCamDir.x, localCamDir.z);
     if (localYaw < 0.0f) localYaw += 2.0f * PI;
 
     float localPitchDeg = atan2f(localCamDir.y,
         sqrtf(localCamDir.x * localCamDir.x + localCamDir.z * localCamDir.z)) * RAD2DEG;
 
-    // INVERSIÓN ESPECÍFICA DE PITCH para torsos (igual que en bonetile.c para bones que no son cuello/manos/pies)
+    // INVERSIÃ“N ESPECÃFICA DE PITCH para torsos (igual que en bonetile.c para bones que no son cuello/manos/pies)
     localPitchDeg = -localPitchDeg;  // Invertir el pitch para torsos
 
     // Normalizar yaw para el sistema de sectores
@@ -242,7 +245,7 @@ void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
 
     int sector = (int)(normalizedYaw / 45.0f) % 8;
 
-    // Seleccionar sprite basado en el ángulo de pitch (igual que bonetile.c)
+    // Seleccionar sprite basado en el Ã¡ngulo de pitch (igual que bonetile.c)
     if (localPitchDeg >= 70.0f) {
         *outChosenIndex = 3;  // Vista desde arriba
         *outRotation = sector * 45.0f;
@@ -261,11 +264,46 @@ void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
         *outMirrored = (sector >= 1 && sector <= 4);
     }
 
-    // ORIENTACIÓN DEL HIP BASADA EN EL CHEST
+    // ORIENTACIÃ“N DEL CHEST BASADA EN EL HIP
+if (torsoData->type == TORSO_CHEST && torsoData->person && outRotation) {
+    Vector3 hipPosition = CalculateHipPosition(torsoData->person);
+
+    // Vector CHEST -> HIP
+    Vector3 chestToHip = Vector3Subtract(hipPosition, torsoData->position);
+    float distance = Vector3Length(chestToHip);
+    if (distance > 0.001f) {
+        chestToHip = Vector3Scale(chestToHip, 1.0f / distance);
+
+        // pitch en grados (cuÃ¡nto apunta el chest hacia el hip)
+        float pitchToHip = atan2f(chestToHip.y,
+            sqrtf(chestToHip.x * chestToHip.x + chestToHip.z * chestToHip.z)) * RAD2DEG;
+
+        // Determinar lado de la cÃ¡mara respecto al torso (dot con right)
+        Vector3 camToTorso = Vector3Subtract(torsoData->position, camera.position);
+        camToTorso = SafeNormalizeTorso(camToTorso);
+        Vector3 torsoRight = torsoData->orientation.right; // asumimos ortonormal
+        float sideDot = Vector3DotProduct(camToTorso, torsoRight);
+        bool viewingFromRight = (sideDot > 0.0f);
+
+        // Aplicar la misma lÃ³gica que en HIP: cambiar la fÃ³rmula segÃºn el lado
+        if (viewingFromRight) {
+            *outRotation = -pitchToHip - 80.0f;
+        } else {
+            *outRotation = pitchToHip + 80.0f;
+        }
+
+        // Normalizar la rotaciÃ³n al rango [0,360)
+        while (*outRotation >= 360.0f) *outRotation -= 360.0f;
+        while (*outRotation < 0.0f) *outRotation += 360.0f;
+    }
+}
+
+
+    // ORIENTACIÃ“N DEL HIP BASADA EN EL CHEST
     if (torsoData->type == TORSO_HIP && torsoData->person) {
         Vector3 chestPosition = CalculateChestPosition(torsoData->person);
         
-        // Calcular vector del HIP hacia el CHEST (este será el nuevo "up" del HIP)
+        // Calcular vector del HIP hacia el CHEST
         Vector3 hipToChest = Vector3Subtract(chestPosition, torsoData->position);
         
         // Normalizar el vector
@@ -273,25 +311,31 @@ void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
         if (distance > 0.001f) {
             hipToChest = Vector3Scale(hipToChest, 1.0f / distance);
             
-            // Calcular ángulo de inclinación (pitch) - cuánto se inclina hacia el chest
+            // Calcular Ã¡ngulo de inclinaciÃ³n (pitch) - cuÃ¡nto se inclina hacia el chest
             float pitchToChest = atan2f(hipToChest.y, 
                 sqrtf(hipToChest.x * hipToChest.x + hipToChest.z * hipToChest.z)) * RAD2DEG;
             
-            // Calcular ángulo de rotación horizontal (yaw) - hacia dónde apunta horizontalmente
-            //float yawToChest = atan2f(hipToChest.x, hipToChest.z) * RAD2DEG;
+            // Detectar si la cÃ¡mara estÃ¡ mirando desde la derecha
+            Vector3 camToTorso = Vector3Subtract(torsoData->position, camera.position);
+            Vector3 torsoRight = torsoData->orientation.right;
+            float sideDot = Vector3DotProduct(camToTorso, torsoRight);
+            bool viewingFromRight = (sideDot > 0.0f);
             
-            // Combinar ambos ángulos - el yaw como rotación base y pitch como inclinación
-            *outRotation = pitchToChest - 80; // Factor 0.5 para suavizar el pitch
+            // Invertir Ã¡ngulos si se mira desde la derecha
+            if (viewingFromRight) {
+                *outRotation = pitchToChest - 80; // Invertido
+            } else {
+                *outRotation = -pitchToChest + 80; // Invertido del original
+            }
             
-            // Normalizar la rotación
+            // Normalizar la rotaciÃ³n
             while (*outRotation >= 360.0f) *outRotation -= 360.0f;
             while (*outRotation < 0.0f) *outRotation += 360.0f;
         }
     }
 }
 
-
-    /*/ AGREGAR ROTACIÓN CONTINUA SOLO PARA HIP
+    /*/ AGREGAR ROTACIÃ“N CONTINUA SOLO PARA HIP
     if (torsoData->type == TORSO_HIP) {
         float currentTime = GetTime();
         float spinSpeed = 90.0f; // Grados por segundo
@@ -347,7 +391,7 @@ void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData*
         *torsoCapacity = estimatedTorsos;
     }
 
-    // Volver al sistema original de detección de duplicados para compatibilidad exacta
+    // Volver al sistema original de detecciÃ³n de duplicados para compatibilidad exacta
     static char processedTorsos[200][25];
     int processedCount = 0;
 
@@ -379,7 +423,7 @@ void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData*
                 torsoData->position = CalculateChestPosition(person);
                 torsoData->orientation = CalculateChestOrientation(person);
                 torsoData->type = TORSO_CHEST;
-                torsoData->person = person; // AQUÍ SE ASIGNA EL PUNTERO A PERSON
+                torsoData->person = person; // AQUÃ SE ASIGNA EL PUNTERO A PERSON
 
                 if (!torsoData->orientation.valid && Vector3Length(torsoData->position) < 1e-6f) {
                     continue;
@@ -433,7 +477,7 @@ void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData*
                 torsoData->position = CalculateHipPosition(person);
                 torsoData->orientation = CalculateHipOrientation(person);
                 torsoData->type = TORSO_HIP;
-                torsoData->person = person; // AQUÍ SE ASIGNA EL PUNTERO A PERSON
+                torsoData->person = person; // AQUÃ SE ASIGNA EL PUNTERO A PERSON
 
                 if (!torsoData->orientation.valid && Vector3Length(torsoData->position) < 1e-6f) {
                     continue;
