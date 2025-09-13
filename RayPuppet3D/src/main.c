@@ -472,6 +472,111 @@ static void SortRenderItems(RenderItem* items, int itemCount) {
         if (!swapped) break; // Early exit si ya est? ordenado
     }
 }
+static void DrawOpenPoseSkeleton(AppState* app) {
+    if (!app || !app->animation.isLoaded || !BonesIsValidFrame(&app->animation, app->currentFrame)) {
+        return;
+    }
+
+    const AnimationFrame* frame = &app->animation.frames[app->currentFrame];
+
+    // Definir conexiones del esqueleto OpenPose (hueso padre -> hueso hijo)
+    const char* connections[][2] = {
+        // Torso principal
+        {"Neck", "Nose"},
+        {"Neck", "LShoulder"},
+        {"Neck", "RShoulder"},
+        {"LShoulder", "RShoulder"},
+
+        // Brazo izquierdo
+        {"LShoulder", "LElbow"},
+        {"LElbow", "LWrist"},
+
+        // Brazo derecho
+        {"RShoulder", "RElbow"},
+        {"RElbow", "RWrist"},
+
+        // Columna
+        {"Neck", "MidHip"},
+        {"MidHip", "LHip"},
+        {"MidHip", "RHip"},
+
+        // Pierna izquierda
+        {"LHip", "LKnee"},
+        {"LKnee", "LAnkle"},
+
+        // Pierna derecha
+        {"RHip", "RKnee"},
+        {"RKnee", "RAnkle"},
+
+        // Pie izquierdo
+        {"LAnkle", "LBigToe"},
+        {"LAnkle", "LSmallToe"},
+        {"LBigToe", "LSmallToe"},
+
+        // Pie derecho
+        {"RAnkle", "RBigToe"},
+        {"RAnkle", "RSmallToe"},
+        {"RBigToe", "RSmallToe"},
+
+        // Ojos y orejas
+        {"Nose", "LEye"},
+        {"Nose", "REye"},
+        {"LEye", "LEar"},
+        {"REye", "REar"}
+    };
+
+    int numConnections = sizeof(connections) / sizeof(connections[0]);
+
+    // DIBUJAR UNA SOLA VEZ POR FRAME - SOLO PARA LA PRIMERA PERSONA ACTIVA
+    for (int p = 0; p < frame->personCount; p++) {
+        const Person* person = &frame->persons[p];
+        if (!person->active) continue;
+
+        // Dibujar conexiones entre huesos
+        for (int c = 0; c < numConnections; c++) {
+            const char* bone1Name = connections[c][0];
+            const char* bone2Name = connections[c][1];
+
+            Vector3 pos1 = { 0 };
+            Vector3 pos2 = { 0 };
+            bool found1 = false, found2 = false;
+
+            // Buscar posiciones de los huesos
+            for (int b = 0; b < person->boneCount; b++) {
+                const Bone* bone = &person->bones[b];
+                if (!bone->position.valid) continue;
+
+                if (strcmp(bone->name, bone1Name) == 0) {
+                    pos1 = bone->position.position;
+                    found1 = true;
+                }
+                else if (strcmp(bone->name, bone2Name) == 0) {
+                    pos2 = bone->position.position;
+                    found2 = true;
+                }
+
+                if (found1 && found2) break;
+            }
+
+            // Si encontramos ambos huesos, dibujar la línea
+            if (found1 && found2) {
+                DrawLine3D(pos1, pos2, RED);
+            }
+        }
+
+        // Dibujar puntos en las articulaciones
+        for (int b = 0; b < person->boneCount; b++) {
+            const Bone* bone = &person->bones[b];
+            if (bone->position.valid) {
+                DrawSphere(bone->position.position, 0.02f, BLUE);
+            }
+        }
+
+        // SOLO DIBUJAR PARA LA PRIMERA PERSONA ACTIVA - EVITA MÚLTIPLES ESQUELETOS
+        break;
+    }
+}
+
 
 static void App_Draw(AppState* app) {
     if (!app) return;
@@ -753,7 +858,7 @@ static void App_Draw(AppState* app) {
 
         EndBlendMode();
     }
-
+    DrawOpenPoseSkeleton(app);
     EndMode3D();
     EndDrawing();
 }

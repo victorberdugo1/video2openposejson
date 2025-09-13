@@ -4,6 +4,9 @@
 #include <string.h>
 #include <stdlib.h>
 
+// Constante para controlar la profundidad de la cabeza
+static const float HEAD_DEPTH_OFFSET = 0.063f; // Negativo para atrás, positivo para adelante
+
 Vector3 CalculateHeadPosition(const Person* person) {
     if (!person || person->boneCount == 0) return (Vector3) { 0, 0, 0 };
 
@@ -13,7 +16,10 @@ Vector3 CalculateHeadPosition(const Person* person) {
     bool hasNeck = false;
     Vector3 nosePos = { 0, 0, 0 };
     bool hasNose = false;
+    Vector3 lEar = { 0, 0, 0 }, rEar = { 0, 0, 0 };
+    bool hasLEar = false, hasREar = false;
 
+    // Recopilar todos los puntos faciales
     for (int i = 0; i < person->boneCount; i++) {
         const Bone* bone = &person->bones[i];
         if (!bone->position.valid) continue;
@@ -31,18 +37,110 @@ Vector3 CalculateHeadPosition(const Person* person) {
             neckPos = bone->position.position;
             hasNeck = true;
         }
+        else if (strcmp(name, "LEar") == 0) {
+            lEar = bone->position.position;
+            hasLEar = true;
+        }
+        else if (strcmp(name, "REar") == 0) {
+            rEar = bone->position.position;
+            hasREar = true;
+        }
     }
 
-    if (eyeCount > 0 && hasNeck) {
+    if (eyeCount > 0) {
         eyeCenter = Vector3Scale(eyeCenter, 1.0f / eyeCount);
+    }
 
+    // MÉTODO MEJORADO: Calcular la cabeza basándose en la geometría facial real
+    if (hasNose && eyeCount > 0 && (hasLEar || hasREar || hasNeck)) {
+        // Calcular el centro de la cara usando múltiples puntos
+        Vector3 faceCenter = { 0, 0, 0 };
+        int facePointCount = 0;
+
+        // Añadir nariz (peso doble por ser punto frontal clave)
+        faceCenter = Vector3Add(faceCenter, nosePos);
+        faceCenter = Vector3Add(faceCenter, nosePos);
+        facePointCount += 2;
+
+        // Añadir ojos
+        faceCenter = Vector3Add(faceCenter, eyeCenter);
+        facePointCount++;
+
+        // Calcular vector "hacia atrás" desde la nariz
+        Vector3 backReference;
+        bool hasBackReference = false;
+
+        if (hasLEar && hasREar) {
+            // Usar centro de orejas como referencia trasera
+            backReference = Vector3Scale(Vector3Add(lEar, rEar), 0.5f);
+            hasBackReference = true;
+        }
+        else if (hasLEar || hasREar) {
+            // Usar una oreja como referencia
+            backReference = hasLEar ? lEar : rEar;
+            hasBackReference = true;
+        }
+        else if (hasNeck) {
+            // Usar cuello como referencia trasera
+            backReference = neckPos;
+            hasBackReference = true;
+        }
+
+        if (hasBackReference) {
+            // Añadir referencia trasera al cálculo del centro
+            faceCenter = Vector3Add(faceCenter, backReference);
+            facePointCount++;
+        }
+
+        // Calcular centro promedio
+        faceCenter = Vector3Scale(faceCenter, 1.0f / facePointCount);
+
+        // Calcular dirección frontal basada en geometría facial real
+        Vector3 frontDirection = { 0, 0, 1 }; // Default
+        if (hasBackReference) {
+            Vector3 noseToBack = Vector3Subtract(backReference, nosePos);
+            float backDistance = Vector3Length(noseToBack);
+            if (backDistance > 1e-6f) {
+                frontDirection = Vector3Scale(noseToBack, 1.0f / backDistance);
+            }
+        }
+
+        // Posicionar la cabeza usando el offset configurable (puede ser hacia adelante o atrás)
+        Vector3 headPos = Vector3Add(faceCenter, Vector3Scale(frontDirection, HEAD_DEPTH_OFFSET));
+
+        // Ajuste dinámico hacia arriba basado en la inclinación de la cabeza
+        Vector3 eyeToNose = Vector3Subtract(nosePos, eyeCenter);
+        float verticalComponent = eyeToNose.y;
+
+        // Si la cabeza está inclinada hacia abajo (agachándose), subir menos
+        // Si está normal o hacia arriba, subir más
+        float dynamicUpOffset = 0.03f;
+        if (verticalComponent < -0.01f) {
+            // Cabeza inclinada hacia abajo
+            dynamicUpOffset = 0.015f;
+        }
+        else if (verticalComponent > 0.01f) {
+            // Cabeza inclinada hacia arriba
+            dynamicUpOffset = 0.045f;
+        }
+
+        headPos.y += dynamicUpOffset;
+
+        return headPos;
+    }
+
+    // Fallback al método original si no hay suficientes puntos faciales
+    // Este fallback mantiene la relación cuello-cara original
+    if (eyeCount > 0 && hasNeck) {
         Vector3 headPos = {
             neckPos.x * 0.7f + eyeCenter.x * 0.3f,
             eyeCenter.y,
             hasNose ? neckPos.z * 0.8f + nosePos.z * 0.2f : neckPos.z * 0.9f + eyeCenter.z * 0.1f
         };
 
-        //headPos.z += 0.01f; // valor para más/menos adelanto
+        // Mantener los offsets originales del fallback (no aplicar HEAD_VISUAL_OFFSET aquí)
+        headPos.z -= 0.01f;
+        headPos.y += 0.03f;
 
         return headPos;
     }
@@ -88,15 +186,8 @@ HeadOrientation CalculateHeadOrientation(const Person* person) {
         return orientation;
     }
 
-    // Calculate central position
-    Vector3 totalPos = nose;
-    int pointCount = 1;
-    if (hasLEye) { totalPos = Vector3Add(totalPos, lEye); pointCount++; }
-    if (hasREye) { totalPos = Vector3Add(totalPos, rEye); pointCount++; }
-    if (hasLEar) { totalPos = Vector3Add(totalPos, lEar); pointCount++; }
-    if (hasREar) { totalPos = Vector3Add(totalPos, rEar); pointCount++; }
-
-    orientation.position = Vector3Scale(totalPos, 1.0f / pointCount);
+    // Usar la posición calculada dinámicamente
+    orientation.position = CalculateHeadPosition(person);
 
     // Calculate vectors
     Vector3 rightVec = { 1,0,0 };

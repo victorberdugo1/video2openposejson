@@ -7,9 +7,9 @@
 
 // Constantes para evitar recálculos
 static const float CHEST_OFFSET_Y = -0.06f;
-static const float CHEST_OFFSET_Z = 0.015f;
+static const float CHEST_OFFSET_Z = -0.005f;
 static const float CHEST_FALLBACK_Y = -0.08f;
-
+static const float HIP_OFFSET_Y = -0.02f;
 
 // Estructura para cachear búsquedas de bones
 typedef struct {
@@ -48,6 +48,7 @@ static CachedBones CacheBones(const Person* person) {
     return cache;
 }
 
+// MEJORADA: Calcular posición del chest usando offsets optimizados
 Vector3 CalculateChestPosition(const Person* person) {
     if (!person || person->boneCount == 0) return (Vector3) { 0, 0, 0 };
 
@@ -82,6 +83,7 @@ Vector3 CalculateChestPosition(const Person* person) {
     return (Vector3) { 0, 0, 0 };
 }
 
+// MEJORADA: Calcular posición del hip usando múltiples referencias como la cabeza
 Vector3 CalculateHipPosition(const Person* person) {
     if (!person || person->boneCount == 0) return (Vector3) { 0, 0, 0 };
 
@@ -89,11 +91,97 @@ Vector3 CalculateHipPosition(const Person* person) {
 
     if (cache.hipCount == 0) return (Vector3) { 0, 0, 0 };
 
-    if (cache.hasLHip && cache.hasRHip) {
-        return Vector3Scale(Vector3Add(cache.lHip, cache.rHip), 0.5f);
+    // PASO 1: Calcular centro de caderas (punto principal)
+    Vector3 hipCenter = { 0, 0, 0 };
+    int hipPointCount = 0;
+
+    if (cache.hasLHip) {
+        hipCenter = Vector3Add(hipCenter, cache.lHip);
+        hipPointCount++;
+    }
+    if (cache.hasRHip) {
+        hipCenter = Vector3Add(hipCenter, cache.rHip);
+        hipPointCount++;
     }
 
-    return cache.hasLHip ? cache.lHip : cache.rHip;
+    hipCenter = Vector3Scale(hipCenter, 1.0f / hipPointCount);
+
+    // PASO 2: Crear centro del torso inferior con múltiples referencias
+    Vector3 hipTorsoCenter = { 0, 0, 0 };
+    int hipTorsoCenterCount = 0;
+
+    // Añadir caderas (peso principal, como nariz en la cabeza)
+    hipTorsoCenter = Vector3Add(hipTorsoCenter, hipCenter);
+    hipTorsoCenter = Vector3Add(hipTorsoCenter, hipCenter); // Doble peso
+    hipTorsoCenterCount += 2;
+
+    // Añadir referencia de hombros para orientación
+    if (cache.shoulderCount > 0) {
+        Vector3 shoulderCenter = { 0, 0, 0 };
+        int shoulderPointCount = 0;
+
+        if (cache.hasLShoulder) {
+            shoulderCenter = Vector3Add(shoulderCenter, cache.lShoulder);
+            shoulderPointCount++;
+        }
+        if (cache.hasRShoulder) {
+            shoulderCenter = Vector3Add(shoulderCenter, cache.rShoulder);
+            shoulderPointCount++;
+        }
+
+        if (shoulderPointCount > 0) {
+            shoulderCenter = Vector3Scale(shoulderCenter, 1.0f / shoulderPointCount);
+            hipTorsoCenter = Vector3Add(hipTorsoCenter, shoulderCenter);
+            hipTorsoCenterCount++;
+        }
+    }
+
+    hipTorsoCenter = Vector3Scale(hipTorsoCenter, 1.0f / hipTorsoCenterCount);
+
+    // PASO 3: Calcular dirección del torso inferior
+    Vector3 hipDirection = { 0, 0, 1 }; // Default
+    if (cache.shoulderCount > 0) {
+        Vector3 shoulderCenter = { 0, 0, 0 };
+        int shoulderPointCount = 0;
+
+        if (cache.hasLShoulder) {
+            shoulderCenter = Vector3Add(shoulderCenter, cache.lShoulder);
+            shoulderPointCount++;
+        }
+        if (cache.hasRShoulder) {
+            shoulderCenter = Vector3Add(shoulderCenter, cache.rShoulder);
+            shoulderPointCount++;
+        }
+
+        if (shoulderPointCount > 0) {
+            shoulderCenter = Vector3Scale(shoulderCenter, 1.0f / shoulderPointCount);
+            Vector3 shoulderToHip = Vector3Subtract(hipCenter, shoulderCenter);
+            float torsoLength = Vector3Length(shoulderToHip);
+            if (torsoLength > 1e-6f) {
+                hipDirection = Vector3Scale(shoulderToHip, 1.0f / torsoLength);
+            }
+        }
+    }
+
+    // PASO 4: Posicionar el hip ligeramente adelante del centro
+    Vector3 hipPos = Vector3Add(hipTorsoCenter, Vector3Scale(hipDirection, 0.01f));
+
+    // PASO 5: Mantener conectado con el pecho pero preservando la forma natural
+    Vector3 chestPos = CalculateChestPosition(person);
+    if (Vector3Length(chestPos) > 0.0f) {
+        Vector3 chestToOriginalHip = Vector3Subtract(hipCenter, chestPos);
+        float torsoDistance = Vector3Length(chestToOriginalHip);
+
+        if (torsoDistance > 0.12f) { // Si están muy separados, conectar más
+            Vector3 torsoDirection = Vector3Scale(chestToOriginalHip, 1.0f / torsoDistance);
+            hipPos = Vector3Add(chestPos, Vector3Scale(torsoDirection, 0.10f)); // Distancia fija
+        }
+    }
+
+    // PASO 6: Aplicar offset para bajar el hip
+    hipPos.y += HIP_OFFSET_Y;
+
+    return hipPos;
 }
 
 VirtualSpine CalculateVirtualSpine(const Person* person) {
@@ -106,13 +194,8 @@ VirtualSpine CalculateVirtualSpine(const Person* person) {
         return spine;
     }
 
-    spine.chestPosition = Vector3Scale(Vector3Add(cache.lShoulder, cache.rShoulder), 0.5f);
-    spine.hipPosition = Vector3Scale(Vector3Add(cache.lHip, cache.rHip), 0.5f);
-
-    if (cache.hasNeck) {
-        spine.chestPosition = Vector3Scale(
-            Vector3Add(Vector3Add(cache.lShoulder, cache.rShoulder), cache.neck), 1.0f / 3.0f);
-    }
+    spine.chestPosition = CalculateChestPosition(person);
+    spine.hipPosition = CalculateHipPosition(person);
 
     Vector3 spineVec = Vector3Subtract(spine.chestPosition, spine.hipPosition);
     float spineLength = Vector3Length(spineVec);
@@ -194,21 +277,12 @@ static Vector3 SafeNormalizeTorso(Vector3 v) {
     return Vector3Scale(v, 1.0f / length);
 }
 
-// Modificación en la función CalculateTorsoRenderData
-// Reemplazar la sección existente de "ORIENTACIÓN DEL HIP BASADA EN EL CHEST"
-
 void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
     int* outChosenIndex, float* outRotation, bool* outMirrored) {
 
     if (!torsoData->orientation.valid) {
         CalculateBoneRenderData(torsoData->position, camera, outChosenIndex, outRotation, outMirrored, "");
         return;
-    }
-
-    // Calcular y imprimir la posición del chest
-    if (torsoData->person) {
-        Vector3 chestPosition = CalculateChestPosition(torsoData->person);
-        printf("Chest Position: (%.3f, %.3f, %.3f)\n", chestPosition.x, chestPosition.y, chestPosition.z);
     }
 
     // Usar el mismo sistema que bonetile.c para orientación válida
@@ -264,85 +338,77 @@ void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
         *outMirrored = (sector >= 1 && sector <= 4);
     }
 
-    // ORIENTACIÓN DEL CHEST BASADA EN EL HIP
-if (torsoData->type == TORSO_CHEST && torsoData->person && outRotation) {
-    Vector3 hipPosition = CalculateHipPosition(torsoData->person);
+    // ORIENTACIÓN DEL CHEST BASADA EN EL HIP (RESTAURADA)
+    if (torsoData->type == TORSO_CHEST && torsoData->person && outRotation) {
+        Vector3 hipPosition = CalculateHipPosition(torsoData->person);
 
-    // Vector CHEST -> HIP
-    Vector3 chestToHip = Vector3Subtract(hipPosition, torsoData->position);
-    float distance = Vector3Length(chestToHip);
-    if (distance > 0.001f) {
-        chestToHip = Vector3Scale(chestToHip, 1.0f / distance);
+        // Vector CHEST -> HIP
+        Vector3 chestToHip = Vector3Subtract(hipPosition, torsoData->position);
+        float distance = Vector3Length(chestToHip);
+        if (distance > 0.001f) {
+            chestToHip = Vector3Scale(chestToHip, 1.0f / distance);
 
-        // pitch en grados (cuánto apunta el chest hacia el hip)
-        float pitchToHip = atan2f(chestToHip.y,
-            sqrtf(chestToHip.x * chestToHip.x + chestToHip.z * chestToHip.z)) * RAD2DEG;
+            // pitch en grados (cuánto apunta el chest hacia el hip)
+            float pitchToHip = atan2f(chestToHip.y,
+                sqrtf(chestToHip.x * chestToHip.x + chestToHip.z * chestToHip.z)) * RAD2DEG;
 
-        // Determinar lado de la cámara respecto al torso (dot con right)
-        Vector3 camToTorso = Vector3Subtract(torsoData->position, camera.position);
-        camToTorso = SafeNormalizeTorso(camToTorso);
-        Vector3 torsoRight = torsoData->orientation.right; // asumimos ortonormal
-        float sideDot = Vector3DotProduct(camToTorso, torsoRight);
-        bool viewingFromRight = (sideDot > 0.0f);
+            // Determinar lado de la cámara respecto al torso (dot con right)
+            Vector3 camToTorso = Vector3Subtract(torsoData->position, camera.position);
+            camToTorso = SafeNormalizeTorso(camToTorso);
+            Vector3 torsoRight = torsoData->orientation.right; // asumimos ortonormal
+            float sideDot = Vector3DotProduct(camToTorso, torsoRight);
+            bool viewingFromRight = (sideDot > 0.0f);
 
-        // Aplicar la misma lógica que en HIP: cambiar la fórmula según el lado
-        if (viewingFromRight) {
-            *outRotation = -pitchToHip - 80.0f;
-        } else {
-            *outRotation = pitchToHip + 80.0f;
+            // Aplicar la misma lógica que en HIP: cambiar la fórmula según el lado
+            if (viewingFromRight) {
+                *outRotation = -pitchToHip - 80.0f;
+            }
+            else {
+                *outRotation = pitchToHip + 80.0f;
+            }
+
+            // Normalizar la rotación al rango [0,360)
+            while (*outRotation >= 360.0f) *outRotation -= 360.0f;
+            while (*outRotation < 0.0f) *outRotation += 360.0f;
         }
-
-        // Normalizar la rotación al rango [0,360)
-        while (*outRotation >= 360.0f) *outRotation -= 360.0f;
-        while (*outRotation < 0.0f) *outRotation += 360.0f;
     }
-}
 
-
-    // ORIENTACIÓN DEL HIP BASADA EN EL CHEST
+    // ORIENTACIÓN DEL HIP BASADA EN EL CHEST (RESTAURADA)
     if (torsoData->type == TORSO_HIP && torsoData->person) {
         Vector3 chestPosition = CalculateChestPosition(torsoData->person);
-        
+
         // Calcular vector del HIP hacia el CHEST
         Vector3 hipToChest = Vector3Subtract(chestPosition, torsoData->position);
-        
+
         // Normalizar el vector
         float distance = Vector3Length(hipToChest);
         if (distance > 0.001f) {
             hipToChest = Vector3Scale(hipToChest, 1.0f / distance);
-            
+
             // Calcular ángulo de inclinación (pitch) - cuánto se inclina hacia el chest
-            float pitchToChest = atan2f(hipToChest.y, 
+            float pitchToChest = atan2f(hipToChest.y,
                 sqrtf(hipToChest.x * hipToChest.x + hipToChest.z * hipToChest.z)) * RAD2DEG;
-            
+
             // Detectar si la cámara está mirando desde la derecha
             Vector3 camToTorso = Vector3Subtract(torsoData->position, camera.position);
             Vector3 torsoRight = torsoData->orientation.right;
             float sideDot = Vector3DotProduct(camToTorso, torsoRight);
             bool viewingFromRight = (sideDot > 0.0f);
-            
+
             // Invertir ángulos si se mira desde la derecha
             if (viewingFromRight) {
                 *outRotation = pitchToChest - 80; // Invertido
-            } else {
+            }
+            else {
                 *outRotation = -pitchToChest + 80; // Invertido del original
             }
-            
+
             // Normalizar la rotación
             while (*outRotation >= 360.0f) *outRotation -= 360.0f;
             while (*outRotation < 0.0f) *outRotation += 360.0f;
         }
     }
 }
-
-    /*/ AGREGAR ROTACIÓN CONTINUA SOLO PARA HIP
-    if (torsoData->type == TORSO_HIP) {
-        float currentTime = GetTime();
-        float spinSpeed = 90.0f; // Grados por segundo
-        float spinRotation = fmodf(currentTime * spinSpeed, 360.0f);
-        *outRotation += spinRotation;
-    }*/
-
 
 bool ShouldRenderChest(const Person* person) {
     if (!person || !person->active) return false;
@@ -391,7 +457,6 @@ void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData*
         *torsoCapacity = estimatedTorsos;
     }
 
-    // Volver al sistema original de detección de duplicados para compatibilidad exacta
     static char processedTorsos[200][25];
     int processedCount = 0;
 
@@ -423,7 +488,7 @@ void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData*
                 torsoData->position = CalculateChestPosition(person);
                 torsoData->orientation = CalculateChestOrientation(person);
                 torsoData->type = TORSO_CHEST;
-                torsoData->person = person; // AQUÍ SE ASIGNA EL PUNTERO A PERSON
+                torsoData->person = person;
 
                 if (!torsoData->orientation.valid && Vector3Length(torsoData->position) < 1e-6f) {
                     continue;
@@ -477,7 +542,7 @@ void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData*
                 torsoData->position = CalculateHipPosition(person);
                 torsoData->orientation = CalculateHipOrientation(person);
                 torsoData->type = TORSO_HIP;
-                torsoData->person = person; // AQUÍ SE ASIGNA EL PUNTERO A PERSON
+                torsoData->person = person;
 
                 if (!torsoData->orientation.valid && Vector3Length(torsoData->position) < 1e-6f) {
                     continue;
