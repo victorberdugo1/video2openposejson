@@ -202,6 +202,12 @@ void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
         return;
     }
 
+    // Calcular y imprimir la posición del chest
+    if (torsoData->person) {
+        Vector3 chestPosition = CalculateChestPosition(torsoData->person);
+        printf("Chest Position: (%.3f, %.3f, %.3f)\n", chestPosition.x, chestPosition.y, chestPosition.z);
+    }
+
     // Usar el mismo sistema que bonetile.c para orientación válida
     static const int indices[3][8] = {
         {0,4,5,6,7,6,5,4},
@@ -255,6 +261,36 @@ void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
         *outMirrored = (sector >= 1 && sector <= 4);
     }
 
+    // ORIENTACIÓN DEL HIP BASADA EN EL CHEST
+    if (torsoData->type == TORSO_HIP && torsoData->person) {
+        Vector3 chestPosition = CalculateChestPosition(torsoData->person);
+        
+        // Calcular vector del HIP hacia el CHEST (este será el nuevo "up" del HIP)
+        Vector3 hipToChest = Vector3Subtract(chestPosition, torsoData->position);
+        
+        // Normalizar el vector
+        float distance = Vector3Length(hipToChest);
+        if (distance > 0.001f) {
+            hipToChest = Vector3Scale(hipToChest, 1.0f / distance);
+            
+            // Calcular ángulo de inclinación (pitch) - cuánto se inclina hacia el chest
+            float pitchToChest = atan2f(hipToChest.y, 
+                sqrtf(hipToChest.x * hipToChest.x + hipToChest.z * hipToChest.z)) * RAD2DEG;
+            
+            // Calcular ángulo de rotación horizontal (yaw) - hacia dónde apunta horizontalmente
+            //float yawToChest = atan2f(hipToChest.x, hipToChest.z) * RAD2DEG;
+            
+            // Combinar ambos ángulos - el yaw como rotación base y pitch como inclinación
+            *outRotation = pitchToChest - 80; // Factor 0.5 para suavizar el pitch
+            
+            // Normalizar la rotación
+            while (*outRotation >= 360.0f) *outRotation -= 360.0f;
+            while (*outRotation < 0.0f) *outRotation += 360.0f;
+        }
+    }
+}
+
+
     /*/ AGREGAR ROTACIÓN CONTINUA SOLO PARA HIP
     if (torsoData->type == TORSO_HIP) {
         float currentTime = GetTime();
@@ -262,7 +298,7 @@ void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
         float spinRotation = fmodf(currentTime * spinSpeed, 360.0f);
         *outRotation += spinRotation;
     }*/
-}
+
 
 bool ShouldRenderChest(const Person* person) {
     if (!person || !person->active) return false;
@@ -343,6 +379,7 @@ void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData*
                 torsoData->position = CalculateChestPosition(person);
                 torsoData->orientation = CalculateChestOrientation(person);
                 torsoData->type = TORSO_CHEST;
+                torsoData->person = person; // AQUÍ SE ASIGNA EL PUNTERO A PERSON
 
                 if (!torsoData->orientation.valid && Vector3Length(torsoData->position) < 1e-6f) {
                     continue;
@@ -396,6 +433,7 @@ void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData*
                 torsoData->position = CalculateHipPosition(person);
                 torsoData->orientation = CalculateHipOrientation(person);
                 torsoData->type = TORSO_HIP;
+                torsoData->person = person; // AQUÍ SE ASIGNA EL PUNTERO A PERSON
 
                 if (!torsoData->orientation.valid && Vector3Length(torsoData->position) < 1e-6f) {
                     continue;

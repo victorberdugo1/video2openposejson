@@ -43,6 +43,7 @@ typedef struct {
     float size;
     char texturePath[MAX_FILE_PATH_LENGTH];
     char personId[16];
+    const Person* person;
 } TorsoRenderData;
 
 // Funciones de posición
