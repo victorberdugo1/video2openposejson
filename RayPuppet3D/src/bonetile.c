@@ -707,7 +707,7 @@ void CalculateBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex
     if (yaw < 0.0f) yaw += 2.0f * PI;
     float pitchDeg = atan2f(camDir.y, sqrtf(camDir.x * camDir.x + camDir.z * camDir.z)) * RAD2DEG;
 
-    // Calcular sector
+    // Calcular sector (NECESARIO TAMBIÉN PARA VISTAS EXTREMAS)
     float normalizedYaw = yaw * RAD2DEG + 22.5f;
     if (normalizedYaw >= 360.0f) normalizedYaw -= 360.0f;
     int sector = (int)(normalizedYaw / 45.0f) % 8;
@@ -743,21 +743,36 @@ void CalculateBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex
         return;
     }
 
-    // Para otros bones: lógica estándar
+    // Para otros bones: lógica estándar CON ROTACIÓN CADA 45 GRADOS
     else {
         const float TOP_THRESHOLD = 70.0f;
         const float BOTTOM_THRESHOLD = -70.0f;
 
         if (pitchDeg >= TOP_THRESHOLD) {
+            // VISTA DESDE ARRIBA - IGUAL QUE CABEZA Y TORSO
             *outChosenIndex = 3;
-            *outRotation = sector * 45.0f + 180.0f;
+            *outRotation = sector * 45.0f;  // ¡AHORA ROTA CADA 45 GRADOS!
             *outMirrored = false;
         }
         else if (pitchDeg <= BOTTOM_THRESHOLD) {
+            // VISTA DESDE ABAJO - IGUAL QUE CABEZA Y TORSO  
             *outChosenIndex = 22;
-            *outRotation = (8 - sector) * 45.0f + 180.0f;
+            *outRotation = (8 - sector) * 45.0f;  // ¡AHORA ROTA CADA 45 GRADOS!
             if (*outRotation >= 360.0f) *outRotation -= 360.0f;
             *outMirrored = true;
+        }
+        else {
+            // VISTA LATERAL/FRONTAL - Sin cambios
+            static const int indices[3][8] = {
+                {0,4,5,6,7,6,5,4},
+                {2,12,13,14,15,14,13,12},
+                {1,8,9,10,11,10,9,8}
+            };
+
+            int row = (pitchDeg >= 22.5f) ? 2 : (pitchDeg >= -22.5f) ? 0 : 1;
+            *outChosenIndex = indices[row][sector];
+            *outRotation = 0.0f;
+            *outMirrored = (sector >= 1 && sector <= 4);
         }
     }
 }

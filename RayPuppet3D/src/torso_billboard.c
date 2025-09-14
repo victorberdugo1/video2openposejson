@@ -319,15 +319,17 @@ void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
 
     int sector = (int)(normalizedYaw / 45.0f) % 8;
 
-    // Seleccionar sprite basado en el ángulo de pitch (igual que bonetile.c)
+    // MODIFICACIÓN: Hacer que el torso se comporte igual que la cabeza
+    // Seleccionar sprite basado en el ángulo de pitch (igual que bonetile.c Y head_billboard.c)
     if (localPitchDeg >= 70.0f) {
         *outChosenIndex = 3;  // Vista desde arriba
-        *outRotation = sector * 45.0f;
+        *outRotation = sector * 45.0f + 180.0f;  // IGUAL QUE LA CABEZA
         *outMirrored = false;
     }
     else if (localPitchDeg <= -70.0f) {
         *outChosenIndex = 15; // Vista desde abajo
-        *outRotation = sector * 45.0f;
+        *outRotation = (8 - sector) * 45.0f + 180.0f;  // IGUAL QUE LA CABEZA
+        if (*outRotation >= 360.0f) *outRotation -= 360.0f;
         *outMirrored = true;
     }
     else {
@@ -339,7 +341,10 @@ void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
     }
 
     // ORIENTACIÓN DEL CHEST BASADA EN EL HIP (RESTAURADA)
-    if (torsoData->type == TORSO_CHEST && torsoData->person && outRotation) {
+    // SOLO se aplica cuando NO estamos en vistas extremas (arriba/abajo)
+    if (torsoData->type == TORSO_CHEST && torsoData->person && 
+        localPitchDeg < 70.0f && localPitchDeg > -70.0f && outRotation) {
+        
         Vector3 hipPosition = CalculateHipPosition(torsoData->person);
 
         // Vector CHEST -> HIP
@@ -374,7 +379,10 @@ void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
     }
 
     // ORIENTACIÓN DEL HIP BASADA EN EL CHEST (RESTAURADA)
-    if (torsoData->type == TORSO_HIP && torsoData->person) {
+    // SOLO se aplica cuando NO estamos en vistas extremas (arriba/abajo)
+    if (torsoData->type == TORSO_HIP && torsoData->person && 
+        localPitchDeg < 70.0f && localPitchDeg > -70.0f) {
+        
         Vector3 chestPosition = CalculateChestPosition(torsoData->person);
 
         // Calcular vector del HIP hacia el CHEST

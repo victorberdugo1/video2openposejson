@@ -858,9 +858,10 @@ static void App_Draw(AppState* app) {
 
         EndBlendMode();
     }
-    DrawOpenPoseSkeleton(app);
+    //DrawOpenPoseSkeleton(app);
     EndMode3D();
-    EndDrawing();
+    EndDrawing();DrawOpenPoseSkeleton(app);
+
 }
 
 
