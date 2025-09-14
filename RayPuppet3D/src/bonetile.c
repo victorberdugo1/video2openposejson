@@ -619,14 +619,6 @@ void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, Camera came
     }
 }
 
-// En la función CalculateBoneRenderData, reemplaza el mapeo indicesH existente:
-
-// Reemplaza la función CalculateBoneRenderData existente con esta versión mejorada:
-
-// Modifica la función CalculateBoneRenderData para incluir orientación dinámica de muñecas:
-
-// MANTÉN CalculateBoneRenderData EXACTAMENTE como estaba (SIN el parámetro BoneOrientation):
-
 void CalculateBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex,
     float* outRotation, bool* outMirrored, const char* boneName) {
 
