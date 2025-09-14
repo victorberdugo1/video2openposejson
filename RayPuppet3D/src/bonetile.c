@@ -374,25 +374,10 @@ BoneOrientation CalculateBoneOrientation(const char* boneName, const Person* per
 
 
 
-static void DrawQuadTextured3D(Texture2D tex, Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3,
-    float u0, float v0t, float u1, float v1t) {
-    rlSetTexture(tex.id);
-    rlBegin(RL_QUADS);
-    rlColor4ub(255, 255, 255, 255);
-    rlTexCoord2f(u0, v0t); rlVertex3f(v0.x, v0.y, v0.z);
-    rlTexCoord2f(u1, v0t); rlVertex3f(v1.x, v1.y, v1.z);
-    rlTexCoord2f(u1, v1t); rlVertex3f(v2.x, v2.y, v2.z);
-    rlTexCoord2f(u0, v1t); rlVertex3f(v3.x, v3.y, v3.z);
-    rlEnd();
-    rlSetTexture(0);
-}
+
 
 Rectangle SrcFromLogical(Texture2D tex, int logicalCol, int logicalRow, int physCols, int physRows,
     bool mirrored, bool* outMirrored) {
-    // Mejor manejo: physCols/physRows representan el número TOTAL de celdas
-    // en la textura física que queremos usar (por ejemplo 5x5 para las manos).
-    // logicalCol/logicalRow se interpretan en ese mismo espacio cuando physCols/physRows
-    // se especifican. Esto evita division entera que daba 0 cuando physCols < ATLAS_COLS.
 
     // Clamp lógico
     if (logicalCol < 0) logicalCol = 0;
@@ -419,19 +404,7 @@ Rectangle SrcFromLogical(Texture2D tex, int logicalCol, int logicalRow, int phys
     };
 }
 
-static void DrawQuadTextured3D_UVs(Texture2D tex,
-    Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3,
-    Vector2 uv0, Vector2 uv1, Vector2 uv2, Vector2 uv3) {
-    rlSetTexture(tex.id);
-    rlBegin(RL_QUADS);
-    rlColor4ub(255, 255, 255, 255);
-    rlTexCoord2f(uv0.x, uv0.y); rlVertex3f(v0.x, v0.y, v0.z);
-    rlTexCoord2f(uv1.x, uv1.y); rlVertex3f(v1.x, v1.y, v1.z);
-    rlTexCoord2f(uv2.x, uv2.y); rlVertex3f(v2.x, v2.y, v2.z);
-    rlTexCoord2f(uv3.x, uv3.y); rlVertex3f(v3.x, v3.y, v3.z);
-    rlEnd();
-    rlSetTexture(0);
-}
+
 
 static bool ShouldFlipBoneTexture(const char* boneName) {
     if (!boneName) return false;
@@ -447,15 +420,38 @@ static bool ShouldFlipBoneTexture(const char* boneName) {
     return false;
 }
 
-// ------------------------------------------------------------------
-// NUEVO: helper para detectar sólo huesos de la muñeca (wrist)
-// Si quieres incluir 'LHand'/'RHand' u otros nombres, añádelos aquí.
+
 static bool IsWristBone(const char* boneName) {
     if (!boneName) return false;
     return (strcmp(boneName, "LWrist") == 0) || (strcmp(boneName, "RWrist") == 0);
 }
-// ------------------------------------------------------------------
 
+static void DrawQuadTextured3D(Texture2D tex, Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3,
+    float u0, float v0t, float u1, float v1t) {
+    rlSetTexture(tex.id);
+    rlBegin(RL_QUADS);
+    rlColor4ub(255, 255, 255, 255);
+    rlTexCoord2f(u0, v0t); rlVertex3f(v0.x, v0.y, v0.z);
+    rlTexCoord2f(u1, v0t); rlVertex3f(v1.x, v1.y, v1.z);
+    rlTexCoord2f(u1, v1t); rlVertex3f(v2.x, v2.y, v2.z);
+    rlTexCoord2f(u0, v1t); rlVertex3f(v3.x, v3.y, v3.z);
+    rlEnd();
+    rlSetTexture(0);
+}
+
+static void DrawQuadTextured3D_UVs(Texture2D tex,
+    Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3,
+    Vector2 uv0, Vector2 uv1, Vector2 uv2, Vector2 uv3) {
+    rlSetTexture(tex.id);
+    rlBegin(RL_QUADS);
+    rlColor4ub(255, 255, 255, 255);
+    rlTexCoord2f(uv0.x, uv0.y); rlVertex3f(v0.x, v0.y, v0.z);
+    rlTexCoord2f(uv1.x, uv1.y); rlVertex3f(v1.x, v1.y, v1.z);
+    rlTexCoord2f(uv2.x, uv2.y); rlVertex3f(v2.x, v2.y, v2.z);
+    rlTexCoord2f(uv3.x, uv3.y); rlVertex3f(v3.x, v3.y, v3.z);
+    rlEnd();
+    rlSetTexture(0);
+}
 
 void DrawBonetileCustom(Texture2D tex, Camera camera, Rectangle src, Vector3 pos, Vector2 size,
     float rotationDeg, bool mirrored, const char* boneName) {
@@ -491,8 +487,25 @@ void DrawBonetileCustom(Texture2D tex, Camera camera, Rectangle src, Vector3 pos
     DrawQuadTextured3D(tex, p0, p1, p2, p3, u_left, v0t, u_right, v1t);
 }
 
+// Función auxiliar para determinar si es un bone que debe tener altura variable
+static bool ShouldUseVariableHeight(const char* boneName) {
+    if (!boneName) return false;
+
+    // Solo brazos y piernas (sin manos/pies)
+    static const char* variableHeightBones[] = {
+        "LShoulder", "LElbow", "RShoulder", "RElbow",
+        "LHip", "LKnee", "RHip", "RKnee"
+    };
+
+    for (int i = 0; i < 8; i++) {
+        if (strcmp(boneName, variableHeightBones[i]) == 0) return true;
+    }
+    return false;
+}
+
 void DrawBonetileCustomWithRoll(Texture2D tex, Camera camera, Rectangle src, Vector3 pos, Vector2 size,
     float rotationDeg, bool mirrored, bool neighborValid, Vector3 neighborPos, const char* boneName) {
+
     Vector3 camForward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
     Vector3 right = Vector3Normalize(Vector3CrossProduct(camForward, camera.up));
     Vector3 up = Vector3Normalize(Vector3CrossProduct(right, camForward));
@@ -510,13 +523,30 @@ void DrawBonetileCustomWithRoll(Texture2D tex, Camera camera, Rectangle src, Vec
     Vector3 newRight = Vector3Subtract(Vector3Scale(right, cosf(a)), Vector3Scale(up, sinf(a)));
     Vector3 newUp = Vector3Add(Vector3Scale(right, sinf(a)), Vector3Scale(up, cosf(a)));
 
-    Vector3 halfX = Vector3Scale(newRight, size.x * 0.5f);
-    Vector3 halfY = Vector3Scale(newUp, size.y * 0.5f);
+    // MODIFICACIÓN PARA ALTURA VARIABLE
+    Vector2 actualSize = size;
+    Vector3 actualPos = pos; // Mantener posición original del bone
 
-    Vector3 p0 = Vector3Subtract(Vector3Subtract(pos, halfX), halfY);
-    Vector3 p1 = Vector3Add(Vector3Subtract(pos, halfY), halfX);
-    Vector3 p2 = Vector3Add(Vector3Add(pos, halfX), halfY);
-    Vector3 p3 = Vector3Subtract(Vector3Add(pos, halfY), halfX);
+    if (ShouldUseVariableHeight(boneName) && neighborValid) {
+        // Calcular la distancia real al vecino
+        float neighborDistance = Vector3Distance(pos, neighborPos);
+
+        // Añadir un factor de extensión para que se superpongan los bones
+        // Esto asegura que lleguen hasta los bordes y se toquen
+        float extensionFactor = 1.5f; // 20% más largo para superposición
+        actualSize.y = neighborDistance * extensionFactor;
+
+        // NO centrar - mantener el bone en su posición original
+        // El bone se alargará desde su posición hacia el vecino (y más allá)
+    }
+
+    Vector3 halfX = Vector3Scale(newRight, actualSize.x * 0.5f);
+    Vector3 halfY = Vector3Scale(newUp, actualSize.y * 0.5f);
+
+    Vector3 p0 = Vector3Subtract(Vector3Subtract(actualPos, halfX), halfY);
+    Vector3 p1 = Vector3Add(Vector3Subtract(actualPos, halfY), halfX);
+    Vector3 p2 = Vector3Add(Vector3Add(actualPos, halfX), halfY);
+    Vector3 p3 = Vector3Subtract(Vector3Add(actualPos, halfY), halfX);
 
     float texW = (float)tex.width, texH = (float)tex.height;
     float u_left = src.x / texW, u_right = (src.x + src.width) / texW;
@@ -730,45 +760,4 @@ void CalculateBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex
             *outMirrored = true;
         }
     }
-}
-
-// Y SOLO modifica DrawBoneWithOrientation para que las muñecas usen CalculateEnhancedBoneRenderData:
-
-void DrawBoneWithOrientation(Texture2D texture, Camera camera, const BoneRenderData* boneData) {
-    if (!boneData || !boneData->valid || !boneData->visible) return;
-
-    int chosenIndex;
-    float rotation;
-    bool mirrored;
-
-    if (boneData->orientation.valid) {
-        // CAMBIO CLAVE: Todas las bones con orientación válida usan CalculateEnhancedBoneRenderData
-        // Esto incluye las muñecas que ahora tendrán orientación dinámica
-        CalculateEnhancedBoneRenderData(boneData, camera, &chosenIndex, &rotation, &mirrored);
-    }
-    else {
-        // Bones sin orientación usan el sistema original
-        CalculateBoneRenderData(boneData->position, camera, &chosenIndex, &rotation, &mirrored, boneData->boneName);
-    }
-
-    // --- RESTO SIN CAMBIOS ---
-    bool isWrist = IsWristBone(boneData->boneName);
-    const int DEFAULT_NON_WRIST_COLS = 4;
-    const int DEFAULT_NON_WRIST_ROWS = 4;
-    int usedPhysCols = isWrist ? 5 : DEFAULT_NON_WRIST_COLS;
-    int usedPhysRows = isWrist ? 5 : DEFAULT_NON_WRIST_ROWS;
-    bool passMirrored = isWrist ? false : mirrored;
-
-    int maxIndex = usedPhysCols * usedPhysRows - 1;
-    if (chosenIndex < 0) chosenIndex = 0;
-    if (chosenIndex > maxIndex) chosenIndex = chosenIndex % (maxIndex + 1);
-
-    int logicalCol = chosenIndex % usedPhysCols;
-    int logicalRow = chosenIndex / usedPhysCols;
-
-    bool finalMirror;
-    Rectangle src = SrcFromLogical(texture, logicalCol, logicalRow, usedPhysCols, usedPhysRows, passMirrored, &finalMirror);
-    Vector2 worldSize = { boneData->size, boneData->size };
-
-    DrawBonetileCustom(texture, camera, src, boneData->position, worldSize, rotation, finalMirror, boneData->boneName);
 }
