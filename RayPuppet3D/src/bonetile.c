@@ -374,10 +374,25 @@ BoneOrientation CalculateBoneOrientation(const char* boneName, const Person* per
 
 
 
-
+static void DrawQuadTextured3D(Texture2D tex, Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3,
+    float u0, float v0t, float u1, float v1t) {
+    rlSetTexture(tex.id);
+    rlBegin(RL_QUADS);
+    rlColor4ub(255, 255, 255, 255);
+    rlTexCoord2f(u0, v0t); rlVertex3f(v0.x, v0.y, v0.z);
+    rlTexCoord2f(u1, v0t); rlVertex3f(v1.x, v1.y, v1.z);
+    rlTexCoord2f(u1, v1t); rlVertex3f(v2.x, v2.y, v2.z);
+    rlTexCoord2f(u0, v1t); rlVertex3f(v3.x, v3.y, v3.z);
+    rlEnd();
+    rlSetTexture(0);
+}
 
 Rectangle SrcFromLogical(Texture2D tex, int logicalCol, int logicalRow, int physCols, int physRows,
     bool mirrored, bool* outMirrored) {
+    // Mejor manejo: physCols/physRows representan el número TOTAL de celdas
+    // en la textura física que queremos usar (por ejemplo 5x5 para las manos).
+    // logicalCol/logicalRow se interpretan en ese mismo espacio cuando physCols/physRows
+    // se especifican. Esto evita division entera que daba 0 cuando physCols < ATLAS_COLS.
 
     // Clamp lógico
     if (logicalCol < 0) logicalCol = 0;
@@ -404,7 +419,19 @@ Rectangle SrcFromLogical(Texture2D tex, int logicalCol, int logicalRow, int phys
     };
 }
 
-
+static void DrawQuadTextured3D_UVs(Texture2D tex,
+    Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3,
+    Vector2 uv0, Vector2 uv1, Vector2 uv2, Vector2 uv3) {
+    rlSetTexture(tex.id);
+    rlBegin(RL_QUADS);
+    rlColor4ub(255, 255, 255, 255);
+    rlTexCoord2f(uv0.x, uv0.y); rlVertex3f(v0.x, v0.y, v0.z);
+    rlTexCoord2f(uv1.x, uv1.y); rlVertex3f(v1.x, v1.y, v1.z);
+    rlTexCoord2f(uv2.x, uv2.y); rlVertex3f(v2.x, v2.y, v2.z);
+    rlTexCoord2f(uv3.x, uv3.y); rlVertex3f(v3.x, v3.y, v3.z);
+    rlEnd();
+    rlSetTexture(0);
+}
 
 static bool ShouldFlipBoneTexture(const char* boneName) {
     if (!boneName) return false;
@@ -420,38 +447,15 @@ static bool ShouldFlipBoneTexture(const char* boneName) {
     return false;
 }
 
-
+// ------------------------------------------------------------------
+// NUEVO: helper para detectar sólo huesos de la muñeca (wrist)
+// Si quieres incluir 'LHand'/'RHand' u otros nombres, añádelos aquí.
 static bool IsWristBone(const char* boneName) {
     if (!boneName) return false;
     return (strcmp(boneName, "LWrist") == 0) || (strcmp(boneName, "RWrist") == 0);
 }
+// ------------------------------------------------------------------
 
-static void DrawQuadTextured3D(Texture2D tex, Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3,
-    float u0, float v0t, float u1, float v1t) {
-    rlSetTexture(tex.id);
-    rlBegin(RL_QUADS);
-    rlColor4ub(255, 255, 255, 255);
-    rlTexCoord2f(u0, v0t); rlVertex3f(v0.x, v0.y, v0.z);
-    rlTexCoord2f(u1, v0t); rlVertex3f(v1.x, v1.y, v1.z);
-    rlTexCoord2f(u1, v1t); rlVertex3f(v2.x, v2.y, v2.z);
-    rlTexCoord2f(u0, v1t); rlVertex3f(v3.x, v3.y, v3.z);
-    rlEnd();
-    rlSetTexture(0);
-}
-
-static void DrawQuadTextured3D_UVs(Texture2D tex,
-    Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3,
-    Vector2 uv0, Vector2 uv1, Vector2 uv2, Vector2 uv3) {
-    rlSetTexture(tex.id);
-    rlBegin(RL_QUADS);
-    rlColor4ub(255, 255, 255, 255);
-    rlTexCoord2f(uv0.x, uv0.y); rlVertex3f(v0.x, v0.y, v0.z);
-    rlTexCoord2f(uv1.x, uv1.y); rlVertex3f(v1.x, v1.y, v1.z);
-    rlTexCoord2f(uv2.x, uv2.y); rlVertex3f(v2.x, v2.y, v2.z);
-    rlTexCoord2f(uv3.x, uv3.y); rlVertex3f(v3.x, v3.y, v3.z);
-    rlEnd();
-    rlSetTexture(0);
-}
 
 void DrawBonetileCustom(Texture2D tex, Camera camera, Rectangle src, Vector3 pos, Vector2 size,
     float rotationDeg, bool mirrored, const char* boneName) {
@@ -487,25 +491,8 @@ void DrawBonetileCustom(Texture2D tex, Camera camera, Rectangle src, Vector3 pos
     DrawQuadTextured3D(tex, p0, p1, p2, p3, u_left, v0t, u_right, v1t);
 }
 
-// Función auxiliar para determinar si es un bone que debe tener altura variable
-static bool ShouldUseVariableHeight(const char* boneName) {
-    if (!boneName) return false;
-
-    // Solo brazos y piernas (sin manos/pies)
-    static const char* variableHeightBones[] = {
-        "LShoulder", "LElbow", "RShoulder", "RElbow",
-        "LHip", "LKnee", "RHip", "RKnee"
-    };
-
-    for (int i = 0; i < 8; i++) {
-        if (strcmp(boneName, variableHeightBones[i]) == 0) return true;
-    }
-    return false;
-}
-
 void DrawBonetileCustomWithRoll(Texture2D tex, Camera camera, Rectangle src, Vector3 pos, Vector2 size,
     float rotationDeg, bool mirrored, bool neighborValid, Vector3 neighborPos, const char* boneName) {
-
     Vector3 camForward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
     Vector3 right = Vector3Normalize(Vector3CrossProduct(camForward, camera.up));
     Vector3 up = Vector3Normalize(Vector3CrossProduct(right, camForward));
@@ -523,30 +510,13 @@ void DrawBonetileCustomWithRoll(Texture2D tex, Camera camera, Rectangle src, Vec
     Vector3 newRight = Vector3Subtract(Vector3Scale(right, cosf(a)), Vector3Scale(up, sinf(a)));
     Vector3 newUp = Vector3Add(Vector3Scale(right, sinf(a)), Vector3Scale(up, cosf(a)));
 
-    // MODIFICACIÓN PARA ALTURA VARIABLE
-    Vector2 actualSize = size;
-    Vector3 actualPos = pos; // Mantener posición original del bone
+    Vector3 halfX = Vector3Scale(newRight, size.x * 0.5f);
+    Vector3 halfY = Vector3Scale(newUp, size.y * 0.5f);
 
-    if (ShouldUseVariableHeight(boneName) && neighborValid) {
-        // Calcular la distancia real al vecino
-        float neighborDistance = Vector3Distance(pos, neighborPos);
-
-        // Añadir un factor de extensión para que se superpongan los bones
-        // Esto asegura que lleguen hasta los bordes y se toquen
-        float extensionFactor = 1.5f; // 20% más largo para superposición
-        actualSize.y = neighborDistance * extensionFactor;
-
-        // NO centrar - mantener el bone en su posición original
-        // El bone se alargará desde su posición hacia el vecino (y más allá)
-    }
-
-    Vector3 halfX = Vector3Scale(newRight, actualSize.x * 0.5f);
-    Vector3 halfY = Vector3Scale(newUp, actualSize.y * 0.5f);
-
-    Vector3 p0 = Vector3Subtract(Vector3Subtract(actualPos, halfX), halfY);
-    Vector3 p1 = Vector3Add(Vector3Subtract(actualPos, halfY), halfX);
-    Vector3 p2 = Vector3Add(Vector3Add(actualPos, halfX), halfY);
-    Vector3 p3 = Vector3Subtract(Vector3Add(actualPos, halfY), halfX);
+    Vector3 p0 = Vector3Subtract(Vector3Subtract(pos, halfX), halfY);
+    Vector3 p1 = Vector3Add(Vector3Subtract(pos, halfY), halfX);
+    Vector3 p2 = Vector3Add(Vector3Add(pos, halfX), halfY);
+    Vector3 p3 = Vector3Subtract(Vector3Add(pos, halfY), halfX);
 
     float texW = (float)tex.width, texH = (float)tex.height;
     float u_left = src.x / texW, u_right = (src.x + src.width) / texW;
@@ -649,6 +619,7 @@ void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, Camera came
     }
 }
 
+
 void CalculateBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex,
     float* outRotation, bool* outMirrored, const char* boneName) {
 
@@ -707,7 +678,7 @@ void CalculateBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex
     if (yaw < 0.0f) yaw += 2.0f * PI;
     float pitchDeg = atan2f(camDir.y, sqrtf(camDir.x * camDir.x + camDir.z * camDir.z)) * RAD2DEG;
 
-    // Calcular sector (NECESARIO TAMBIÉN PARA VISTAS EXTREMAS)
+    // Calcular sector
     float normalizedYaw = yaw * RAD2DEG + 22.5f;
     if (normalizedYaw >= 360.0f) normalizedYaw -= 360.0f;
     int sector = (int)(normalizedYaw / 45.0f) % 8;
@@ -743,36 +714,21 @@ void CalculateBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex
         return;
     }
 
-    // Para otros bones: lógica estándar CON ROTACIÓN CADA 45 GRADOS
+    // Para otros bones: lógica estándar
     else {
         const float TOP_THRESHOLD = 70.0f;
         const float BOTTOM_THRESHOLD = -70.0f;
 
         if (pitchDeg >= TOP_THRESHOLD) {
-            // VISTA DESDE ARRIBA - IGUAL QUE CABEZA Y TORSO
             *outChosenIndex = 3;
-            *outRotation = sector * 45.0f;  // ¡AHORA ROTA CADA 45 GRADOS!
+            *outRotation = sector * 45.0f + 180.0f;
             *outMirrored = false;
         }
         else if (pitchDeg <= BOTTOM_THRESHOLD) {
-            // VISTA DESDE ABAJO - IGUAL QUE CABEZA Y TORSO  
             *outChosenIndex = 22;
-            *outRotation = (8 - sector) * 45.0f;  // ¡AHORA ROTA CADA 45 GRADOS!
+            *outRotation = (8 - sector) * 45.0f + 180.0f;
             if (*outRotation >= 360.0f) *outRotation -= 360.0f;
             *outMirrored = true;
-        }
-        else {
-            // VISTA LATERAL/FRONTAL - Sin cambios
-            static const int indices[3][8] = {
-                {0,4,5,6,7,6,5,4},
-                {2,12,13,14,15,14,13,12},
-                {1,8,9,10,11,10,9,8}
-            };
-
-            int row = (pitchDeg >= 22.5f) ? 2 : (pitchDeg >= -22.5f) ? 0 : 1;
-            *outChosenIndex = indices[row][sector];
-            *outRotation = 0.0f;
-            *outMirrored = (sector >= 1 && sector <= 4);
         }
     }
 }

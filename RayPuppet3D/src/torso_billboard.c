@@ -430,19 +430,44 @@ bool ShouldRenderHip(const Person* person) {
 
 void DrawTorsoBillboard(Texture2D texture, Camera camera, const TorsoRenderData* torsoData, int physCols, int physRows) {
     if (!torsoData || !torsoData->valid || !torsoData->visible) return;
-
     int chosenIndex;
     float rotation;
     bool mirrored;
     CalculateTorsoRenderData(torsoData, camera, &chosenIndex, &rotation, &mirrored);
 
+    // Detectar SOLO vista frontal/trasera para anular rotaciones especiales
+    if (torsoData->orientation.valid) {
+        Vector3 camDir = Vector3Subtract(torsoData->position, camera.position);
+        camDir = SafeNormalizeTorso(camDir);
+        Vector3 localCamDir = {
+            Vector3DotProduct(camDir, torsoData->orientation.right),
+            Vector3DotProduct(camDir, torsoData->orientation.up),
+            Vector3DotProduct(camDir, torsoData->orientation.forward)
+        };
+
+        float localYaw = atan2f(localCamDir.x, localCamDir.z);
+        if (localYaw < 0.0f) localYaw += 2.0f * PI;
+
+        float localPitchDeg = atan2f(localCamDir.y,
+            sqrtf(localCamDir.x * localCamDir.x + localCamDir.z * localCamDir.z)) * RAD2DEG;
+        localPitchDeg = -localPitchDeg;
+
+        float normalizedYaw = localYaw * RAD2DEG + 22.5f;
+        if (normalizedYaw >= 360.0f) normalizedYaw -= 360.0f;
+        int sector = (int)(normalizedYaw / 45.0f) % 8;
+
+        // Anular rotaciones SOLO en vista frontal/trasera Y NO en vistas extremas
+        if ((sector == 0 || sector == 4) &&
+            localPitchDeg < 70.0f && localPitchDeg > -70.0f) {
+            rotation = 0.0f;
+        }
+    }
+
     int logicalCol = chosenIndex % ATLAS_COLS;
     int logicalRow = chosenIndex / ATLAS_COLS;
-
     bool finalMirror;
     Rectangle src = SrcFromLogical(texture, logicalCol, logicalRow, physCols, physRows, mirrored, &finalMirror);
     Vector2 worldSize = { torsoData->size, torsoData->size };
-
     DrawBonetileCustom(texture, camera, src, torsoData->position, worldSize, rotation, finalMirror, "");
 }
 
