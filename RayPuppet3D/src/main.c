@@ -568,7 +568,7 @@ static void DrawOpenPoseSkeleton(AppState* app) {
         for (int b = 0; b < person->boneCount; b++) {
             const Bone* bone = &person->bones[b];
             if (bone->position.valid) {
-                DrawSphere(bone->position.position, 0.02f, BLUE);
+                DrawSphere(bone->position.position, 0.002f, BLUE);
             }
         }
 
@@ -858,9 +858,10 @@ static void App_Draw(AppState* app) {
 
         EndBlendMode();
     }
-    //DrawOpenPoseSkeleton(app);
+    DrawOpenPoseSkeleton(app);
     EndMode3D();
-    EndDrawing();DrawOpenPoseSkeleton(app);
+    EndDrawing();
+	//DrawOpenPoseSkeleton(app);
 
 }
 
