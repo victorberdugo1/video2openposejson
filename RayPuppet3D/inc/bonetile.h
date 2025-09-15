@@ -54,7 +54,7 @@ typedef struct {
 
 bool GetBoneConnectionsWithPriority(const char* boneName, char connections[3][MAX_BONE_NAME_LENGTH], float priorities[3]);
 
-void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, Camera camera,
+void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, const Person* person, Camera camera,
     int* outChosenIndex, float* outRotation, bool* outMirrored);
 
 void CalculateBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex,

@@ -577,10 +577,30 @@ static void DrawOpenPoseSkeleton(AppState* app) {
     }
 }
 
+// Busca el Person que contiene un bone con el nombre dado (devuelve NULL si no lo encuentra)
+static const Person* FindPersonByBoneName(const AnimationFrame* frame, const char* boneName) {
+    if (!frame || !boneName) return NULL;
+    for (int p = 0; p < frame->personCount; p++) {
+        const Person* person = &frame->persons[p];
+        if (!person->active) continue;
+        for (int b = 0; b < person->boneCount; b++) {
+            const Bone* bone = &person->bones[b];
+            // no asumimos bone->position.valid: puede ser nombre igual aun así
+            if (strcmp(bone->name, boneName) == 0) {
+                return person;
+            }
+        }
+    }
+    return NULL;
+}
 
 static void App_Draw(AppState* app) {
     if (!app) return;
 
+    const AnimationFrame* frame = NULL;
+    if (app->animation.isLoaded && BonesIsValidFrame(&app->animation, app->currentFrame)) {
+        frame = &app->animation.frames[app->currentFrame];
+    }
     BeginDrawing();
     ClearBackground(RAYWHITE);
 
@@ -704,8 +724,10 @@ static void App_Draw(AppState* app) {
                 CalculateBoneRenderData(bone->position, app->camera, &chosenIndex, &rotation, &mirrored, bone->boneName);
             }
             else if (bone->orientation.valid) {
-                CalculateEnhancedBoneRenderData(bone, app->camera, &chosenIndex, &rotation, &mirrored);
+                const Person* bonePerson = (frame != NULL) ? FindPersonByBoneName(frame, bone->boneName) : NULL;
+                CalculateEnhancedBoneRenderData(bone, bonePerson, app->camera, &chosenIndex, &rotation, &mirrored);
             }
+
 
 
 
@@ -806,8 +828,10 @@ static void App_Draw(AppState* app) {
                     CalculateBoneRenderData(bone->position, app->camera, &chosenIndex, &rotation, &mirrored, bone->boneName);
                 }
                 else if (bone->orientation.valid) {
-                    CalculateEnhancedBoneRenderData(bone, app->camera, &chosenIndex, &rotation, &mirrored);
+                    const Person* bonePerson = (frame != NULL) ? FindPersonByBoneName(frame, bone->boneName) : NULL;
+                    CalculateEnhancedBoneRenderData(bone, bonePerson, app->camera, &chosenIndex, &rotation, &mirrored);
                 }
+
 
                 int maxIndex = usedCols * usedRows - 1;
                 if (chosenIndex < 0) chosenIndex = 0;

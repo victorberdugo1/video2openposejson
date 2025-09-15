@@ -545,10 +545,59 @@ BoneRenderData* FindRenderBoneByName(BoneRenderData* bones, int count, const cha
     return NULL;
 }
 
+// Asumo que ya existe:
+// typedef struct { Vector3 pos0, pos1; } BoneConnectionPositions;
+// extern BoneRenderData g_renderBones[]; extern int g_renderBoneCount;
 
-void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, Camera camera,
+// ---------------------------------------------------------
+// Helper: estructura para devolver 1 (o 2) posiciones
+// ---------------------------------------------------------
+typedef struct {
+    Vector3 pos0;
+    Vector3 pos1;
+} BoneConnectionPositions;
+
+
+BoneConnectionPositions GetBoneConnectionPositionsEx(const BoneRenderData* boneData, const Person* person) {
+    BoneConnectionPositions result = { 0 };
+
+    if (!boneData || !boneData->valid) return result;
+
+    // pos0 = la propia posición del bone
+    result.pos0 = boneData->position;
+    result.pos1 = result.pos0; // fallback: misma posición
+
+    // Buscar la entrada en BONE_CONNECTIONS
+    for (int i = 0; BONE_CONNECTIONS[i].boneName[0] != '\0'; i++) {
+        if (strcmp(BONE_CONNECTIONS[i].boneName, boneData->boneName) != 0) continue;
+
+        // Intentar conexiones en orden preferente: connections[1], luego connections[2]
+        for (int k = 1; k < 3; k++) {
+            const char* neighborName = BONE_CONNECTIONS[i].connections[k];
+            if (!neighborName || neighborName[0] == '\0') continue;
+            if (strcmp(neighborName, boneData->boneName) == 0) continue;
+
+            // Pedimos la posición al 'person' (usa tu helper GetBonePositionByName)
+            if (person) {
+                Vector3 p = GetBonePositionByName(person, neighborName);
+                if (Vector3Length(p) > 1e-6f) {
+                    result.pos1 = p;
+                    return result;
+                }
+            }
+        }
+        return result;
+    }
+    return result;
+}
+
+
+
+
+
+void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, const Person* person, Camera camera,
     int* outChosenIndex, float* outRotation, bool* outMirrored) {
-
+    (void)person;
     if (!boneData->orientation.valid) {
         CalculateBoneRenderData(boneData->position, camera, outChosenIndex, outRotation, outMirrored, boneData->boneName);
         return;
@@ -617,9 +666,91 @@ void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, Camera came
         *outRotation = 0.0f;
         *outMirrored = (sector >= 1 && sector <= 4);
     }
+
+
+
+
+    //EMPIEZA AQUI///
+    BoneConnectionPositions p = GetBoneConnectionPositionsEx(boneData, person);
+
+    // --- Ejes de la cámara (raylib Camera3D) ---
+    Vector3 camF = Vector3Subtract(camera.target, camera.position);
+    camF = SafeNormalize(camF); // forward
+
+    Vector3 camR = Vector3CrossProduct(camF, camera.up);
+    camR = SafeNormalize(camR); // right
+
+    Vector3 camU = Vector3CrossProduct(camR, camF);
+    camU = SafeNormalize(camU); // corrected up (ortonormal)
+
+    // --- Vector del bone (pos0 -> pos1) y punto medio ---
+    Vector3 boneVec = Vector3Subtract(p.pos1, p.pos0);
+    float boneLen = Vector3Length(boneVec);
+    if (boneLen < 1e-6f) {
+        // bone sin longitud válida: evitar divisiones por cero
+        boneVec = (Vector3){ 0.0f, 0.0f, 1.0f }; // fallback
+    }
+    else {
+        boneVec = Vector3Scale(boneVec, 1.0f / boneLen);
+    }
+    Vector3 mid = {
+        (p.pos0.x + p.pos1.x) * 0.5f,
+        (p.pos0.y + p.pos1.y) * 0.5f,
+        (p.pos0.z + p.pos1.z) * 0.5f
+    };
+
+    // --- Dirección desde el mid del bone hacia la cámara ---
+    Vector3 toCam = Vector3Subtract(camera.position, mid);
+    float toCamLen = Vector3Length(toCam);
+    if (toCamLen < 1e-6f) {
+        toCam = (Vector3){ 0.0f, 0.0f, 1.0f };
+    }
+    else {
+        toCam = Vector3Scale(toCam, 1.0f / toCamLen);
+    }
+
+    // --- Ángulo mínimo entre boneVec y la dirección a la cámara (0..180) ---
+    float d = Vector3DotProduct(boneVec, toCam);
+    if (d > 1.0f) d = 1.0f;
+    if (d < -1.0f) d = -1.0f;
+    float angleBetweenDeg = acosf(d) * RAD2DEG;
+
+    // --- Inclinación del bone en el espacio de la cámara (pitch firmado, -90..90) ---
+    Vector3 boneInCam = {
+        Vector3DotProduct(boneVec, camR),  // X en espacio cámara
+        Vector3DotProduct(boneVec, camU),  // Y en espacio cámara
+        Vector3DotProduct(boneVec, camF)   // Z en espacio cámara
+    };
+
+    float horizLen = sqrtf(boneInCam.x * boneInCam.x + boneInCam.z * boneInCam.z);
+    float bonePitchInCameraDeg = atan2f(boneInCam.y, horizLen) * RAD2DEG; // firmado
+
+
+    localPitchDeg += bonePitchInCameraDeg;
+    // Si no la quieres sumar, comenta la línea anterior y usa bonePitchInCameraDeg por separado.
+
+    // --- (Opcional) imprimir/usar los valores ---
+    if (boneData->boneName[0] != '\0') {
+        if (strstr(boneData->boneName, "LHip") != NULL) {
+            printf("AngleBetween(bone-cam)=%.2f°  |  BonePitchInCamera=%.2f°  |  LocalPitchAdj=%.2f°\n",
+                angleBetweenDeg, bonePitchInCameraDeg, localPitchDeg);
+        }
+    }
+
 }
 
 
+/*    if (boneData->boneName[0] != '\0') {
+        if (strstr(boneData->boneName, "Hip") != NULL) {
+            float currentTime = GetTime();
+            float spinSpeed = 90.0f; // grados por segundo
+            float spinRotation = fmodf(currentTime * spinSpeed, 360.0f);
+            *outRotation += spinRotation;
+            while (*outRotation >= 360.0f) *outRotation -= 360.0f;
+            while (*outRotation < 0.0f) *outRotation += 360.0f;
+        }
+    }
+*/
 void CalculateBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex,
     float* outRotation, bool* outMirrored, const char* boneName) {
 
