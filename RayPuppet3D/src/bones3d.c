@@ -98,8 +98,8 @@ static Vector3 CalculateBoneMidpoint(const char* boneName, const Person* person)
     if (strstr(boneName, "Ankle") && strstr(connectedBoneName, "FOOT_FORWARD")) {
         if (bonePos.x || bonePos.y || bonePos.z) {
             Vector3 footPosition = bonePos;
-            footPosition.z += 0.03f; // 15cm forward
-            footPosition.y -= 0.01f; // 3cm down
+            footPosition.z += 0.01f; // 15cm forward
+            footPosition.y -= 0.025f; // 3cm down
             return footPosition;
         }
         return bonePos;

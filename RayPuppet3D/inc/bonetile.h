@@ -77,4 +77,6 @@ void CalculateDirectionalBoneRenderData(Vector3 bonePos, Vector3 neighborPos, bo
 
 BoneOrientation CalculateBoneOrientation(const char* boneName, const Person* person, Vector3 bonePosition);
 
+Vector3 SafeNormalize(Vector3 v);
+
 #endif /* BONETILE_H */

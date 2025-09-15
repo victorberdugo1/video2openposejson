@@ -23,5 +23,5 @@ LHip tex/Leg.png 1 0.15
 RHip tex/Leg.png 1 0.15
 LKnee tex/Shin.png 1 0.13
 RKnee tex/Shin.png 1 0.13
-LAnkle tex/FootL.png 1 0.08
-RAnkle tex/FootR.png 1 0.08
+LAnkle tex/FootL.png 1 0.13
+RAnkle tex/FootR.png 1 0.13
