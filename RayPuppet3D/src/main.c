@@ -14,6 +14,7 @@
 #define MAX_TEXTURES 13
 #define MAX_RENDER_ITEMS 512
 
+// Constants
 static const float AUTO_PLAY_LERP = 0.15f;
 static const float ORBIT_SENSITIVITY = 0.01f;
 static const float FPS_SENSITIVITY = 0.003f;
@@ -29,6 +30,7 @@ static const float FAST_SPEED = 8.0f;
 static const float VALID_POSITION_THRESHOLD = 0.01f;
 static const float MIN_DISTANCE_THRESHOLD = 0.001f;
 
+// Depth bias constants
 static const float TORSO_BIAS = 0.001f;
 static const float BONE_BIAS = 0.0f;
 static const float HEAD_BIAS = -0.001f;
@@ -40,48 +42,58 @@ typedef struct {
     int camMode;
     float orbitYaw, orbitPitch, orbitRadius;
     bool cameraMouseControl;
+    
+    // Core systems
     SimpleTextureSystem textureSystem;
     BoneConfig* boneConfigs;
     int boneConfigCount;
+    BonesAnimation animation;
+    BonesRenderConfig renderConfig;
+    
+    // Render data
     BoneRenderData* renderBones;
     int renderBonesCount;
     int renderBonesCapacity;
-
     HeadRenderData* renderHeads;
     int renderHeadsCount;
     int renderHeadsCapacity;
-    bool renderHeadBillboards;
-
     TorsoRenderData* renderTorsos;
     int renderTorsosCount;
     int renderTorsosCapacity;
-    bool renderTorsoBillboards;
-
-    BonesAnimation animation;
-    BonesRenderConfig renderConfig;
+    
+    // Textures
     Texture2D textures[MAX_TEXTURES];
     char texturePaths[MAX_TEXTURES][MAX_FILE_PATH_LENGTH];
     int textureCount;
+    
+    // Animation
     int physCols, physRows;
     int currentFrame;
     int maxFrames;
     bool autoPlay;
     float autoPlayTimer;
     float autoPlaySpeed;
+    
+    // Auto center
     Vector3 autoCenter;
     bool autoCenterCalculated;
+    
+    // Control flags
+    bool renderHeadBillboards;
+    bool renderTorsoBillboards;
     int lastProcessedFrame;
     bool forceUpdate;
 } AppState;
 
 typedef struct {
-    int type;
+    int type; // 0=torso, 1=bone, 2=head
     int index;
     float distance;
     float depthBias;
     bool hasZFighting;
 } RenderItem;
 
+// Forward declarations
 static bool App_Init(AppState* app);
 static void App_Shutdown(AppState* app);
 static int App_GetTextureIndex(AppState* app, const char* path);
@@ -89,13 +101,54 @@ static void App_HandleInput(AppState* app, float dt);
 static void App_UpdateCamera(AppState* app, float dt);
 static void App_UpdateAutoCenter(AppState* app);
 static void App_PrepareRenderData(AppState* app);
-static bool DetectZFighting(RenderItem* items, int itemCount);
-static void SortRenderItems(RenderItem* items, int itemCount);
 static void App_Draw(AppState* app);
 
+// Helper functions
 static bool IsWristBone(const char* boneName) {
-    if (!boneName) return false;
-    return (strcmp(boneName, "LWrist") == 0) || (strcmp(boneName, "RWrist") == 0);
+    return boneName && (strcmp(boneName, "LWrist") == 0 || strcmp(boneName, "RWrist") == 0);
+}
+
+static const Person* FindPersonByBoneName(const AnimationFrame* frame, const char* boneName) {
+    if (!frame || !boneName) return NULL;
+    for (int p = 0; p < frame->personCount; p++) {
+        const Person* person = &frame->persons[p];
+        if (!person->active) continue;
+        for (int b = 0; b < person->boneCount; b++) {
+            if (strcmp(person->bones[b].name, boneName) == 0) return person;
+        }
+    }
+    return NULL;
+}
+
+static bool DetectZFighting(RenderItem* items, int itemCount) {
+    bool hasZFighting = false;
+    for (int i = 0; i < itemCount; i++) {
+        items[i].hasZFighting = false;
+        for (int j = i + 1; j < itemCount; j++) {
+            if (fabs(items[i].distance - items[j].distance) < Z_FIGHTING_THRESHOLD) {
+                items[i].hasZFighting = items[j].hasZFighting = true;
+                hasZFighting = true;
+            }
+        }
+    }
+    return hasZFighting;
+}
+
+static void SortRenderItems(RenderItem* items, int itemCount) {
+    for (int i = 0; i < itemCount - 1; i++) {
+        bool swapped = false;
+        for (int j = 0; j < itemCount - i - 1; j++) {
+            float distanceA = items[j].distance + items[j].depthBias;
+            float distanceB = items[j + 1].distance + items[j + 1].depthBias;
+            if (distanceA < distanceB) {
+                RenderItem temp = items[j];
+                items[j] = items[j + 1];
+                items[j + 1] = temp;
+                swapped = true;
+            }
+        }
+        if (!swapped) break;
+    }
 }
 
 static bool App_Init(AppState* app) {
@@ -110,6 +163,7 @@ static bool App_Init(AppState* app) {
     MaximizeWindow();
     SetTargetFPS(60);
 
+    // Initialize camera
     app->camera = (Camera){
         .position = {0.0f, 0.6f, 2.5f},
         .target = {0.0f, 0.6f, 0.0f},
@@ -118,21 +172,22 @@ static bool App_Init(AppState* app) {
         .projection = CAMERA_PERSPECTIVE
     };
 
+    // Initialize settings
     app->camMode = 1;
     app->orbitRadius = 2.5f;
     app->orbitPitch = -0.2f;
     app->renderHeadBillboards = true;
     app->renderTorsoBillboards = true;
-
     app->physCols = 4;
     app->physRows = 4;
-
     app->autoPlaySpeed = 0.1f;
     app->lastProcessedFrame = -1;
 
+    // Load configurations
     LoadSimpleTextureConfig(&app->textureSystem, "bone_textures.txt");
     LoadBoneConfigurations(&app->textureSystem, &app->boneConfigs, &app->boneConfigCount);
 
+    // Initialize animation system
     if (BonesInit(&app->animation, 1000) != BONES_SUCCESS) {
         CloseWindow();
         return false;
@@ -169,12 +224,14 @@ static void App_Shutdown(AppState* app) {
 static int App_GetTextureIndex(AppState* app, const char* path) {
     if (!app || !path) return 0;
 
+    // Check if texture already loaded
     for (int i = 0; i < app->textureCount; i++) {
         if (strcmp(app->texturePaths[i], path) == 0) return i;
     }
 
     if (app->textureCount >= MAX_TEXTURES) return 0;
 
+    // Load new texture
     Image img = LoadImage(path);
     if (img.data == NULL) {
         img = GenImageColor(1024, 1024, CLITERAL(Color){60, 120, 220, 255});
@@ -193,26 +250,15 @@ static int App_GetTextureIndex(AppState* app, const char* path) {
 static void App_HandleInput(AppState* app, float dt) {
     if (!app) return;
 
+    // Frame navigation
     if (app->animation.isLoaded && app->maxFrames > 0) {
         bool frameChanged = false;
         int newFrame = app->currentFrame;
 
-        if (IsKeyPressed(KEY_LEFT) && newFrame > 0) {
-            newFrame--;
-            frameChanged = true;
-        }
-        if (IsKeyPressed(KEY_RIGHT) && newFrame < app->maxFrames - 1) {
-            newFrame++;
-            frameChanged = true;
-        }
-        if (IsKeyPressed(KEY_HOME)) {
-            newFrame = 0;
-            frameChanged = true;
-        }
-        if (IsKeyPressed(KEY_END) && app->maxFrames > 0) {
-            newFrame = app->maxFrames - 1;
-            frameChanged = true;
-        }
+        if (IsKeyPressed(KEY_LEFT) && newFrame > 0) { newFrame--; frameChanged = true; }
+        if (IsKeyPressed(KEY_RIGHT) && newFrame < app->maxFrames - 1) { newFrame++; frameChanged = true; }
+        if (IsKeyPressed(KEY_HOME)) { newFrame = 0; frameChanged = true; }
+        if (IsKeyPressed(KEY_END) && app->maxFrames > 0) { newFrame = app->maxFrames - 1; frameChanged = true; }
 
         if (frameChanged) {
             app->currentFrame = newFrame;
@@ -222,6 +268,7 @@ static void App_HandleInput(AppState* app, float dt) {
 
         if (IsKeyPressed(KEY_SPACE)) app->autoPlay = !app->autoPlay;
 
+        // Auto play
         if (app->autoPlay && app->maxFrames > 1) {
             app->autoPlayTimer += dt;
             if (app->autoPlayTimer >= app->autoPlaySpeed) {
@@ -232,12 +279,14 @@ static void App_HandleInput(AppState* app, float dt) {
         }
     }
 
+    // Other controls
     if (IsKeyPressed(KEY_F5)) {
         if (LoadSimpleTextureConfig(&app->textureSystem, "bone_textures.txt")) {
             LoadBoneConfigurations(&app->textureSystem, &app->boneConfigs, &app->boneConfigCount);
         }
     }
 
+    // Camera mode switching
     if (IsKeyPressed(KEY_ONE)) {
         app->camMode = 1;
         app->cameraMouseControl = false;
@@ -280,6 +329,7 @@ static void App_UpdateCamera(AppState* app, float dt) {
     Vector3 cameraTarget = app->autoCenterCalculated ? app->autoCenter : (Vector3) { 0, 0.6f, 0 };
 
     if (app->camMode == 1) {
+        // Orbit camera
         if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
             Vector2 mouseDelta = GetMouseDelta();
             app->orbitYaw += mouseDelta.x * ORBIT_SENSITIVITY;
@@ -304,6 +354,7 @@ static void App_UpdateCamera(AppState* app, float dt) {
         app->camera.target = cameraTarget;
     }
     else {
+        // FPS camera
         if (app->cameraMouseControl) {
             Vector2 mouseDelta = GetMouseDelta();
             app->orbitYaw -= mouseDelta.x * FPS_SENSITIVITY;
@@ -315,14 +366,10 @@ static void App_UpdateCamera(AppState* app, float dt) {
         float cosY = cosf(app->orbitYaw);
         float sinY = sinf(app->orbitYaw);
 
-        Vector3 forward = { sinY * cosP, sinP, cosY * cosP };
-        Vector3 right = { cosY, 0, -sinY };
+        Vector3 forward = Vector3Normalize((Vector3){ sinY * cosP, sinP, cosY * cosP });
+        Vector3 right = Vector3Normalize((Vector3){ cosY, 0, -sinY });
 
-        forward = Vector3Normalize(forward);
-        right = Vector3Normalize(right);
-
-        float speed = IsKeyDown(KEY_LEFT_SHIFT) ? FAST_SPEED : MOVEMENT_SPEED;
-        speed *= dt;
+        float speed = (IsKeyDown(KEY_LEFT_SHIFT) ? FAST_SPEED : MOVEMENT_SPEED) * dt;
 
         if (IsKeyDown(KEY_W)) app->camera.position = Vector3Add(app->camera.position, Vector3Scale(forward, speed));
         if (IsKeyDown(KEY_S)) app->camera.position = Vector3Subtract(app->camera.position, Vector3Scale(forward, speed));
@@ -411,72 +458,72 @@ static void App_PrepareRenderData(AppState* app) {
     }
 }
 
-static bool DetectZFighting(RenderItem* items, int itemCount) {
-    bool hasZFighting = false;
+static void RenderBone(AppState* app, const BoneRenderData* bone, Vector3 renderPosition, const AnimationFrame* frame) {
+    int texIndex = App_GetTextureIndex(app, bone->texturePath);
+    Texture2D currentTex = app->textures[texIndex];
 
-    for (int i = 0; i < itemCount; i++) {
-        items[i].hasZFighting = false;
-        for (int j = i + 1; j < itemCount; j++) {
-            if (fabs(items[i].distance - items[j].distance) < Z_FIGHTING_THRESHOLD) {
-                items[i].hasZFighting = items[j].hasZFighting = true;
-                hasZFighting = true;
+    bool isWrist = IsWristBone(bone->boneName);
+    int usedCols = isWrist ? 5 : app->physCols;
+    int usedRows = isWrist ? 5 : app->physRows;
+
+    float physCellW = (float)currentTex.width / (float)usedCols;
+    float physCellH = (float)currentTex.height / (float)usedRows;
+    float aspect = physCellW / physCellH;
+    Vector2 worldSize = { bone->size * aspect, bone->size };
+
+    int chosenIndex = 0;
+    float rotation = 0.0f;
+    bool mirrored = false;
+
+    if (isWrist) {
+        CalculateBoneRenderData(bone->position, app->camera, &chosenIndex, &rotation, &mirrored, bone->boneName);
+    }
+    else if (bone->orientation.valid) {
+        const Person* bonePerson = frame ? FindPersonByBoneName(frame, bone->boneName) : NULL;
+        CalculateEnhancedBoneRenderData(bone, bonePerson, app->camera, &chosenIndex, &rotation, &mirrored);
+    }
+
+    int maxIndex = usedCols * usedRows - 1;
+    if (chosenIndex < 0) chosenIndex = 0;
+    if (chosenIndex > maxIndex) chosenIndex %= (maxIndex + 1);
+
+    int logicalCol = chosenIndex % usedCols;
+    int logicalRow = chosenIndex / usedCols;
+    bool finalMirror = isWrist ? false : mirrored;
+    Rectangle src = SrcFromLogical(currentTex, logicalCol, logicalRow, usedCols, usedRows, finalMirror, &finalMirror);
+
+    // Find neighbor for roll calculation
+    char conns[3][32];
+    float prios[3];
+    Vector3 neighborPos = { 0 };
+    bool haveNeighbor = false;
+    if (GetBoneConnectionsWithPriority(bone->boneName, conns, prios)) {
+        for (int k = 0; k < 3 && !haveNeighbor; k++) {
+            if (conns[k][0] == '\0') continue;
+            BoneRenderData* nb = FindRenderBoneByName(app->renderBones, app->renderBonesCount, conns[k]);
+            if (nb && nb->valid && nb->visible && Vector3Distance(bone->position, nb->position) > MIN_DISTANCE_THRESHOLD) {
+                neighborPos = nb->position;
+                haveNeighbor = true;
             }
         }
     }
-    return hasZFighting;
-}
 
-static void SortRenderItems(RenderItem* items, int itemCount) {
-    for (int i = 0; i < itemCount - 1; i++) {
-        bool swapped = false;
-        for (int j = 0; j < itemCount - i - 1; j++) {
-            float distanceA = items[j].distance + items[j].depthBias;
-            float distanceB = items[j + 1].distance + items[j + 1].depthBias;
-
-            if (distanceA < distanceB) {
-                RenderItem temp = items[j];
-                items[j] = items[j + 1];
-                items[j + 1] = temp;
-                swapped = true;
-            }
-        }
-        if (!swapped) break;
-    }
+    DrawBonetileCustomWithRoll(currentTex, app->camera, src, renderPosition, worldSize, rotation,
+        finalMirror, haveNeighbor, neighborPos, bone->boneName);
 }
 
 static void DrawOpenPoseSkeleton(AppState* app) {
-    if (!app || !app->animation.isLoaded || !BonesIsValidFrame(&app->animation, app->currentFrame)) {
-        return;
-    }
+    if (!app || !app->animation.isLoaded || !BonesIsValidFrame(&app->animation, app->currentFrame)) return;
 
     const AnimationFrame* frame = &app->animation.frames[app->currentFrame];
 
     const char* connections[][2] = {
-        {"Neck", "Nose"},
-        {"Neck", "LShoulder"},
-        {"Neck", "RShoulder"},
-        {"LShoulder", "RShoulder"},
-        {"LShoulder", "LElbow"},
-        {"LElbow", "LWrist"},
-        {"RShoulder", "RElbow"},
-        {"RElbow", "RWrist"},
-        {"Neck", "MidHip"},
-        {"MidHip", "LHip"},
-        {"MidHip", "RHip"},
-        {"LHip", "LKnee"},
-        {"LKnee", "LAnkle"},
-        {"RHip", "RKnee"},
-        {"RKnee", "RAnkle"},
-        {"LAnkle", "LBigToe"},
-        {"LAnkle", "LSmallToe"},
-        {"LBigToe", "LSmallToe"},
-        {"RAnkle", "RBigToe"},
-        {"RAnkle", "RSmallToe"},
-        {"RBigToe", "RSmallToe"},
-        {"Nose", "LEye"},
-        {"Nose", "REye"},
-        {"LEye", "LEar"},
-        {"REye", "REar"}
+        {"Neck", "Nose"}, {"Neck", "LShoulder"}, {"Neck", "RShoulder"}, {"LShoulder", "RShoulder"},
+        {"LShoulder", "LElbow"}, {"LElbow", "LWrist"}, {"RShoulder", "RElbow"}, {"RElbow", "RWrist"},
+        {"Neck", "MidHip"}, {"MidHip", "LHip"}, {"MidHip", "RHip"}, {"LHip", "LKnee"}, {"LKnee", "LAnkle"},
+        {"RHip", "RKnee"}, {"RKnee", "RAnkle"}, {"LAnkle", "LBigToe"}, {"LAnkle", "LSmallToe"},
+        {"LBigToe", "LSmallToe"}, {"RAnkle", "RBigToe"}, {"RAnkle", "RSmallToe"}, {"RBigToe", "RSmallToe"},
+        {"Nose", "LEye"}, {"Nose", "REye"}, {"LEye", "LEar"}, {"REye", "REar"}
     };
 
     int numConnections = sizeof(connections) / sizeof(connections[0]);
@@ -486,22 +533,18 @@ static void DrawOpenPoseSkeleton(AppState* app) {
         if (!person->active) continue;
 
         for (int c = 0; c < numConnections; c++) {
-            const char* bone1Name = connections[c][0];
-            const char* bone2Name = connections[c][1];
-
-            Vector3 pos1 = { 0 };
-            Vector3 pos2 = { 0 };
+            Vector3 pos1 = { 0 }, pos2 = { 0 };
             bool found1 = false, found2 = false;
 
             for (int b = 0; b < person->boneCount; b++) {
                 const Bone* bone = &person->bones[b];
                 if (!bone->position.valid) continue;
 
-                if (strcmp(bone->name, bone1Name) == 0) {
+                if (strcmp(bone->name, connections[c][0]) == 0) {
                     pos1 = bone->position.position;
                     found1 = true;
                 }
-                else if (strcmp(bone->name, bone2Name) == 0) {
+                else if (strcmp(bone->name, connections[c][1]) == 0) {
                     pos2 = bone->position.position;
                     found2 = true;
                 }
@@ -509,35 +552,16 @@ static void DrawOpenPoseSkeleton(AppState* app) {
                 if (found1 && found2) break;
             }
 
-            if (found1 && found2) {
-                DrawLine3D(pos1, pos2, RED);
-            }
+            if (found1 && found2) DrawLine3D(pos1, pos2, RED);
         }
 
         for (int b = 0; b < person->boneCount; b++) {
             const Bone* bone = &person->bones[b];
-            if (bone->position.valid) {
-                DrawSphere(bone->position.position, 0.002f, BLUE);
-            }
+            if (bone->position.valid) DrawSphere(bone->position.position, 0.002f, BLUE);
         }
 
         break;
     }
-}
-
-static const Person* FindPersonByBoneName(const AnimationFrame* frame, const char* boneName) {
-    if (!frame || !boneName) return NULL;
-    for (int p = 0; p < frame->personCount; p++) {
-        const Person* person = &frame->persons[p];
-        if (!person->active) continue;
-        for (int b = 0; b < person->boneCount; b++) {
-            const Bone* bone = &person->bones[b];
-            if (strcmp(bone->name, boneName) == 0) {
-                return person;
-            }
-        }
-    }
-    return NULL;
 }
 
 static void App_Draw(AppState* app) {
@@ -547,29 +571,21 @@ static void App_Draw(AppState* app) {
     if (app->animation.isLoaded && BonesIsValidFrame(&app->animation, app->currentFrame)) {
         frame = &app->animation.frames[app->currentFrame];
     }
+
     BeginDrawing();
     ClearBackground(RAYWHITE);
 
-    const char* modeText = "CLASSIC MODE";
-    const char* controlsText =
-        "M: Toggle Morphing | H: Toggle Heads | T: Toggle Torsos | "
-        "C: Mouse Control | 1/2: Camera Mode | Space: Play/Pause";
-
-    DrawText(modeText, 10, 10, 20, BLUE);
-    DrawText(controlsText, 10, 35, 16, DARKGRAY);
+    // Draw UI
+    DrawText("CLASSIC MODE", 10, 10, 20, BLUE);
+    DrawText("M: Toggle Morphing | H: Toggle Heads | T: Toggle Torsos | C: Mouse Control | 1/2: Camera Mode | Space: Play/Pause", 10, 35, 16, DARKGRAY);
 
     char frameText[64];
-    snprintf(frameText, sizeof(frameText), "Frame: %d/%d %s",
-        app->currentFrame + 1, app->maxFrames,
-        app->autoPlay ? "(Playing)" : "(Paused)");
+    snprintf(frameText, sizeof(frameText), "Frame: %d/%d %s", app->currentFrame + 1, app->maxFrames, app->autoPlay ? "(Playing)" : "(Paused)");
     DrawText(frameText, 10, 55, 16, DARKGRAY);
 
     char statsText[256];
-    snprintf(statsText, sizeof(statsText),
-        "Bones: %d | Heads: %s (%d) | Torsos: %s (%d) | "
-        "Camera Mode: %d | Mouse Control: %s",
-        app->renderBonesCount,
-        app->renderHeadBillboards ? "ON" : "OFF", app->renderHeadsCount,
+    snprintf(statsText, sizeof(statsText), "Bones: %d | Heads: %s (%d) | Torsos: %s (%d) | Camera Mode: %d | Mouse Control: %s",
+        app->renderBonesCount, app->renderHeadBillboards ? "ON" : "OFF", app->renderHeadsCount,
         app->renderTorsoBillboards ? "ON" : "OFF", app->renderTorsosCount,
         app->camMode, app->cameraMouseControl ? "ON" : "OFF");
     DrawText(statsText, 10, 75, 16, DARKGRAY);
@@ -580,41 +596,42 @@ static void App_Draw(AppState* app) {
         DrawSphereWires(app->autoCenter, 0.05f, 8, 8, ORANGE);
     }
 
-    int totalItems =
-        app->renderBonesCount + app->renderHeadsCount + app->renderTorsosCount;
+    // Prepare render items
+    int totalItems = app->renderBonesCount + app->renderHeadsCount + app->renderTorsosCount;
     if (totalItems > 0) {
         static RenderItem renderItems[MAX_RENDER_ITEMS];
         int itemCount = 0;
         Vector3 camPos = app->camera.position;
 
+        // Collect render items
         for (int i = 0; i < app->renderTorsosCount && itemCount < MAX_RENDER_ITEMS; i++) {
             const TorsoRenderData* torso = &app->renderTorsos[i];
             if (!torso->valid || !torso->visible) continue;
             renderItems[itemCount++] = (RenderItem){
-                .type = 0,
-                .index = i,
+                .type = 0, .index = i,
                 .distance = Vector3Distance(camPos, torso->position),
-                .depthBias = TORSO_BIAS + (INDEX_BIAS * i) };
+                .depthBias = TORSO_BIAS + (INDEX_BIAS * i)
+            };
         }
 
         for (int i = 0; i < app->renderBonesCount && itemCount < MAX_RENDER_ITEMS; i++) {
             const BoneRenderData* bone = &app->renderBones[i];
             if (!bone->valid || !bone->visible) continue;
             renderItems[itemCount++] = (RenderItem){
-                .type = 1,
-                .index = i,
+                .type = 1, .index = i,
                 .distance = Vector3Distance(camPos, bone->position),
-                .depthBias = BONE_BIAS + (INDEX_BIAS * i) };
+                .depthBias = BONE_BIAS + (INDEX_BIAS * i)
+            };
         }
 
         for (int i = 0; i < app->renderHeadsCount && itemCount < MAX_RENDER_ITEMS; i++) {
             const HeadRenderData* head = &app->renderHeads[i];
             if (!head->valid || !head->visible) continue;
             renderItems[itemCount++] = (RenderItem){
-                .type = 2,
-                .index = i,
+                .type = 2, .index = i,
                 .distance = Vector3Distance(camPos, head->position),
-                .depthBias = HEAD_BIAS + (INDEX_BIAS * i) };
+                .depthBias = HEAD_BIAS + (INDEX_BIAS * i)
+            };
         }
 
         DetectZFighting(renderItems, itemCount);
@@ -623,6 +640,7 @@ static void App_Draw(AppState* app) {
         BeginBlendMode(BLEND_ALPHA);
         rlDisableDepthTest();
 
+        // First pass: Render neck bones with special handling
         for (int i = 0; i < itemCount; i++) {
             RenderItem* item = &renderItems[i];
             if (item->type != 1) continue;
@@ -638,79 +656,23 @@ static void App_Draw(AppState* app) {
             }
             Vector3 renderPosition = Vector3Add(bone->position, renderOffset);
 
-            int texIndex = App_GetTextureIndex(app, bone->texturePath);
-            Texture2D currentTex = app->textures[texIndex];
-
-            bool isWrist = IsWristBone(bone->boneName);
-            int usedCols = isWrist ? 5 : app->physCols;
-            int usedRows = isWrist ? 5 : app->physRows;
-
-            float physCellW = (float)currentTex.width / (float)usedCols;
-            float physCellH = (float)currentTex.height / (float)usedRows;
-            float aspect = physCellW / physCellH;
-            Vector2 worldSize = { bone->size * aspect, bone->size };
-
-            int chosenIndex = 0;
-            float rotation = 0.0f;
-            bool mirrored = false;
-
-            if (IsWristBone(bone->boneName)) {
-                CalculateBoneRenderData(bone->position, app->camera, &chosenIndex, &rotation, &mirrored, bone->boneName);
-            }
-            else if (bone->orientation.valid) {
-                const Person* bonePerson = (frame != NULL) ? FindPersonByBoneName(frame, bone->boneName) : NULL;
-                CalculateEnhancedBoneRenderData(bone, bonePerson, app->camera, &chosenIndex, &rotation, &mirrored);
-            }
-
-            int maxIndex = usedCols * usedRows - 1;
-            if (chosenIndex < 0) chosenIndex = 0;
-            if (chosenIndex > maxIndex) chosenIndex %= (maxIndex + 1);
-
-            int logicalCol = chosenIndex % usedCols;
-            int logicalRow = chosenIndex / usedCols;
-            bool finalMirror = isWrist ? false : mirrored;
-            Rectangle src = SrcFromLogical(currentTex, logicalCol, logicalRow,
-                usedCols, usedRows, finalMirror,
-                &finalMirror);
-
-            char conns[3][32];
-            float prios[3];
-            Vector3 neighborPos = { 0 };
-            bool haveNeighbor = false;
-            if (GetBoneConnectionsWithPriority(bone->boneName, conns, prios)) {
-                for (int k = 0; k < 3 && !haveNeighbor; k++) {
-                    if (conns[k][0] == '\0') continue;
-                    BoneRenderData* nb = FindRenderBoneByName(
-                        app->renderBones, app->renderBonesCount, conns[k]);
-                    if (nb && nb->valid && nb->visible &&
-                        Vector3Distance(bone->position, nb->position) >
-                        MIN_DISTANCE_THRESHOLD) {
-                        neighborPos = nb->position;
-                        haveNeighbor = true;
-                    }
-                }
-            }
-
-            DrawBonetileCustomWithRoll(currentTex, app->camera, src,
-                renderPosition, worldSize, rotation,
-                finalMirror, haveNeighbor, neighborPos,
-                bone->boneName);
+            RenderBone(app, bone, renderPosition, frame);
         }
 
+        // Second pass: Render everything else
         for (int i = 0; i < itemCount; i++) {
             RenderItem* item = &renderItems[i];
 
+            // Skip neck bones (already rendered)
             if (item->type == 1) {
                 const BoneRenderData* bone = &app->renderBones[item->index];
                 if (strcmp(bone->boneName, "Neck") == 0) continue;
             }
 
-            Vector3 toCam =
-                Vector3Subtract(camPos, item->type == 0
-                    ? app->renderTorsos[item->index].position
-                    : item->type == 1
-                    ? app->renderBones[item->index].position
-                    : app->renderHeads[item->index].position);
+            Vector3 toCam = Vector3Subtract(camPos, 
+                item->type == 0 ? app->renderTorsos[item->index].position :
+                item->type == 1 ? app->renderBones[item->index].position :
+                app->renderHeads[item->index].position);
 
             float distance = Vector3Length(toCam);
             Vector3 renderOffset = { 0 };
@@ -720,89 +682,32 @@ static void App_Draw(AppState* app) {
             }
 
             if (item->type == 0) {
+                // Render torso
                 const TorsoRenderData* torso = &app->renderTorsos[item->index];
                 TorsoRenderData adjusted = *torso;
                 adjusted.position = Vector3Add(torso->position, renderOffset);
                 int texIndex = App_GetTextureIndex(app, torso->texturePath);
-                DrawTorsoBillboard(app->textures[texIndex], app->camera,
-                    &adjusted, app->physCols, app->physRows);
+                DrawTorsoBillboard(app->textures[texIndex], app->camera, &adjusted, app->physCols, app->physRows);
             }
             else if (item->type == 1) {
+                // Render bone
                 const BoneRenderData* bone = &app->renderBones[item->index];
-                Vector3 renderPosition =
-                    Vector3Add(bone->position, renderOffset);
-
-                int texIndex = App_GetTextureIndex(app, bone->texturePath);
-                Texture2D currentTex = app->textures[texIndex];
-
-                bool isWrist = IsWristBone(bone->boneName);
-                int usedCols = isWrist ? 5 : app->physCols;
-                int usedRows = isWrist ? 5 : app->physRows;
-
-                float physCellW = (float)currentTex.width / (float)usedCols;
-                float physCellH = (float)currentTex.height / (float)usedRows;
-                float aspect = physCellW / physCellH;
-                Vector2 worldSize = { bone->size * aspect, bone->size };
-
-                int chosenIndex = 0;
-                float rotation = 0.0f;
-                bool mirrored = false;
-                if (IsWristBone(bone->boneName)) {
-                    CalculateBoneRenderData(bone->position, app->camera, &chosenIndex, &rotation, &mirrored, bone->boneName);
-                }
-                else if (bone->orientation.valid) {
-                    const Person* bonePerson = (frame != NULL) ? FindPersonByBoneName(frame, bone->boneName) : NULL;
-                    CalculateEnhancedBoneRenderData(bone, bonePerson, app->camera, &chosenIndex, &rotation, &mirrored);
-                }
-
-                int maxIndex = usedCols * usedRows - 1;
-                if (chosenIndex < 0) chosenIndex = 0;
-                if (chosenIndex > maxIndex) chosenIndex %= (maxIndex + 1);
-
-                int logicalCol = chosenIndex % usedCols;
-                int logicalRow = chosenIndex / usedCols;
-                bool finalMirror = isWrist ? false : mirrored;
-                Rectangle src = SrcFromLogical(currentTex, logicalCol, logicalRow,
-                    usedCols, usedRows, finalMirror,
-                    &finalMirror);
-
-                char conns[3][32];
-                float prios[3];
-                Vector3 neighborPos = { 0 };
-                bool haveNeighbor = false;
-                if (GetBoneConnectionsWithPriority(bone->boneName, conns, prios)) {
-                    for (int k = 0; k < 3 && !haveNeighbor; k++) {
-                        if (conns[k][0] == '\0') continue;
-                        BoneRenderData* nb =
-                            FindRenderBoneByName(app->renderBones,
-                                app->renderBonesCount, conns[k]);
-                        if (nb && nb->valid && nb->visible &&
-                            Vector3Distance(bone->position, nb->position) >
-                            MIN_DISTANCE_THRESHOLD) {
-                            neighborPos = nb->position;
-                            haveNeighbor = true;
-                        }
-                    }
-                }
-
-                DrawBonetileCustomWithRoll(currentTex, app->camera, src,
-                    renderPosition, worldSize, rotation,
-                    finalMirror, haveNeighbor,
-                    neighborPos, bone->boneName);
+                Vector3 renderPosition = Vector3Add(bone->position, renderOffset);
+                RenderBone(app, bone, renderPosition, frame);
             }
             else if (item->type == 2) {
+                // Render head
                 const HeadRenderData* head = &app->renderHeads[item->index];
                 HeadRenderData adjusted = *head;
-                adjusted.position =
-                    Vector3Add(head->position, renderOffset);
+                adjusted.position = Vector3Add(head->position, renderOffset);
                 int texIndex = App_GetTextureIndex(app, head->texturePath);
-                DrawHeadBillboard(app->textures[texIndex], app->camera,
-                    &adjusted, app->physCols, app->physRows);
+                DrawHeadBillboard(app->textures[texIndex], app->camera, &adjusted, app->physCols, app->physRows);
             }
         }
 
         EndBlendMode();
     }
+
     DrawOpenPoseSkeleton(app);
     EndMode3D();
     EndDrawing();

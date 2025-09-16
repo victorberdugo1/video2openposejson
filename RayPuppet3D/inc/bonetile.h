@@ -52,6 +52,15 @@ typedef struct {
     bool valid;
 } BoneConfig;
 
+typedef struct {
+    Vector3 toCameraDir;
+    float yaw;
+    float pitchDeg;
+    int sector;
+    bool isTopView;
+    bool isBottomView;
+} UnifiedCameraData;
+
 bool GetBoneConnectionsWithPriority(const char* boneName, char connections[3][MAX_BONE_NAME_LENGTH], float priorities[3]);
 
 void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, const Person* person, Camera camera,
@@ -78,5 +87,7 @@ void CalculateDirectionalBoneRenderData(Vector3 bonePos, Vector3 neighborPos, bo
 BoneOrientation CalculateBoneOrientation(const char* boneName, const Person* person, Vector3 bonePosition);
 
 Vector3 SafeNormalize(Vector3 v);
+
+UnifiedCameraData CalculateUnifiedCameraData(Vector3 objectPosition, Camera camera);
 
 #endif /* BONETILE_H */
