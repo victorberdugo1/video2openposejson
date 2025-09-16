@@ -142,22 +142,35 @@ def infer(video_in):
     vid = create_video(imgs, fps, "openpose")
     [os.remove(f) for f in frames]
     
-    # --- Generar automáticamente el JSON combinado 3D ---
+    # --- Generar automáticamente el JSON combinado 3D (CORREGIDO) ---
     combined_3d = {}
+    
+    # Primero, calcular un punto de referencia (centro del torso) para normalizar la profundidad
     for frame_key in all_kps:
         frame_data = all_kps[frame_key]
         if "person_0" in frame_data and "person_1" in frame_data:
             combined_person = {}
             side_person = frame_data["person_0"]   # lateral
             front_person = frame_data["person_1"]  # frontal
+            
+            # Calcular centro del torso como referencia para la profundidad
+            if "LShoulder" in side_person and "RShoulder" in side_person:
+                torso_center_x = (side_person["LShoulder"]["x"] + side_person["RShoulder"]["x"]) / 2
+            else:
+                torso_center_x = 0.5  # valor por defecto
+            
             for joint_name in front_person:
                 if joint_name in side_person:
+                    # Calcular Z relativo al centro del torso para evitar desplazamientos
+                    z_relative = side_person[joint_name]["x"] - torso_center_x
+                    
                     combined_person[joint_name] = {
                         "x": front_person[joint_name]["x"],
                         "y": front_person[joint_name]["y"],
-                        "z": side_person[joint_name]["x"]
+                        "z": z_relative  # Usar profundidad relativa al centro del torso
                     }
             combined_3d[frame_key] = {"person_0": combined_person}
+    
     with open('3d_combined_data.json', 'w') as f:
         json.dump(combined_3d, f, indent=2)
     
