@@ -758,32 +758,47 @@ void CalculateHeadRenderData(const HeadRenderData* headData, Camera camera,
         CalculateBoneRenderData(headData->position, camera, outChosenIndex, outRotation, outMirrored, "Head");
         return;
     }
-
     static const int indices[3][8] = {
         {  0,  4,  5,  6,  7,  6,  5,  4 },
         {  2, 12, 13, 14, 15, 14, 13, 12 },
         {  1,  8,  9, 10, 11, 10,  9,  8 }
     };
-
     Vector3 camDir = Vector3Subtract(camera.position, headData->position);
-
     Vector3 localCamDir = {
         -Vector3DotProduct(camDir, headData->orientation.right),
         Vector3DotProduct(camDir, headData->orientation.up),
         Vector3DotProduct(camDir, headData->orientation.forward)
     };
-
     float localYaw = atan2f(localCamDir.x, localCamDir.z);
     if (localYaw < 0.0f) localYaw += 2.0f * PI;
     float localYawDeg = localYaw * RAD2DEG;
-
     float horizDistance = sqrtf(localCamDir.x * localCamDir.x + localCamDir.z * localCamDir.z);
     float localPitchDeg = atan2f(localCamDir.y, horizDistance) * RAD2DEG;
+    int sector;
 
-    float normalizedYaw = localYawDeg + 22.5f;
-    if (normalizedYaw >= 360.0f) normalizedYaw -= 360.0f;
-    int sector = (int)(normalizedYaw / 45.0f);
-
+    if (localPitchDeg >= 65.0f || localPitchDeg <= -65.0f) {
+        Vector3 horizontalDiff = {
+            camera.position.x - headData->position.x,
+            0.0f,
+            camera.position.z - headData->position.z
+        };
+        float horizontalDistance = Vector3Length(horizontalDiff);
+        if (horizontalDistance > 0.05f) {
+            float worldYaw = atan2f(horizontalDiff.x, horizontalDiff.z);
+            if (worldYaw < 0.0f) worldYaw += 2.0f * PI;
+            float normalizedWorldYaw = worldYaw * RAD2DEG + 22.5f;
+            if (normalizedWorldYaw >= 360.0f) normalizedWorldYaw -= 360.0f;
+            sector = (int)(normalizedWorldYaw / 45.0f) % 8;
+        }
+        else {
+            sector = 0;
+        }
+    }
+    else {
+        float normalizedYaw = localYawDeg + 22.5f;
+        if (normalizedYaw >= 360.0f) normalizedYaw -= 360.0f;
+        sector = (int)(normalizedYaw / 45.0f);
+    }
     if (localPitchDeg >= 70.0f) {
         *outChosenIndex = 3;
         *outRotation = sector * 45.0f + 180.0f;

@@ -103,11 +103,6 @@ static void App_UpdateAutoCenter(AppState* app);
 static void App_PrepareRenderData(AppState* app);
 static void App_Draw(AppState* app);
 
-// Helper functions
-static bool IsWristBone(const char* boneName) {
-    return boneName && (strcmp(boneName, "LWrist") == 0 || strcmp(boneName, "RWrist") == 0);
-}
-
 static const Person* FindPersonByBoneName(const AnimationFrame* frame, const char* boneName) {
     if (!frame || !boneName) return NULL;
     for (int p = 0; p < frame->personCount; p++) {
@@ -640,36 +635,40 @@ static void App_Draw(AppState* app) {
         BeginBlendMode(BLEND_ALPHA);
         rlDisableDepthTest();
 
-        // First pass: Render neck bones with special handling
-        for (int i = 0; i < itemCount; i++) {
-            RenderItem* item = &renderItems[i];
-            if (item->type != 1) continue;
-            const BoneRenderData* bone = &app->renderBones[item->index];
-            if (strcmp(bone->boneName, "Neck") != 0) continue;
-
-            Vector3 toCam = Vector3Subtract(camPos, bone->position);
-            float distance = Vector3Length(toCam);
-            Vector3 renderOffset = { 0 };
-            if (distance > MIN_DISTANCE_THRESHOLD) {
-                Vector3 toCamNorm = Vector3Normalize(toCam);
-                renderOffset = Vector3Scale(toCamNorm, item->depthBias);
-            }
-            Vector3 renderPosition = Vector3Add(bone->position, renderOffset);
-
-            RenderBone(app, bone, renderPosition, frame);
-        }
-
-        // Second pass: Render everything else
+        // Single pass: Render all items in order, with special neck handling for heads
         for (int i = 0; i < itemCount; i++) {
             RenderItem* item = &renderItems[i];
 
-            // Skip neck bones (already rendered)
-            if (item->type == 1) {
-                const BoneRenderData* bone = &app->renderBones[item->index];
-                if (strcmp(bone->boneName, "Neck") == 0) continue;
+            // Special handling: If current item is a head, first render any neck bones behind it
+            if (item->type == 2) {
+                const HeadRenderData* currentHead = &app->renderHeads[item->index];
+
+                // Look for neck bones that should be rendered before this head
+                for (int j = 0; j < app->renderBonesCount; j++) {
+                    const BoneRenderData* bone = &app->renderBones[j];
+                    if (!bone->valid || !bone->visible) continue;
+                    if (strcmp(bone->boneName, "Neck") != 0) continue;
+
+                    // Check if this neck belongs to the same character/group as the head
+                    // You might need to adjust this logic based on your character grouping
+                    // For now, we'll use proximity as a heuristic
+                    float neckHeadDistance = Vector3Distance(bone->position, currentHead->position);
+                    if (neckHeadDistance < 2.0f) { // Adjust threshold as needed
+                        Vector3 toCam = Vector3Subtract(camPos, bone->position);
+                        float distance = Vector3Length(toCam);
+                        Vector3 renderOffset = { 0 };
+                        if (distance > MIN_DISTANCE_THRESHOLD) {
+                            Vector3 toCamNorm = Vector3Normalize(toCam);
+                            renderOffset = Vector3Scale(toCamNorm, BONE_BIAS + (INDEX_BIAS * j));
+                        }
+                        Vector3 renderPosition = Vector3Add(bone->position, renderOffset);
+                        RenderBone(app, bone, renderPosition, frame);
+                    }
+                }
             }
 
-            Vector3 toCam = Vector3Subtract(camPos, 
+            // Render the current item
+            Vector3 toCam = Vector3Subtract(camPos,
                 item->type == 0 ? app->renderTorsos[item->index].position :
                 item->type == 1 ? app->renderBones[item->index].position :
                 app->renderHeads[item->index].position);
@@ -690,10 +689,12 @@ static void App_Draw(AppState* app) {
                 DrawTorsoBillboard(app->textures[texIndex], app->camera, &adjusted, app->physCols, app->physRows);
             }
             else if (item->type == 1) {
-                // Render bone
+                // Render bone (skip necks here since they're handled above)
                 const BoneRenderData* bone = &app->renderBones[item->index];
-                Vector3 renderPosition = Vector3Add(bone->position, renderOffset);
-                RenderBone(app, bone, renderPosition, frame);
+                if (strcmp(bone->boneName, "Neck") != 0) {
+                    Vector3 renderPosition = Vector3Add(bone->position, renderOffset);
+                    RenderBone(app, bone, renderPosition, frame);
+                }
             }
             else if (item->type == 2) {
                 // Render head

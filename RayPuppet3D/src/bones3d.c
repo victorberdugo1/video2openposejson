@@ -31,23 +31,12 @@ static const struct {
     {"", "", 0.0f}
 };
 
-static Vector3 GetOriginalBonePosition(const char* boneName, const Person* person) {
-    if (!person || !boneName) return (Vector3) { 0, 0, 0 };
-
-    for (int i = 0; i < person->boneCount; i++) {
-        if (strcmp(person->bones[i].name, boneName) == 0 && person->bones[i].position.valid) {
-            return person->bones[i].position.position;
-        }
-    }
-    return (Vector3) { 0, 0, 0 };
-}
-
 static Vector3 CalculateBoneMidpoint(const char* boneName, const Person* person) {
     if (!person || !boneName) return (Vector3) { 0, 0, 0 };
 
     // Special case: NECK - midpoint between calculated head and original neck
     if (strcmp(boneName, "Neck") == 0) {
-        Vector3 originalNeck = GetOriginalBonePosition("Neck", person);
+        Vector3 originalNeck = GetBonePositionByName(person, "Neck");
         if (originalNeck.x == 0 && originalNeck.y == 0 && originalNeck.z == 0) return originalNeck;
 
         Vector3 calculatedHead = CalculateHeadPosition(person);
@@ -72,10 +61,10 @@ static Vector3 CalculateBoneMidpoint(const char* boneName, const Person* person)
         }
     }
 
-    if (!connectedBoneName) return GetOriginalBonePosition(boneName, person);
+    if (!connectedBoneName) return GetBonePositionByName(person, boneName);
 
-    Vector3 bonePos = GetOriginalBonePosition(boneName, person);
-    Vector3 connectedPos = GetOriginalBonePosition(connectedBoneName, person);
+    Vector3 bonePos = GetBonePositionByName(person, boneName);
+    Vector3 connectedPos = GetBonePositionByName(person, connectedBoneName);
 
     // Special cases for wrists (projection)
     if (strstr(boneName, "Wrist") && projectionFactor != 1.0f) {

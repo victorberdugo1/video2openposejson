@@ -55,10 +55,10 @@ static const struct {
     float pitchOffset;
     float rollOffset;
 } BONE_ANGLE_OFFSETS[] = {
-    {"LShoulder", 85.0f, 175.0f, -75.0f},
+    {"LShoulder", 90.0f, 175.0f, -75.0f},
     {"LElbow", 85.0f, 175.0f, -65.0f},
     {"LWrist", 90.0f, 180.0f, 90.0f},
-    {"RShoulder", -85.0f, 175.0f, -75.0f},
+    {"RShoulder", -90.0f, 0.0f, 75.0f},
     {"RElbow", -85.0f, 175.0f, 75.0f},
     {"RWrist", 90.0f, 180.0f, 110.0f},
     {"LHip", 85.0f, -40.0f, 85.0f},
@@ -85,7 +85,7 @@ bool GetBoneConnectionsWithPriority(const char* boneName, char connections[3][32
     return false;
 }
 
-static Vector3 GetBonePositionByName(const Person* person, const char* boneName) {
+Vector3 GetBonePositionByName(const Person* person, const char* boneName) {
     if (!person || !boneName) return (Vector3) { 0, 0, 0 };
 
     if (strcmp(boneName, "HEAD_CALCULATED") == 0) {
@@ -347,7 +347,7 @@ static bool ShouldFlipBoneTexture(const char* boneName) {
     return false;
 }
 
-static bool IsWristBone(const char* boneName) {
+bool IsWristBone(const char* boneName) {
     if (!boneName) return false;
     return (strcmp(boneName, "LWrist") == 0) || (strcmp(boneName, "RWrist") == 0);
 }
@@ -498,8 +498,7 @@ BoneConnectionPositions GetBoneConnectionPositionsEx(const BoneRenderData* boneD
     return result;
 }
 
-void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, const Person* person, Camera camera,
-    int* outChosenIndex, float* outRotation, bool* outMirrored) {
+void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, const Person* person, Camera camera, int* outChosenIndex, float* outRotation, bool* outMirrored) {
 
     if (!boneData->orientation.valid) {
         CalculateBoneRenderData(boneData->position, camera, outChosenIndex, outRotation, outMirrored, boneData->boneName);
@@ -530,6 +529,7 @@ void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, const Perso
     bool shouldInvertPitch = false;
     if (boneData->boneName[0] != '\0') {
         if (strcmp(boneData->boneName, "Neck") != 0 &&
+            strcmp(boneData->boneName, "RShoulder") != 0 &&
             strcmp(boneData->boneName, "LAnkle") != 0 &&
             strcmp(boneData->boneName, "RAnkle") != 0) {
             shouldInvertPitch = true;
@@ -619,21 +619,28 @@ void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, const Perso
 
     float rotationCompensation = 0.0f;
 
-    if (localPitchDeg >= 70.0f) {
+    if (localPitchDeg >= 50.0f) {
         *outChosenIndex = 3;
-        *outRotation = sector * 45.0f;
+        *outRotation = sector * 45.0f + 180.0f;
         *outMirrored = false;
+        return;
     }
-    else if (localPitchDeg <= -70.0f) {
+    else if (localPitchDeg <= -60.0f) {
         *outChosenIndex = 15;
-        *outRotation = sector * 45.0f;
+        *outRotation = (8 - sector) * 45.0f + 180.0f;
         *outMirrored = true;
+        return;
     }
     else {
         int row = (localPitchDeg >= 22.5f) ? 2 : (localPitchDeg >= -22.5f) ? 0 : 1;
         *outChosenIndex = indices[row][sector];
         *outRotation = 0.0f;
         *outMirrored = (sector >= 1 && sector <= 4);
+
+        // Ajuste específico para Right
+        if (boneData->boneName[0] == 'R') {
+            *outMirrored = !(*outMirrored);
+        }
 
         if (person) {
             BoneConnectionPositions p = GetBoneConnectionPositionsEx(boneData, person);

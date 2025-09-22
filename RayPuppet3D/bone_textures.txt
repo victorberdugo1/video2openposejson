@@ -10,10 +10,10 @@ LEye NULL 0 0.20
 REye NULL 0 0.20
 LEar NULLg 0 0.15
 REar NULLg 0 0.15
-Neck tex/Neck.png 1 0.095
+Neck tex/Neck.png 1 0.12
 LShoulder tex/Arm.png 1 0.13
 RShoulder tex/Arm.png 1 0.13
-Chest tex/Chest.png 1 0.17
+Chest tex/Chest.png 1 0.22
 LElbow tex/Forearm.png 1 0.13
 RElbow tex/Forearm.png 1 0.13
 LWrist tex/HandR.png 1 0.07
