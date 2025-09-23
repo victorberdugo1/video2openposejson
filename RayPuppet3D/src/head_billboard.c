@@ -259,7 +259,7 @@ void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
     int* outChosenIndex, float* outRotation, bool* outMirrored) {
 
     if (!torsoData->orientation.valid) {
-        CalculateBoneRenderData(torsoData->position, camera, outChosenIndex, outRotation, outMirrored, "");
+        CalculateHandBoneRenderData(torsoData->position, camera, outChosenIndex, outRotation, outMirrored, "");
         return;
     }
 
@@ -755,7 +755,7 @@ HeadOrientation CalculateHeadOrientation(const Person* person) {
 void CalculateHeadRenderData(const HeadRenderData* headData, Camera camera,
     int* outChosenIndex, float* outRotation, bool* outMirrored) {
     if (!headData->orientation.valid) {
-        CalculateBoneRenderData(headData->position, camera, outChosenIndex, outRotation, outMirrored, "Head");
+        CalculateHandBoneRenderData(headData->position, camera, outChosenIndex, outRotation, outMirrored, "Head");
         return;
     }
     static const int indices[3][8] = {

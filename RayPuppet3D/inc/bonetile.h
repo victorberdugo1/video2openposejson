@@ -52,14 +52,12 @@ typedef struct {
     bool valid;
 } BoneConfig;
 
+typedef struct {
+    Vector3 pos0;
+    Vector3 pos1;
+} BoneConnectionPositions;
+
 bool GetBoneConnectionsWithPriority(const char* boneName, char connections[3][MAX_BONE_NAME_LENGTH], float priorities[3]);
-
-void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, const Person* person, Camera camera,
-    int* outChosenIndex, float* outRotation, bool* outMirrored);
-
-void CalculateBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex,
-    float* outRotation, bool* outMirrored, const char* boneName);
-
 
 Rectangle SrcFromLogical(Texture2D tex, int logicalCol, int logicalRow, int physCols, int physRows,
     bool mirrored, bool* outMirrored);
@@ -68,7 +66,7 @@ void DrawBonetileCustom(Texture2D tex, Camera camera, Rectangle src, Vector3 pos
     float rotationDeg, bool mirrored, const char* boneName);
 
 void DrawBonetileCustomWithRoll(Texture2D tex, Camera camera, Rectangle src, Vector3 pos, Vector2 size,
-    float rotationDeg, bool mirrored, bool neighborValid, Vector3 neighborPos, const char* boneName);
+    float rotationDeg, bool mirrored, bool neighborValid, Vector3 neighborPos, const BoneRenderData* boneData, const Person* person);
 
 BoneRenderData* FindRenderBoneByName(BoneRenderData* bones, int count, const char* name);
 
@@ -82,5 +80,11 @@ Vector3 SafeNormalize(Vector3 v);
 Vector3 GetBonePositionByName(const Person* person, const char* boneName);
 
 bool IsWristBone(const char* boneName);
+
+void CalculateLimbBoneRenderData(const BoneRenderData* boneData, const Person* person, Camera camera,
+    int* outChosenIndex, float* outRotation, bool* outMirrored);
+
+void CalculateHandBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex,
+    float* outRotation, bool* outMirrored, const char* boneName);
 
 #endif /* BONETILE_H */

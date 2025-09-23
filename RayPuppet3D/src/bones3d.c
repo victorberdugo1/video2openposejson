@@ -16,21 +16,21 @@ static BonesRenderConfig g_renderConfig = {
     .showInvalidBones = false
 };
 
-static const struct {
-    const char* boneName;
-    const char* connectedBone;
-    float projectionFactor;
-} MIDPOINT_CONNECTIONS[] = {
-    {"Neck", "HEAD_CALCULATED", 1.0f},
-    {"LShoulder", "LElbow", 1.0f}, {"RShoulder", "RElbow", 1.0f},
-    {"LElbow", "LWrist", 1.0f}, {"RElbow", "RWrist", 1.0f},
-    {"LWrist", "LElbow", 1.3f}, {"RWrist", "RElbow", 1.3f},
-    {"LHip", "LKnee", 1.0f}, {"RHip", "RKnee", 1.0f},
-    {"LKnee", "LAnkle", 1.0f}, {"RKnee", "RAnkle", 1.0f},
-    {"LAnkle", "FOOT_FORWARD", 1.0f}, {"RAnkle", "FOOT_FORWARD", 1.0f},
-    {"", "", 0.0f}
-};
-
+/*
+ * +--------------------------------------------------------------+
+ * | Function: CalculateBoneMidpoint                              |
+ * |                                                              |
+ * | Compute an adjusted midpoint / projected position for a      |
+ * | given bone in a Person. Handles several special cases:       |
+ * |  - Neck: blend between calculated head and original neck.    |
+ * |  - Wrists: apply a projection factor from forearm.           |
+ * |  - Ankles: adjust to an anatomical foot-forward position.    |
+ * |  - Default: simple midpoint with connected bone.             |
+ * |                                                              |
+ * | - Input: const char* boneName, const Person* person          |
+ * | - Output: Vector3 position or (0,0,0) if invalid.            |
+ * +--------------------------------------------------------------+
+ */
 static Vector3 CalculateBoneMidpoint(const char* boneName, const Person* person) {
     if (!person || !boneName) return (Vector3) { 0, 0, 0 };
 
@@ -105,6 +105,17 @@ static Vector3 CalculateBoneMidpoint(const char* boneName, const Person* person)
     };
 }
 
+/*
+ * +--------------------------------------------------------------+
+ * | Function: BonesGetErrorString                                |
+ * |                                                              |
+ * | Map a BonesError enum value to a human-readable message.     |
+ * | Returns a static string describing the error (Spanish text). |
+ * |                                                              |
+ * | - Input: BonesError error                                    |
+ * | - Output: const char* description                            |
+ * +--------------------------------------------------------------+
+ */
 const char* BonesGetErrorString(BonesError error) {
     static const char* errorStrings[] = {
         [BONES_SUCCESS] = "Operacion exitosa",
@@ -124,6 +135,17 @@ const char* BonesGetErrorString(BonesError error) {
         ? errorStrings[error] : "Error desconocido";
 }
 
+/*
+ * +--------------------------------------------------------------+
+ * | Function: BonesLogError                                      |
+ * |                                                              |
+ * | Log an error to the TraceLog if it's not BONES_SUCCESS.      |
+ * | Optionally prints a context string before the error message. |
+ * |                                                              |
+ * | - Input: BonesError error, const char* context               |
+ * | - Effect: logs using TraceLog(LOG_ERROR, ...).               |
+ * +--------------------------------------------------------------+
+ */
 void BonesLogError(BonesError error, const char* context) {
     if (error != BONES_SUCCESS) {
         const char* errorStr = BonesGetErrorString(error);
@@ -136,6 +158,17 @@ void BonesLogError(BonesError error, const char* context) {
     }
 }
 
+/*
+ * +--------------------------------------------------------------+
+ * | Function: BonesInit                                          |
+ * |                                                              |
+ * | Initialize a BonesAnimation structure: allocate frames array,|
+ * | zero fields, set maxFrames and initial currentFrame.         |
+ * |                                                              |
+ * | - Input: BonesAnimation* animation, int maxFrames            |
+ * | - Output: BonesError (BONES_SUCCESS on success)              |
+ * +--------------------------------------------------------------+
+ */
 BonesError BonesInit(BonesAnimation* animation, int maxFrames) {
     if (!animation) return BONES_ERROR_NULL_POINTER;
 
@@ -151,6 +184,17 @@ BonesError BonesInit(BonesAnimation* animation, int maxFrames) {
     return BONES_SUCCESS;
 }
 
+/*
+ * +--------------------------------------------------------------+
+ * | Function: BonesFree                                          |
+ * |                                                              |
+ * | Release dynamic memory owned by a BonesAnimation and clear   |
+ * | the struct fields to a safe default.                         |
+ * |                                                              |
+ * | - Input: BonesAnimation* animation                           |
+ * | - Effect: frees frames and resets struct.                    |
+ * +--------------------------------------------------------------+
+ */
 void BonesFree(BonesAnimation* animation) {
     if (animation) {
         free(animation->frames);
@@ -159,6 +203,18 @@ void BonesFree(BonesAnimation* animation) {
     }
 }
 
+/*
+ * +---------------------------------------------------------------+
+ * | Function: ParseJSONFrame (static)                             |
+ * |                                                               |
+ * | Parse a single frame block from a JSON string into Person     |
+ * | structures. Looks for "frame_N" and then "person_M" entries,  |
+ * | extracting expected bone positions.                           |
+ * |                                                               |
+ * | - Input: jsonData, outFrameNum, outPersons[], outPersonCount  |
+ * | - Output: BonesError (success or parse error).                |
+ * +---------------------------------------------------------------+
+ */
 static BonesError ParseJSONFrame(const char* jsonData, int* outFrameNum, Person* outPersons, int* outPersonCount) {
     if (!jsonData || !outFrameNum || !outPersons || !outPersonCount) return BONES_ERROR_NULL_POINTER;
 
@@ -223,6 +279,17 @@ static BonesError ParseJSONFrame(const char* jsonData, int* outFrameNum, Person*
     return (*outPersonCount > 0) ? BONES_SUCCESS : BONES_ERROR_EMPTY_DATA;
 }
 
+/*
+ * +---------------------------------------------------------------+
+ * | Function: BonesLoadFromJSON                                   |
+ * |                                                               |
+ * | Load JSON text from a file and pass it to BonesLoadFromString |
+ * | to parse frames. Also stores the file path on success.        |
+ * |                                                               |
+ * | - Input: BonesAnimation* animation, const char* jsonFilePath  |
+ * | - Output: BonesError                                          |
+ * +---------------------------------------------------------------+
+ */
 BonesError BonesLoadFromJSON(BonesAnimation* animation, const char* jsonFilePath) {
     if (!animation || !jsonFilePath) return BONES_ERROR_NULL_POINTER;
 
@@ -242,6 +309,18 @@ BonesError BonesLoadFromJSON(BonesAnimation* animation, const char* jsonFilePath
     return result;
 }
 
+/*
+ * +--------------------------------------------------------------+
+ * | Function: BonesLoadFromString                                |
+ * |                                                              |
+ * | Parse an entire JSON string for multiple frames. Repeatedly  |
+ * | finds "frame_" blocks, calls ParseJSONFrame and fills the    |
+ * | animation->frames array up to animation->maxFrames.          |
+ * |                                                              |
+ * | - Input: BonesAnimation* animation, const char* jsonString   |
+ * | - Output: BonesError (BONES_SUCCESS if frames loaded)        |
+ * +--------------------------------------------------------------+
+ */
 BonesError BonesLoadFromString(BonesAnimation* animation, const char* jsonString) {
     if (!animation || !jsonString || !animation->frames) return BONES_ERROR_NULL_POINTER;
 
@@ -277,6 +356,17 @@ BonesError BonesLoadFromString(BonesAnimation* animation, const char* jsonString
     return BONES_ERROR_EMPTY_DATA;
 }
 
+/*
+ * +---------------------------------------------------------------+
+ * | Function: BonesSetFrame                                       |
+ * |                                                               |
+ * | Set the current frame index on the animation after validating |
+ * | that the animation is loaded and the index is within range.   |
+ * |                                                               |
+ * | - Input: BonesAnimation* animation, int frameNumber           |
+ * | - Output: BonesError (success or out-of-range/null errors)    |
+ * +---------------------------------------------------------------+
+ */
 BonesError BonesSetFrame(BonesAnimation* animation, int frameNumber) {
     if (!animation) return BONES_ERROR_NULL_POINTER;
     if (!animation->isLoaded) return BONES_ERROR_EMPTY_DATA;
@@ -286,32 +376,106 @@ BonesError BonesSetFrame(BonesAnimation* animation, int frameNumber) {
     return BONES_SUCCESS;
 }
 
+/*
+ * +--------------------------------------------------------------+
+ * | Function: BonesGetCurrentFrame                               |
+ * |                                                              |
+ * | Return the current frame index from the animation or -1 if   |
+ * | the pointer is NULL.                                         |
+ * |                                                              |
+ * | - Input: const BonesAnimation* animation                     |
+ * | - Output: int current frame index                            |
+ * +--------------------------------------------------------------+
+ */
 int BonesGetCurrentFrame(const BonesAnimation* animation) {
     return animation ? animation->currentFrame : -1;
 }
 
+/*
+ * +--------------------------------------------------------------+
+ * | Function: BonesGetFrameCount                                 |
+ * |                                                              |
+ * | Return the number of frames currently parsed in animation or |
+ * | 0 if the pointer is NULL.                                    |
+ * |                                                              |
+ * | - Input: const BonesAnimation* animation                     |
+ * | - Output: int frame count                                    |
+ * +--------------------------------------------------------------+
+ */
 int BonesGetFrameCount(const BonesAnimation* animation) {
     return animation ? animation->frameCount : 0;
 }
 
+/*
+ * +--------------------------------------------------------------+
+ * | Function: BonesIsValidFrame                                  |
+ * |                                                              |
+ * | Check if a given frame index is valid: animation loaded,     |
+ * | index in range and frame marked valid.                       |
+ * |                                                              |
+ * | - Input: const BonesAnimation* animation, int frameNumber    |
+ * | - Output: bool (true if valid)                               |
+ * +--------------------------------------------------------------+
+ */
 bool BonesIsValidFrame(const BonesAnimation* animation, int frameNumber) {
     return animation && animation->isLoaded && frameNumber >= 0 &&
         frameNumber < animation->frameCount && animation->frames[frameNumber].valid;
 }
 
+/*
+ * +--------------------------------------------------------------+
+ * | Function: BonesIsPositionValid                               |
+ * |                                                              |
+ * | Validate a Vector3: ensure no NaN and all components finite. |
+ * |                                                              |
+ * | - Input: Vector3 position                                    |
+ * | - Output: bool (true if valid)                               |
+ * +--------------------------------------------------------------+
+ */
 bool BonesIsPositionValid(Vector3 position) {
     return !isnan(position.x) && !isnan(position.y) && !isnan(position.z) &&
         isfinite(position.x) && isfinite(position.y) && isfinite(position.z);
 }
 
+/*
+ * +---------------------------------------------------------------+
+ * | Function: BonesGetDefaultRenderConfig                         |
+ * |                                                               |
+ * | Return the global default BonesRenderConfig value. Useful for |
+ * | initializing render systems or resetting config.              |
+ * |                                                               |
+ * | - Output: BonesRenderConfig (by value)                        |
+ * +---------------------------------------------------------------+
+ */
 BonesRenderConfig BonesGetDefaultRenderConfig(void) {
     return g_renderConfig;
 }
 
+/*
+ * +--------------------------------------------------------------+
+ * | Function: BonesSetRenderConfig                               |
+ * |                                                              |
+ * | Replace the global render configuration with the provided    |
+ * | config (if not NULL).                                        |
+ * |                                                              |
+ * | - Input: const BonesRenderConfig* config                     |
+ * +--------------------------------------------------------------+
+ */
 void BonesSetRenderConfig(const BonesRenderConfig* config) {
     if (config) g_renderConfig = *config;
 }
 
+/*
+ * +---------------------------------------------------------------+
+ * | Function: CleanupTextureSystem                                |
+ * |                                                               |
+ * | Free texture system resources and optional bone config array. |
+ * | Clears pointers and counts to avoid dangling references.      |
+ * |                                                               |
+ * | - Input: SimpleTextureSystem* textureSystem, BoneConfig** cfg |
+ * | - Effect: frees arrays and resets counts.                     |
+ * +---------------------------------------------------------------+
+ */
 void CleanupTextureSystem(SimpleTextureSystem* textureSystem, BoneConfig** boneConfigs, int* boneConfigCount) {
     if (textureSystem->configs) {
         free(textureSystem->configs);
@@ -324,11 +488,35 @@ void CleanupTextureSystem(SimpleTextureSystem* textureSystem, BoneConfig** boneC
     }
 }
 
+/*
+ * +--------------------------------------------------------------+
+ * | Function: GetFileModificationTime                            |
+ * |                                                              |
+ * | Return the last modification time of a file using stat().    |
+ * | Returns 0 on failure.                                        |
+ * |                                                              |
+ * | - Input: const char* filename                                |
+ * | - Output: time_t (modification time or 0)                    |
+ * +--------------------------------------------------------------+
+ */
 time_t GetFileModificationTime(const char* filename) {
     struct stat fileStat;
     return (stat(filename, &fileStat) == 0) ? fileStat.st_mtime : 0;
 }
 
+/*
+ * +---------------------------------------------------------------+
+ * | Function: LoadSimpleTextureConfig                             |
+ * |                                                               |
+ * | Load a simple bone texture config file: count non-comment     |
+ * | lines, allocate config array, parse each valid line and fill  |
+ * | a SimpleTextureSystem. Tracks file modification time to avoid |
+ * | reloading unchanged files.                                    |
+ * |                                                               |
+ * | - Input: SimpleTextureSystem* system, const char* filename    |
+ * | - Output: bool success/failure                                |
+ * +---------------------------------------------------------------+
+ */
 bool LoadSimpleTextureConfig(SimpleTextureSystem* system, const char* filename) {
     time_t currentModTime = GetFileModificationTime(filename);
     if (currentModTime == 0) return false;
@@ -403,6 +591,17 @@ bool LoadSimpleTextureConfig(SimpleTextureSystem* system, const char* filename) 
     return false;
 }
 
+/*
+ * +----------------------------------------------------------------+
+ * | Function: LoadBoneConfigurations                               |
+ * |                                                                |
+ * | Convert parsed BoneTextureConfig entries into runtime          |
+ * | BoneConfig structures used for rendering (allocates array).    |
+ * |                                                                |
+ * | - Input: SimpleTextureSystem* textureSystem, BoneConfig** out, |
+ * |          int* outCount                                         |
+ * +----------------------------------------------------------------+
+ */
 void LoadBoneConfigurations(SimpleTextureSystem* textureSystem, BoneConfig** boneConfigs, int* boneConfigCount) {
     free(*boneConfigs);
     *boneConfigs = NULL;
@@ -428,6 +627,18 @@ void LoadBoneConfigurations(SimpleTextureSystem* textureSystem, BoneConfig** bon
     }
 }
 
+/*
+ * +----------------------------------------------------------------+
+ * | Function: FindBoneConfig                                       |
+ * |                                                                |
+ * | Linear search for a BoneConfig by boneName in the boneConfigs  |
+ * | array. Returns NULL if not found.                              |
+ * |                                                                |
+ * | - Input: BoneConfig* boneConfigs, int boneConfigCount,         |
+ * |          const char* boneName                                  |
+ * | - Output: BoneConfig* or NULL                                  |
+ * +----------------------------------------------------------------+
+ */
 BoneConfig* FindBoneConfig(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName) {
     for (int i = 0; i < boneConfigCount; i++) {
         if (strcmp(boneConfigs[i].boneName, boneName) == 0) {
@@ -437,21 +648,67 @@ BoneConfig* FindBoneConfig(BoneConfig* boneConfigs, int boneConfigCount, const c
     return NULL;
 }
 
+/*
+ * +----------------------------------------------------------------+
+ * | Function: GetTexturePathForBone                                |
+ * |                                                                |
+ * | Return the texture path string for the requested bone name by  |
+ * | looking up the BoneConfig or falling back to "default.png".    |
+ * |                                                                |
+ * | - Input: BoneConfig* boneConfigs, int boneConfigCount,         |
+ * |          const char* boneName                                  |
+ * | - Output: const char* texture path                             |
+ * +----------------------------------------------------------------+
+ */
 const char* GetTexturePathForBone(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName) {
     BoneConfig* config = FindBoneConfig(boneConfigs, boneConfigCount, boneName);
     return config ? config->texturePath : "default.png";
 }
 
+/*
+ * +---------------------------------------------------------------+
+ * | Function: IsBoneVisible                                       |
+ * |                                                               |
+ * | Returns whether a bone should be rendered by checking its     |
+ * | BoneConfig visibility flag. Defaults to true if no config.    |
+ * |                                                               |
+ * | - Input: BoneConfig* boneConfigs, int boneConfigCount,        |
+ * |          const char* boneName                                 |
+ * | - Output: bool                                                |
+ * +---------------------------------------------------------------+
+ */
 bool IsBoneVisible(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName) {
     BoneConfig* config = FindBoneConfig(boneConfigs, boneConfigCount, boneName);
     return config ? config->visible : true;
 }
 
+/*
+ * +----------------------------------------------------------------+
+ * | Function: GetBoneSize                                          |
+ * |                                                                |
+ * | Return the configured size for a bone or the default fallback. |
+ * |                                                                |
+ * | - Input: BoneConfig* boneConfigs, int boneConfigCount,         |
+ * |          const char* boneName                                  |
+ * | - Output: float size                                           |
+ * +----------------------------------------------------------------+
+ */
 float GetBoneSize(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName) {
     BoneConfig* config = FindBoneConfig(boneConfigs, boneConfigCount, boneName);
     return config ? config->size : 0.35f;
 }
 
+/*
+ * +----------------------------------------------------------------+
+ * | Function: ResizeRenderBonesArray                               |
+ * |                                                                |
+ * | Grow (realloc) the render bones array to a larger capacity if  |
+ * | requested. Initializes newly allocated portion to zero.        |
+ * |                                                                |
+ * | - Input/Output: BoneRenderData** renderBones, int* capacity    |
+ * | - Output: bool success                                         |
+ * +----------------------------------------------------------------+
+ */
 bool ResizeRenderBonesArray(BoneRenderData** renderBones, int* renderBonesCapacity, int newCapacity) {
     if (newCapacity <= 0 || newCapacity > 10000 || newCapacity <= *renderBonesCapacity) return true;
 
@@ -464,11 +721,34 @@ bool ResizeRenderBonesArray(BoneRenderData** renderBones, int* renderBonesCapaci
     return true;
 }
 
+/*
+ * +---------------------------------------------------------------+
+ * | Function: CompareBonesByDistance                              |
+ * |                                                               |
+ * | Comparison helper for qsort: order bones by distance (desc).  |
+ * |                                                               |
+ * | - Input: const void* a, const void* b                         |
+ * | - Output: int for qsort ordering                              |
+ * +---------------------------------------------------------------+
+ */
 int CompareBonesByDistance(const void* a, const void* b) {
     float diff = ((const BoneRenderData*)b)->distance - ((const BoneRenderData*)a)->distance;
     return (diff > 0) ? 1 : (diff < 0) ? -1 : 0;
 }
 
+/*
+ * +---------------------------------------------------------------+
+ * | Function: CollectBonesForRendering                            |
+ * |                                                               |
+ * | Collect BoneRenderData entries from the current animation     |
+ * | frame. Filters invalid/invisible bones, prevents duplicates,  |
+ * | computes midpoints, filters by distance, enriches orientation |
+ * | and sorts the resulting array by distance for rendering.      |
+ * |                                                               |
+ * | - Input/Output: BonesAnimation*, Camera, BoneRenderData**     |
+ * |                int* count, int* capacity, BoneConfig* configs |
+ * +---------------------------------------------------------------+
+ */
 void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, BoneRenderData** renderBones,
     int* renderBonesCount, int* renderBonesCapacity, BoneConfig* boneConfigs, int boneConfigCount) {
     *renderBonesCount = 0;
@@ -571,11 +851,21 @@ void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, Bo
         qsort(*renderBones, *renderBonesCount, sizeof(BoneRenderData), CompareBonesByDistance);
     }
 }
-// Nueva función para enriquecer BoneRenderData con orientación
+
+/*
+ * +---------------------------------------------------------------+
+ * | Function: EnrichBoneRenderDataWithOrientation                 |
+ * |                                                               |
+ * | Compute and store orientation data (forward/up/right/yaw/     |
+ * | pitch/roll) for a BoneRenderData using the parent Person and  |
+ * | fallback defaults if orientation cannot be computed.          |
+ * |                                                               |
+ * | - Input/Output: BoneRenderData* renderBone, const Person*     |
+ * +---------------------------------------------------------------+
+ */
 void EnrichBoneRenderDataWithOrientation(BoneRenderData* renderBone, const Person* person) {
     if (!renderBone || !person) return;
 
-    // Calcular orientación basada en conexiones
     BoneOrientation orientation = CalculateBoneOrientation(renderBone->boneName, person, renderBone->position);
 
     if (orientation.valid) {
@@ -589,7 +879,6 @@ void EnrichBoneRenderDataWithOrientation(BoneRenderData* renderBone, const Perso
         renderBone->orientation.valid = true;
     }
     else {
-        // Orientación por defecto si no se puede calcular
         renderBone->orientation.position = renderBone->position;
         renderBone->orientation.forward = (Vector3){ 0, 0, 1 };
         renderBone->orientation.up = (Vector3){ 0, 1, 0 };

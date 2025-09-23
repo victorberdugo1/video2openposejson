@@ -71,6 +71,18 @@ static const struct {
     {"", 0.0f, 0.0f, 0.0f}
 };
 
+/*
+ * +------------------------------------------------------------------+
+ * | Function: GetBoneConnectionsWithPriority                         |
+ * |                                                                  |
+ * | Look up connection names and priorities for a given bone name.   |
+ * | Copies up to three connection names into the `connections` out   |
+ * | array and fills `priorities`. Returns true if an entry was found.|
+ * |                                                                  |
+ * | - Input: boneName, out connections[3][32], out priorities[3]     |
+ * | - Output: bool (found or not)                                    |
+ * +------------------------------------------------------------------+
+ */
 bool GetBoneConnectionsWithPriority(const char* boneName, char connections[3][32], float priorities[3]) {
     for (int i = 0; BONE_CONNECTIONS[i].boneName[0]; i++) {
         if (strcmp(BONE_CONNECTIONS[i].boneName, boneName) == 0) {
@@ -85,6 +97,18 @@ bool GetBoneConnectionsWithPriority(const char* boneName, char connections[3][32
     return false;
 }
 
+/*
+ * +------------------------------------------------------------------+
+ * | Function: GetBonePositionByName                                   |
+ * |                                                                  |
+ * | Returns a bone position for a Person by name. Handles special    |
+ * | token "HEAD_CALCULATED" which returns a computed head position.  |
+ * | If no bone found or invalid, returns (0,0,0).                    |
+ * |                                                                  |
+ * | - Input: Person*, boneName                                        |
+ * | - Output: Vector3 position                                        |
+ * +------------------------------------------------------------------+
+ */
 Vector3 GetBonePositionByName(const Person* person, const char* boneName) {
     if (!person || !boneName) return (Vector3) { 0, 0, 0 };
 
@@ -101,12 +125,37 @@ Vector3 GetBonePositionByName(const Person* person, const char* boneName) {
     return (Vector3) { 0, 0, 0 };
 }
 
+/*
+ * +------------------------------------------------------------------+
+ * | Function: SafeNormalize                                          |
+ * |                                                                  |
+ * | Normalize a Vector3 safely: if vector length is nearly zero,     |
+ * | return a reasonable default forward vector (0,0,1). Otherwise    |
+ * | return normalized vector.                                        |
+ * |                                                                  |
+ * | - Input: Vector3 v                                               |
+ * | - Output: Vector3 normalized or default                          |
+ * +------------------------------------------------------------------+
+ */
 Vector3 SafeNormalize(Vector3 v) {
     float length = Vector3Length(v);
     if (length < 1e-6f) return (Vector3) { 0, 0, 1 };
     return Vector3Scale(v, 1.0f / length);
 }
 
+/*
+ * +-------------------------------------------------------------------+
+ * | Function: GetStablePerpendicularVector                            |
+ * |                                                                   |
+ * | Given a forward vector, pick a stable perpendicular axis from     |
+ * | the world axis candidates (X,Y,Z) that has the smallest dot with  |
+ * | forward, to avoid near-collinearity and produce a robust up/right |
+ * | candidate.                                                        |
+ * |                                                                   |
+ * | - Input: forward Vector3                                          |
+ * | - Output: Vector3 candidate perpendicular                         |
+ * +-------------------------------------------------------------------+
+ */
 static Vector3 GetStablePerpendicularVector(Vector3 forward) {
     forward = SafeNormalize(forward);
 
@@ -130,6 +179,18 @@ static Vector3 GetStablePerpendicularVector(Vector3 forward) {
     return bestCandidate;
 }
 
+/*
+ * +-------------------------------------------------------------------+
+ * | Function: RotateVectorAroundAxis                                  |
+ * |                                                                   |
+ * | Rotate a vector around an arbitrary axis using Rodrigues' formula |
+ * | (constructed from cos/sin/oneMinusCos). If angle is nearly zero,  |
+ * | returns the original vector.                                      |
+ * |                                                                   |
+ * | - Input: vector, axis, angle (radians)                            |
+ * | - Output: rotated Vector3                                         |
+ * +-------------------------------------------------------------------+
+ */
 static Vector3 RotateVectorAroundAxis(Vector3 vector, Vector3 axis, float angle) {
     if (fabs(angle) < 1e-6f) return vector;
 
@@ -155,6 +216,19 @@ static Vector3 RotateVectorAroundAxis(Vector3 vector, Vector3 axis, float angle)
     return result;
 }
 
+/*
+ * +------------------------------------------------------------------+
+ * | Function: CalculateBoneOrientation                               |
+ * |                                                                  |
+ * | Compute orientation axes (forward/up/right) and Euler-like       |
+ * | angles (yaw, pitch, roll) for a bone based on configured         |
+ * | primary/secondary connections and angle offsets. Uses safe fall- |
+ * | backs when data is missing.                                      |
+ * |                                                                  |
+ * | - Input: boneName, Person*, bonePosition                         |
+ * | - Output: BoneOrientation struct (valid flag set when success)   |
+ * +------------------------------------------------------------------+
+ */
 BoneOrientation CalculateBoneOrientation(const char* boneName, const Person* person, Vector3 bonePosition) {
     BoneOrientation orientation = { 0 };
     orientation.position = bonePosition;
@@ -283,6 +357,17 @@ BoneOrientation CalculateBoneOrientation(const char* boneName, const Person* per
     return orientation;
 }
 
+/*
+ * +------------------------------------------------------------------+
+ * | Function: DrawQuadTextured3D                                     |
+ * |                                                                  |
+ * | Low-level helper to draw a textured 3D quad with simple UVs.     |
+ * | Binds texture, issues RL_QUADS with vertex positions and UVs,    |
+ * | then unbinds texture.                                            |
+ * |                                                                  |
+ * | - Input: Texture2D tex, v0..v3 positions, u0/v0..u1/v1 UV coords |
+ * +------------------------------------------------------------------+
+ */
 static void DrawQuadTextured3D(Texture2D tex, Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3,
     float u0, float v0t, float u1, float v1t) {
     rlSetTexture(tex.id);
@@ -296,6 +381,18 @@ static void DrawQuadTextured3D(Texture2D tex, Vector3 v0, Vector3 v1, Vector3 v2
     rlSetTexture(0);
 }
 
+/*
+ * +------------------------------------------------------------------+
+ * | Function: SrcFromLogical                                         |
+ * |                                                                  |
+ * | Convert logical atlas coordinates (col,row) into a source        |
+ * | Rectangle in pixel space. Clamps indices and returns a Rectangle.|
+ * | Optionally reports if mirroring was applied via outMirrored.     |
+ * |                                                                  |
+ * | - Input: tex, logicalCol,row, physCols,physRows, mirrored        |
+ * | - Output: Rectangle src                                          |
+ * +------------------------------------------------------------------+
+ */
 Rectangle SrcFromLogical(Texture2D tex, int logicalCol, int logicalRow, int physCols, int physRows,
     bool mirrored, bool* outMirrored) {
     if (logicalCol < 0) logicalCol = 0;
@@ -319,6 +416,16 @@ Rectangle SrcFromLogical(Texture2D tex, int logicalCol, int logicalRow, int phys
     };
 }
 
+/*
+ * +------------------------------------------------------------------+
+ * | Function: DrawQuadTextured3D_UVs                                 |
+ * |                                                                  |
+ * | Variant of DrawQuadTextured3D that accepts full per-vertex UV    |
+ * | coordinates (Vector2) for non-rectangular UV mapping.            |
+ * |                                                                  |
+ * | - Input: Texture2D, v0..v3, uv0..uv3                             |
+ * +------------------------------------------------------------------+
+ */
 static void DrawQuadTextured3D_UVs(Texture2D tex,
     Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3,
     Vector2 uv0, Vector2 uv1, Vector2 uv2, Vector2 uv3) {
@@ -333,6 +440,18 @@ static void DrawQuadTextured3D_UVs(Texture2D tex,
     rlSetTexture(0);
 }
 
+/*
+ * +------------------------------------------------------------------+
+ * | Function: ShouldFlipBoneTexture                                  |
+ * |                                                                  |
+ * | Return true if the given bone name belongs to a set of bones     |
+ * | that require vertical flip in the atlas sampling for correct     |
+ * | appearance (left/right symmetry).                                |
+ * |                                                                  |
+ * | - Input: boneName                                                |
+ * | - Output: bool (flip or not)                                     |
+ * +------------------------------------------------------------------+
+ */
 static bool ShouldFlipBoneTexture(const char* boneName) {
     if (!boneName) return false;
 
@@ -347,11 +466,31 @@ static bool ShouldFlipBoneTexture(const char* boneName) {
     return false;
 }
 
+/*
+ * +------------------------------------------------------------------+
+ * | Function: IsWristBone                                            |
+ * |                                                                  |
+ * | Simple predicate: returns true if boneName is LWrist or RWrist.  |
+ * | Used to apply wrist-specific tile/layout logic.                  |
+ * +------------------------------------------------------------------+
+ */
 bool IsWristBone(const char* boneName) {
     if (!boneName) return false;
     return (strcmp(boneName, "LWrist") == 0) || (strcmp(boneName, "RWrist") == 0);
 }
 
+/*
+ * +-------------------------------------------------------------------+
+ * | Function: DrawBonetileCustom                                      |
+ * |                                                                   |
+ * | Draw a camera-facing textured bone quad (bonetile) at a 3D pos.   |
+ * | Computes camera-facing axes (right/up), applies rotation degrees, |
+ * | optional mirroring and vertex UVs, then delegates to quad drawer. |
+ * |                                                                   |
+ * | - Input: tex, camera, src rect, pos, size, rotationDeg, mirrored, |
+ * |          boneName                                                 |
+ * +-------------------------------------------------------------------+
+ */
 void DrawBonetileCustom(Texture2D tex, Camera camera, Rectangle src, Vector3 pos, Vector2 size,
     float rotationDeg, bool mirrored, const char* boneName) {
     Vector3 camForward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
@@ -386,6 +525,14 @@ void DrawBonetileCustom(Texture2D tex, Camera camera, Rectangle src, Vector3 pos
     DrawQuadTextured3D(tex, p0, p1, p2, p3, u_left, v0t, u_right, v1t);
 }
 
+/*
+ * +------------------------------------------------------------------+
+ * | Function: ShouldUseVariableHeight                                |
+ * |                                                                  |
+ * | Returns true for bones that may change vertical size based on    |
+ * | neighbor distance (limbs), enabling dynamic tile stretching.     |
+ * +------------------------------------------------------------------+
+ */
 static bool ShouldUseVariableHeight(const char* boneName) {
     if (!boneName) return false;
 
@@ -400,8 +547,45 @@ static bool ShouldUseVariableHeight(const char* boneName) {
     return false;
 }
 
+/*
+ * +------------------------------------------------------------------+
+ * | Function: DrawBonetileCustomWithRoll                             |
+ * |                                                                  |
+ * | Draw a bonetile similar to DrawBonetileCustom but compute an     |
+ * | additional roll based on neighbor direction and optionally scale |
+ * | vertical size by neighbor distance. Uses UV variant drawer.      |
+ * |                                                                  |
+ * | - Input: tex, camera, src, pos, size, rotationDeg, mirrored,     |
+ * |          neighborValid, neighborPos, boneName                    |
+ * +------------------------------------------------------------------+
+ */
 void DrawBonetileCustomWithRoll(Texture2D tex, Camera camera, Rectangle src, Vector3 pos, Vector2 size,
-    float rotationDeg, bool mirrored, bool neighborValid, Vector3 neighborPos, const char* boneName) {
+    float rotationDeg, bool mirrored, bool neighborValid, Vector3 neighborPos, const BoneRenderData* boneData,
+    const Person* person) {
+
+    Vector3 camToPos = Vector3Subtract(pos, camera.position);
+    float distance = Vector3Length(camToPos);
+    if (distance > 0.0f) {
+        camToPos = Vector3Scale(camToPos, 1.0f / distance);
+        float cameraPitchDeg = atan2f(-camToPos.y, sqrtf(camToPos.x * camToPos.x + camToPos.z * camToPos.z)) * RAD2DEG;
+
+        if (fabs(cameraPitchDeg) > 70.0f) {
+            Vector3 personCenter = GetBonePositionByName(person, "Neck");
+            Vector3 toCenter = Vector3Normalize(Vector3Subtract(personCenter, boneData->position));
+            Vector3 camForward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+            Vector3 camRight = Vector3Normalize(Vector3CrossProduct(camForward, camera.up));
+            Vector3 camUp = Vector3Normalize(Vector3CrossProduct(camRight, camForward));
+            Vector3 projectedToCenter = Vector3Subtract(toCenter,
+                Vector3Scale(camForward, Vector3DotProduct(toCenter, camForward)));
+            float projLength = Vector3Length(projectedToCenter);
+            projectedToCenter = Vector3Scale(projectedToCenter, 1.0f / projLength);
+            float rightComponent = Vector3DotProduct(projectedToCenter, camRight);
+            float upComponent = Vector3DotProduct(projectedToCenter, camUp);
+
+            rotationDeg = atan2f(rightComponent, upComponent) * RAD2DEG + 180.0f;
+            neighborValid = false; // Desactivar roll adicional
+        }
+    }
 
     Vector3 camForward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
     Vector3 right = Vector3Normalize(Vector3CrossProduct(camForward, camera.up));
@@ -423,7 +607,7 @@ void DrawBonetileCustomWithRoll(Texture2D tex, Camera camera, Rectangle src, Vec
     Vector2 actualSize = size;
     Vector3 actualPos = pos;
 
-    if (ShouldUseVariableHeight(boneName) && neighborValid) {
+    if (ShouldUseVariableHeight(boneData->boneName) && neighborValid) {
         float neighborDistance = Vector3Distance(pos, neighborPos);
         float extensionFactor = 1.5f;
         actualSize.y = neighborDistance * extensionFactor;
@@ -444,7 +628,7 @@ void DrawBonetileCustomWithRoll(Texture2D tex, Camera camera, Rectangle src, Vec
     if (src.width < 0) { float tmp = u_left; u_left = u_right; u_right = tmp; }
     if (src.height < 0) { float tmp = v_top; v_top = v_bottom; v_bottom = tmp; }
 
-    bool needsVFlip = ShouldFlipBoneTexture(boneName);
+    bool needsVFlip = ShouldFlipBoneTexture(boneData->boneName);
     float v0t = needsVFlip ? v_top : v_bottom;
     float v1t = needsVFlip ? v_bottom : v_top;
 
@@ -454,6 +638,17 @@ void DrawBonetileCustomWithRoll(Texture2D tex, Camera camera, Rectangle src, Vec
     DrawQuadTextured3D_UVs(tex, p0, p1, p2, p3, uv0, uv1, uv2, uv3);
 }
 
+/*
+ * +-------------------------------------------------------------------+
+ * | Function: FindRenderBoneByName                                    |
+ * |                                                                   |
+ * | Search a BoneRenderData array for the first matching valid and    |
+ * | visible bone by name and return a pointer to it or NULL if none.  |
+ * |                                                                   |
+ * | - Input: bones[], count, name                                     |
+ * | - Output: BoneRenderData* or NULL                                 |
+ * +-----------------------------------------------------------------*-+
+ */
 BoneRenderData* FindRenderBoneByName(BoneRenderData* bones, int count, const char* name) {
     if (!bones || !name) return NULL;
     for (int i = 0; i < count; i++) {
@@ -464,11 +659,18 @@ BoneRenderData* FindRenderBoneByName(BoneRenderData* bones, int count, const cha
     return NULL;
 }
 
-typedef struct {
-    Vector3 pos0;
-    Vector3 pos1;
-} BoneConnectionPositions;
-
+/*
+ * +-------------------------------------------------------------------+
+ * | Function: GetBoneConnectionPositionsEx                            |
+ * |                                                                   |
+ * | For a given BoneRenderData, return two positions: the bone's own  |
+ * | position (pos0) and a neighbor connection position (pos1) if any. |
+ * | The neighbor search consults BONE_CONNECTIONS and person data.    |
+ * |                                                                   |
+ * | - Input: boneData, Person*                                        |
+ * | - Output: BoneConnectionPositions { pos0, pos1 }                  |
+ * +-------------------------------------------------------------------+
+ */
 BoneConnectionPositions GetBoneConnectionPositionsEx(const BoneRenderData* boneData, const Person* person) {
     BoneConnectionPositions result = { 0 };
 
@@ -498,10 +700,23 @@ BoneConnectionPositions GetBoneConnectionPositionsEx(const BoneRenderData* boneD
     return result;
 }
 
-void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, const Person* person, Camera camera, int* outChosenIndex, float* outRotation, bool* outMirrored) {
+/*
+ * +-------------------------------------------------------------------+
+ * | Function: CalculateLimbBoneRenderData                             |
+ * |                                                                   |
+ * | Decide which atlas index/row to use for a limb bone based on      |
+ * | camera direction relative to bone orientation. Computes sector,   |
+ * | pitch rows and optional rotation compensation for diagonal limbs. |
+ * | Fills outChosenIndex, outRotation and outMirrored accordingly.    |
+ * |                                                                   |
+ * | - Input: boneData, person, camera                                 |
+ * | - Output: outChosenIndex, outRotation, outMirrored                |
+ * +-------------------------------------------------------------------+
+ */
+void CalculateLimbBoneRenderData(const BoneRenderData* boneData, const Person* person, Camera camera, int* outChosenIndex, float* outRotation, bool* outMirrored) {
 
     if (!boneData->orientation.valid) {
-        CalculateBoneRenderData(boneData->position, camera, outChosenIndex, outRotation, outMirrored, boneData->boneName);
+        CalculateHandBoneRenderData(boneData->position, camera, outChosenIndex, outRotation, outMirrored, boneData->boneName);
         return;
     }
 
@@ -535,7 +750,6 @@ void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, const Perso
             shouldInvertPitch = true;
         }
     }
-
     if (shouldInvertPitch) {
         localPitchDeg = -localPitchDeg;
     }
@@ -619,9 +833,9 @@ void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, const Perso
 
     float rotationCompensation = 0.0f;
 
-    if (localPitchDeg >= 50.0f) {
+    if (localPitchDeg >= 60.0f) {
         *outChosenIndex = 3;
-        *outRotation = sector * 45.0f + 180.0f;
+        //*outRotation = sector * 45.0f + 180.0f;
         *outMirrored = false;
         return;
     }
@@ -716,7 +930,20 @@ void CalculateEnhancedBoneRenderData(const BoneRenderData* boneData, const Perso
     while (*outRotation < 0.0f) *outRotation += 360.0f;
 }
 
-void CalculateBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex,
+/*
+ * +-------------------------------------------------------------------+
+ * | Function: CalculateHandBoneRenderData                             |
+ * |                                                                   |
+ * | Specialized picker for hand/wrist sprites: compute camera vector  |
+ * | with optional per-bone yaw/pitch offsets, select hand tile index  |
+ * | from a 3x8 table based on yaw sector and pitch row. Applies some  |
+ * | wrist-specific clamping and mirroring rules.                      |
+ * |                                                                   |
+ * | - Input: bonePos, camera, outChosenIndex, outRotation, outMirror, |
+ * |          boneName                                                 |
+ * +-------------------------------------------------------------------+
+ */
+void CalculateHandBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex,
     float* outRotation, bool* outMirrored, const char* boneName) {
 
     static const int handIndices[3][8] = {

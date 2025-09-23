@@ -93,16 +93,17 @@ typedef struct {
     bool hasZFighting;
 } RenderItem;
 
-// Forward declarations
-static bool App_Init(AppState* app);
-static void App_Shutdown(AppState* app);
-static int App_GetTextureIndex(AppState* app, const char* path);
-static void App_HandleInput(AppState* app, float dt);
-static void App_UpdateCamera(AppState* app, float dt);
-static void App_UpdateAutoCenter(AppState* app);
-static void App_PrepareRenderData(AppState* app);
-static void App_Draw(AppState* app);
-
+/*
+ * +--------------------------------------------------------------+
+ * | Function: FindPersonByBoneName                               |
+ * |                                                              |
+ * | Search an AnimationFrame for the Person that contains a bone |
+ * | with the given name and return a pointer to that Person.     |
+ * |                                                              |
+ * | - Input:  AnimationFrame *frame, const char *boneName.       |
+ * | - Output: Person* (or NULL if not found).                    |
+ * +--------------------------------------------------------------+
+ */
 static const Person* FindPersonByBoneName(const AnimationFrame* frame, const char* boneName) {
     if (!frame || !boneName) return NULL;
     for (int p = 0; p < frame->personCount; p++) {
@@ -115,6 +116,17 @@ static const Person* FindPersonByBoneName(const AnimationFrame* frame, const cha
     return NULL;
 }
 
+/*
+ * +--------------------------------------------------------------+
+ * | Function: DetectZFighting                                    |
+ * |                                                              |
+ * | Check pairs of render items to find very close distances to  |
+ * | the camera and mark them as potential z-fighting conflicts.  |
+ * |                                                              |
+ * | - Input:  RenderItem *items, int itemCount.                  |
+ * | - Output: bool (true if any conflict detected).              |
+ * +--------------------------------------------------------------+
+ */
 static bool DetectZFighting(RenderItem* items, int itemCount) {
     bool hasZFighting = false;
     for (int i = 0; i < itemCount; i++) {
@@ -129,6 +141,17 @@ static bool DetectZFighting(RenderItem* items, int itemCount) {
     return hasZFighting;
 }
 
+/*
+ * +---------------------------------------------------------------+
+ * | Function: SortRenderItems                                     |
+ * |                                                               |
+ * | Sort render items by effective distance (distance + depthBias)|
+ * | so farther objects are drawn first (painter's algorithm).     |
+ * |                                                               |
+ * | - Input: RenderItem *items, int itemCount.                    |
+ * | - Effect: reorders array in-place (simple bubble sort used).  |
+ * +---------------------------------------------------------------+
+ */
 static void SortRenderItems(RenderItem* items, int itemCount) {
     for (int i = 0; i < itemCount - 1; i++) {
         bool swapped = false;
@@ -146,6 +169,18 @@ static void SortRenderItems(RenderItem* items, int itemCount) {
     }
 }
 
+/*
+ * +--------------------------------------------------------------+
+ * | Function: App_Init                                           |
+ * |                                                              |
+ * | Initialize the whole application: create window and camera,  |
+ * | load texture configs, initialize animation system and load   |
+ * | JSON data, set default render settings.                      |
+ * |                                                              |
+ * | - Input:  AppState *app                                      |
+ * | - Output: bool (true on success, false on failure)           |
+ * +--------------------------------------------------------------+
+ */
 static bool App_Init(AppState* app) {
     if (!app) return false;
     memset(app, 0, sizeof(*app));
@@ -200,6 +235,17 @@ static bool App_Init(AppState* app) {
     return true;
 }
 
+/*
+ * +--------------------------------------------------------------+
+ * | Function: App_Shutdown                                       |
+ * |                                                              |
+ * | Free all resources allocated by the application: free memory,|
+ * | unload textures, cleanup animation system and close window.  |
+ * |                                                              |
+ * | - Input: AppState *app                                       |
+ * | - Effect: app becomes uninitialized and window closed.       |
+ * +--------------------------------------------------------------+
+ */
 static void App_Shutdown(AppState* app) {
     if (!app) return;
 
@@ -216,6 +262,18 @@ static void App_Shutdown(AppState* app) {
     CloseWindow();
 }
 
+/*
+ * +--------------------------------------------------------------+
+ * | Function: App_GetTextureIndex                                |
+ * |                                                              |
+ * | Return the index for a texture path; if not loaded, load it, |
+ * | store it in the texture array, and return its index. Uses a  |
+ * | fallback image when the file cannot be loaded.               |
+ * |                                                              |
+ * | - Input: AppState *app, const char *path                     |
+ * | - Output: int texture index                                  |
+ * +--------------------------------------------------------------+
+ */
 static int App_GetTextureIndex(AppState* app, const char* path) {
     if (!app || !path) return 0;
 
@@ -242,6 +300,17 @@ static int App_GetTextureIndex(AppState* app, const char* path) {
     return app->textureCount++;
 }
 
+/*
+ * +--------------------------------------------------------------+
+ * | Function: App_HandleInput                                    |
+ * |                                                              |
+ * | Read keyboard and mouse input and update application state:  |
+ * | frame navigation (left/right/home/end), play/pause, reload   |
+ * | textures, toggle head/torso billboards, switch camera modes. |
+ * |                                                              |
+ * | - Input: AppState *app, float dt                             |
+ * +--------------------------------------------------------------+
+ */
 static void App_HandleInput(AppState* app, float dt) {
     if (!app) return;
 
@@ -318,6 +387,18 @@ static void App_HandleInput(AppState* app, float dt) {
     }
 }
 
+/*
+ * +--------------------------------------------------------------+
+ * | Function: App_UpdateCamera                                   |
+ * |                                                              |
+ * | Update camera position and orientation depending on camera   |
+ * | mode (orbit or FPS). Orbit uses mouse drag + wheel for zoom; |
+ * | FPS uses mouse look + WASD movement.                         |
+ * |                                                              |
+ * | - Input: AppState *app, float dt                             |
+ * | - Effect: updates app->camera.position and .target           |
+ * +--------------------------------------------------------------+
+ */
 static void App_UpdateCamera(AppState* app, float dt) {
     if (!app) return;
 
@@ -377,6 +458,18 @@ static void App_UpdateCamera(AppState* app, float dt) {
     }
 }
 
+/*
+ * +--------------------------------------------------------------+
+ * | Function: App_UpdateAutoCenter                               |
+ * |                                                              |
+ * | Compute an automatic center point (autoCenter) by averaging  |
+ * | relevant bone positions (head, chest, hip, spine) across all |
+ * | active persons in the current frame. Smoothly lerp if needed.|
+ * |                                                              |
+ * | - Input: AppState *app                                       |
+ * | - Effect: updates app->autoCenter and flag calculated.       |
+ * +--------------------------------------------------------------+
+ */
 static void App_UpdateAutoCenter(AppState* app) {
     if (!app || !app->animation.isLoaded || !BonesIsValidFrame(&app->animation, app->currentFrame)) return;
 
@@ -426,6 +519,17 @@ static void App_UpdateAutoCenter(AppState* app) {
     }
 }
 
+/*
+ * +--------------------------------------------------------------+
+ * | Function: App_PrepareRenderData                              |
+ * |                                                              |
+ * | Collect and update data structures used for drawing: bones,  |
+ * | heads and torsos. Only refresh bones when frame changed or   |
+ * | forced; collect heads/torsos only if their billboards active.|
+ * |                                                              |
+ * | - Input: AppState *app                                       |
+ * +--------------------------------------------------------------+
+ */
 static void App_PrepareRenderData(AppState* app) {
     if (!app) return;
 
@@ -453,6 +557,18 @@ static void App_PrepareRenderData(AppState* app) {
     }
 }
 
+/*
+ * +---------------------------------------------------------------+
+ * | Function: RenderBone                                          |
+ * |                                                               |
+ * | Render a single bone "bonetile": choose texture cell, compute |
+ * | world size and aspect, determine rotation and mirroring, find |
+ * | neighbor for roll calculation, then call the final draw call. |
+ * |                                                               |
+ * | - Input: AppState*, BoneRenderData*, Vector3 renderPosition,  |
+ * |          const AnimationFrame* (optional)                     |
+ * +---------------------------------------------------------------+
+ */
 static void RenderBone(AppState* app, const BoneRenderData* bone, Vector3 renderPosition, const AnimationFrame* frame) {
     int texIndex = App_GetTextureIndex(app, bone->texturePath);
     Texture2D currentTex = app->textures[texIndex];
@@ -470,12 +586,14 @@ static void RenderBone(AppState* app, const BoneRenderData* bone, Vector3 render
     float rotation = 0.0f;
     bool mirrored = false;
 
+    const Person* bonePerson = frame ? FindPersonByBoneName(frame, bone->boneName) : NULL;
+
     if (isWrist) {
-        CalculateBoneRenderData(bone->position, app->camera, &chosenIndex, &rotation, &mirrored, bone->boneName);
+        CalculateHandBoneRenderData(bone->position, app->camera, &chosenIndex, &rotation, &mirrored, bone->boneName);
     }
     else if (bone->orientation.valid) {
-        const Person* bonePerson = frame ? FindPersonByBoneName(frame, bone->boneName) : NULL;
-        CalculateEnhancedBoneRenderData(bone, bonePerson, app->camera, &chosenIndex, &rotation, &mirrored);
+
+        CalculateLimbBoneRenderData(bone, bonePerson, app->camera, &chosenIndex, &rotation, &mirrored);
     }
 
     int maxIndex = usedCols * usedRows - 1;
@@ -504,9 +622,20 @@ static void RenderBone(AppState* app, const BoneRenderData* bone, Vector3 render
     }
 
     DrawBonetileCustomWithRoll(currentTex, app->camera, src, renderPosition, worldSize, rotation,
-        finalMirror, haveNeighbor, neighborPos, bone->boneName);
+        finalMirror, haveNeighbor, neighborPos, bone, bonePerson);
 }
 
+/*
+ * +---------------------------------------------------------------+
+ * | Function: DrawOpenPoseSkeleton                                |
+ * |                                                               |
+ * | Draw a simple OpenPose-style debug skeleton for the first     |
+ * | active person: draw lines for predefined connections and tiny |
+ * | spheres at bone positions to visualize pose correctness.      |
+ * |                                                               |
+ * | - Input: AppState *app                                        |
+ * +---------------------------------------------------------------+
+ */
 static void DrawOpenPoseSkeleton(AppState* app) {
     if (!app || !app->animation.isLoaded || !BonesIsValidFrame(&app->animation, app->currentFrame)) return;
 
@@ -559,6 +688,18 @@ static void DrawOpenPoseSkeleton(AppState* app) {
     }
 }
 
+/*
+ * +---------------------------------------------------------------+
+ * | Function: App_Draw                                            |
+ * |                                                               |
+ * | Main per-frame draw routine: draws 2D UI, enters 3D mode,     |
+ * | builds render items (torsos/bones/heads), detects z-fighting, |
+ * | disables depth-test and renders everything with blending in   |
+ * | correct order. Handles neck/vs-head special case.             |
+ * |                                                               |
+ * | - Input: AppState *app                                        |
+ * +---------------------------------------------------------------+
+ */
 static void App_Draw(AppState* app) {
     if (!app) return;
 
@@ -714,6 +855,17 @@ static void App_Draw(AppState* app) {
     EndDrawing();
 }
 
+/*
+ * +---------------------------------------------------------------+
+ * | Function: main                                                |
+ * |                                                               |
+ * | Application entry point: initialize AppState via App_Init,    |
+ * | run main loop (handle input, update camera/center/data, draw) |
+ * | until window closes, then cleanup with App_Shutdown.          |
+ * |                                                               |
+ * | - Typical flow: Init -> Loop -> Shutdown                      |
+ * +---------------------------------------------------------------+
+ */
 int main(void) {
     AppState app;
     if (!App_Init(&app)) return -1;

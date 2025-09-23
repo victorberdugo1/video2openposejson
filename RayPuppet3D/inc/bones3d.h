@@ -101,6 +101,20 @@ typedef struct {
     time_t lastModified;
 } SimpleTextureSystem;
 
+static const struct {
+    const char* boneName;
+    const char* connectedBone;
+    float projectionFactor;
+} MIDPOINT_CONNECTIONS[] = {
+    {"Neck", "HEAD_CALCULATED", 1.0f},
+    {"LShoulder", "LElbow", 1.0f}, {"RShoulder", "RElbow", 1.0f},
+    {"LElbow", "LWrist", 1.0f}, {"RElbow", "RWrist", 1.0f},
+    {"LWrist", "LElbow", 1.3f}, {"RWrist", "RElbow", 1.3f},
+    {"LHip", "LKnee", 1.0f}, {"RHip", "RKnee", 1.0f},
+    {"LKnee", "LAnkle", 1.0f}, {"RKnee", "RAnkle", 1.0f},
+    {"LAnkle", "FOOT_FORWARD", 1.0f}, {"RAnkle", "FOOT_FORWARD", 1.0f},
+    {"", "", 0.0f}
+};
 // Core animation functions
 BonesError BonesInit(BonesAnimation* animation, int maxFrames);
 void BonesFree(BonesAnimation* animation);
