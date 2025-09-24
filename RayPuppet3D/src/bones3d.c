@@ -34,7 +34,7 @@ static BonesRenderConfig g_renderConfig = {
 static Vector3 CalculateBoneMidpoint(const char* boneName, const Person* person) {
     if (!person || !boneName) return (Vector3) { 0, 0, 0 };
 
-    // Special case: NECK - midpoint between calculated head and original neck
+    // Special case: NECK - make it follow the head more dynamically
     if (strcmp(boneName, "Neck") == 0) {
         Vector3 originalNeck = GetBonePositionByName(person, "Neck");
         if (originalNeck.x == 0 && originalNeck.y == 0 && originalNeck.z == 0) return originalNeck;
@@ -42,14 +42,28 @@ static Vector3 CalculateBoneMidpoint(const char* boneName, const Person* person)
         Vector3 calculatedHead = CalculateHeadPosition(person);
         if (calculatedHead.x == 0 && calculatedHead.y == 0 && calculatedHead.z == 0) return originalNeck;
 
+        // Calculate shoulder center as reference point
+        Vector3 lShoulder = GetBonePositionByName(person, "LShoulder");
+        Vector3 rShoulder = GetBonePositionByName(person, "RShoulder");
+        Vector3 shoulderCenter = originalNeck; // fallback
+
+        if ((lShoulder.x || lShoulder.y || lShoulder.z) && (rShoulder.x || rShoulder.y || rShoulder.z)) {
+            shoulderCenter = (Vector3){
+                (lShoulder.x + rShoulder.x) * 0.5f,
+                (lShoulder.y + rShoulder.y) * 0.5f,
+                (lShoulder.z + rShoulder.z) * 0.5f
+            };
+        }
+
+        // Position neck as midpoint between shoulder center and head
         return (Vector3) {
-            calculatedHead.x * 0.33f + originalNeck.x * 0.67f,
-                calculatedHead.y * 0.33f + originalNeck.y * 0.67f,
-                calculatedHead.z * 0.33f + originalNeck.z * 0.67f
+            (shoulderCenter.x + calculatedHead.x) * 0.5f,
+                (shoulderCenter.y + calculatedHead.y) * 0.5f,
+                (shoulderCenter.z + calculatedHead.z) * 0.5f
         };
     }
 
-    // Find connection configuration
+    // Rest of the function remains the same...
     const char* connectedBoneName = NULL;
     float projectionFactor = 1.0f;
 

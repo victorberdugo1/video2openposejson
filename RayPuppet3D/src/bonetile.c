@@ -64,7 +64,7 @@ static const struct {
     {"LHip", 85.0f, -40.0f, 85.0f},
     {"LKnee", 90.0f, 110.0f, 90.0f},
     {"LAnkle",  90.0f, -90.0f, 90.0f},
-    {"RHip", -85.0f, -85.0f, 85.0f},
+    {"RHip", -90.0f, -40.0f, -75.0f},
     {"RKnee", 90.0f, 90.0f, 90.0f},
     {"RAnkle", 90.0f, -5.0f, 80.0f},
     {"Neck", -85.0f, 175.0f, -85.0f},
@@ -569,7 +569,7 @@ void DrawBonetileCustomWithRoll(Texture2D tex, Camera camera, Rectangle src, Vec
         camToPos = Vector3Scale(camToPos, 1.0f / distance);
         float cameraPitchDeg = atan2f(-camToPos.y, sqrtf(camToPos.x * camToPos.x + camToPos.z * camToPos.z)) * RAD2DEG;
 
-        if (fabs(cameraPitchDeg) > 70.0f) {
+        if (fabs(cameraPitchDeg) > 50.0f) {
             Vector3 personCenter = GetBonePositionByName(person, "Neck");
             Vector3 toCenter = Vector3Normalize(Vector3Subtract(personCenter, boneData->position));
             Vector3 camForward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
@@ -745,6 +745,7 @@ void CalculateLimbBoneRenderData(const BoneRenderData* boneData, const Person* p
     if (boneData->boneName[0] != '\0') {
         if (strcmp(boneData->boneName, "Neck") != 0 &&
             strcmp(boneData->boneName, "RShoulder") != 0 &&
+            strcmp(boneData->boneName, "RHip") != 0 &&
             strcmp(boneData->boneName, "LAnkle") != 0 &&
             strcmp(boneData->boneName, "RAnkle") != 0) {
             shouldInvertPitch = true;
@@ -833,9 +834,9 @@ void CalculateLimbBoneRenderData(const BoneRenderData* boneData, const Person* p
 
     float rotationCompensation = 0.0f;
 
-    if (localPitchDeg >= 60.0f) {
+    if (localPitchDeg >= 55.0f) {
         *outChosenIndex = 3;
-        //*outRotation = sector * 45.0f + 180.0f;
+        //*outRotation = sector * 45.0f + 180.0f; rotation on DrawBonetileCustomWithRoll
         *outMirrored = false;
         return;
     }
@@ -921,6 +922,22 @@ void CalculateLimbBoneRenderData(const BoneRenderData* boneData, const Person* p
                     }
                 }
             }
+        }
+    }
+
+    // Special neck rotation toward head 
+    if (strcmp(boneData->boneName, "Neck") == 0 && person) {
+        Vector3 headPos = CalculateHeadPosition(person);
+        Vector3 neckToHead = Vector3Subtract(headPos, boneData->position);
+        if (Vector3Length(neckToHead) > 0.001f) {
+            Vector3 camRight = Vector3Normalize(Vector3CrossProduct(
+                Vector3Subtract(camera.target, camera.position), camera.up));
+            Vector3 camUp = Vector3Normalize(Vector3CrossProduct(camRight,
+                Vector3Subtract(camera.target, camera.position)));
+
+            neckToHead = SafeNormalize(neckToHead);
+            rotationCompensation += atan2f(Vector3DotProduct(neckToHead, camRight),
+                Vector3DotProduct(neckToHead, camUp)) * RAD2DEG;
         }
     }
 
