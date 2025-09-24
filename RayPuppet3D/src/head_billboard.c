@@ -10,12 +10,18 @@ static const float CHEST_OFFSET_Z = -0.005f;
 static const float CHEST_FALLBACK_Y = -0.08f;
 static const float HIP_OFFSET_Y = -0.02f;
 
-typedef struct {
-    Vector3 neck, lShoulder, rShoulder, lHip, rHip;
-    bool hasNeck, hasLShoulder, hasRShoulder, hasLHip, hasRHip;
-    int shoulderCount, hipCount;
-} CachedBones;
-
+/*
+ * +------------------------------------------------------------------+
+ * | Function: CacheBones (static)                                    |
+ * |                                                                  |
+ * | Extract and cache relevant bone positions from a Person for      |
+ * | efficient access during head/torso calculations. Returns a       |
+ * | CachedBones struct with position data and availability flags.    |
+ * |                                                                  |
+ * | - Input: const Person* person                                    |
+ * | - Output: CachedBones struct with cached positions               |
+ * +------------------------------------------------------------------+
+ */
 static CachedBones CacheBones(const Person* person) {
     CachedBones cache = { 0 };
 
@@ -45,6 +51,18 @@ static CachedBones CacheBones(const Person* person) {
     return cache;
 }
 
+/*
+ * +------------------------------------------------------------------+
+ * | Function: CalculateChestPosition                                 |
+ * |                                                                  |
+ * | Calculate chest position from neck and shoulder bone positions.  |
+ * | Uses cached bone data and applies anatomical offsets to place    |
+ * | the chest at a realistic position between neck and shoulders.    |
+ * |                                                                  |
+ * | - Input: const Person* person                                    |
+ * | - Output: Vector3 chest position or (0,0,0) if invalid           |
+ * +------------------------------------------------------------------+
+ */
 Vector3 CalculateChestPosition(const Person* person) {
     if (!person || person->boneCount == 0) return (Vector3) { 0, 0, 0 };
 
@@ -78,6 +96,18 @@ Vector3 CalculateChestPosition(const Person* person) {
     return (Vector3) { 0, 0, 0 };
 }
 
+/*
+ * +------------------------------------------------------------------+
+ * | Function: CalculateHipPosition                                   |
+ * |                                                                  |
+ * | Calculate hip center position from left/right hip bones and      |
+ * | optional torso reference points. Applies anatomical offsets and  |
+ * | maintains proper torso proportions relative to chest position.   |
+ * |                                                                  |
+ * | - Input: const Person* person                                    |
+ * | - Output: Vector3 hip position or (0,0,0) if invalid             |
+ * +------------------------------------------------------------------+
+ */
 Vector3 CalculateHipPosition(const Person* person) {
     if (!person || person->boneCount == 0) return (Vector3) { 0, 0, 0 };
 
@@ -170,6 +200,18 @@ Vector3 CalculateHipPosition(const Person* person) {
     return hipPos;
 }
 
+/*
+ * +------------------------------------------------------------------+
+ * | Function: CalculateVirtualSpine                                  |
+ * |                                                                  |
+ * | Compute a virtual spine structure from shoulder and hip          |
+ * | positions. Creates spine direction, forward, and right vectors   |
+ * | for proper torso orientation calculations.                       |
+ * |                                                                  |
+ * | - Input: const Person* person                                    |
+ * | - Output: VirtualSpine struct with spine orientation data        |
+ * +------------------------------------------------------------------+
+ */
 VirtualSpine CalculateVirtualSpine(const Person* person) {
     VirtualSpine spine = { 0 };
     if (!person || person->boneCount == 0) return spine;
@@ -211,6 +253,18 @@ VirtualSpine CalculateVirtualSpine(const Person* person) {
     return spine;
 }
 
+/*
+ * +------------------------------------------------------------------+
+ * | Function: CreateOrientation (static)                             |
+ * |                                                                  |
+ * | Helper function to create a TorsoOrientation struct from         |
+ * | position and directional vectors. Computes yaw, pitch, and roll  |
+ * | angles from the provided forward/up/right vectors.               |
+ * |                                                                  |
+ * | - Input: Vector3 pos, forward, up, right                         |
+ * | - Output: TorsoOrientation with computed angles                  |
+ * +------------------------------------------------------------------+
+ */
 static TorsoOrientation CreateOrientation(Vector3 pos, Vector3 forward, Vector3 up, Vector3 right) {
     TorsoOrientation orientation = { 0 };
     orientation.position = pos;
@@ -229,6 +283,18 @@ static TorsoOrientation CreateOrientation(Vector3 pos, Vector3 forward, Vector3 
     return orientation;
 }
 
+/*
+ * +------------------------------------------------------------------+
+ * | Function: CalculateChestOrientation                              |
+ * |                                                                  |
+ * | Compute chest orientation using virtual spine calculation.       |
+ * | Returns a TorsoOrientation with forward/up/right vectors and     |
+ * | euler angles for proper chest billboard rendering.               |
+ * |                                                                  |
+ * | - Input: const Person* person                                    |
+ * | - Output: TorsoOrientation for chest positioning                 |
+ * +------------------------------------------------------------------+
+ */
 TorsoOrientation CalculateChestOrientation(const Person* person) {
     VirtualSpine spine = CalculateVirtualSpine(person);
     if (!spine.valid) {
@@ -242,6 +308,18 @@ TorsoOrientation CalculateChestOrientation(const Person* person) {
     return CreateOrientation(spine.chestPosition, spine.spineForward, spine.spineDirection, spine.spineRight);
 }
 
+/*
+ * +------------------------------------------------------------------+
+ * | Function: CalculateHipOrientation                                |
+ * |                                                                  |
+ * | Compute hip orientation using virtual spine calculation.         |
+ * | Returns a TorsoOrientation with forward/up/right vectors and     |
+ * | euler angles for proper hip billboard rendering.                 |
+ * |                                                                  |
+ * | - Input: const Person* person                                    |
+ * | - Output: TorsoOrientation for hip positioning                   |
+ * +------------------------------------------------------------------+
+ */
 TorsoOrientation CalculateHipOrientation(const Person* person) {
     VirtualSpine spine = CalculateVirtualSpine(person);
     if (!spine.valid) {
@@ -255,6 +333,19 @@ TorsoOrientation CalculateHipOrientation(const Person* person) {
     return CreateOrientation(spine.hipPosition, spine.spineForward, spine.spineDirection, spine.spineRight);
 }
 
+/*
+ * +------------------------------------------------------------------+
+ * | Function: CalculateTorsoRenderData                               |
+ * |                                                                  |
+ * | Determine atlas index, rotation and mirroring for torso          |
+ * | billboard rendering based on camera angle relative to torso      |
+ * | orientation. Handles special rotations for chest-to-hip and      |
+ * | hip-to-chest directional rendering.                              |
+ * |                                                                  |
+ * | - Input: TorsoRenderData*, Camera, out params                    |
+ * | - Output: fills outChosenIndex, outRotation, outMirrored         |
+ * +------------------------------------------------------------------+
+ */
 void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
     int* outChosenIndex, float* outRotation, bool* outMirrored) {
 
@@ -372,16 +463,50 @@ void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
     }
 }
 
+/*
+ * +------------------------------------------------------------------+
+ * | Function: ShouldRenderChest                                      |
+ * |                                                                  |
+ * | Determine if a chest billboard should be rendered for this       |
+ * | person based on availability of shoulder bones.                  |
+ * |                                                                  |
+ * | - Input: const Person* person                                    |
+ * | - Output: bool (true if chest should be rendered)                |
+ * +------------------------------------------------------------------+
+ */
 bool ShouldRenderChest(const Person* person) {
     if (!person || !person->active) return false;
     return CacheBones(person).shoulderCount >= 1;
 }
 
+/*
+ * +------------------------------------------------------------------+
+ * | Function: ShouldRenderHip                                        |
+ * |                                                                  |
+ * | Determine if a hip billboard should be rendered for this         |
+ * | person based on availability of hip bones.                       |
+ * |                                                                  |
+ * | - Input: const Person* person                                    |
+ * | - Output: bool (true if hip should be rendered)                  |
+ * +------------------------------------------------------------------+
+ */
 bool ShouldRenderHip(const Person* person) {
     if (!person || !person->active) return false;
     return CacheBones(person).hipCount >= 1;
 }
 
+/*
+ * +------------------------------------------------------------------+
+ * | Function: DrawTorsoBillboard                                     |
+ * |                                                                  |
+ * | Render a single torso billboard (chest or hip) using the         |
+ * | calculated atlas position, rotation and mirroring. Handles       |
+ * | camera-facing orientation and applies torso-specific rendering   |
+ * | adjustments for front/back sector detection.                     |
+ * |                                                                  |
+ * | - Input: Texture2D, Camera, TorsoRenderData*, physCols/Rows      |
+ * +------------------------------------------------------------------+
+ */
 void DrawTorsoBillboard(Texture2D texture, Camera camera, const TorsoRenderData* torsoData, int physCols, int physRows) {
     if (!torsoData || !torsoData->valid || !torsoData->visible) return;
     int chosenIndex;
@@ -423,6 +548,19 @@ void DrawTorsoBillboard(Texture2D texture, Camera camera, const TorsoRenderData*
     DrawBonetileCustom(texture, camera, src, torsoData->position, worldSize, rotation, finalMirror, "");
 }
 
+/*
+ * +------------------------------------------------------------------+
+ * | Function: CollectTorsosForRendering                              |
+ * |                                                                  |
+ * | Collect all torso render data (chest/hip) from current frame     |
+ * | into render arrays. Prevents duplicate processing, applies       |
+ * | configuration settings, and prepares data for depth-sorted       |
+ * | billboard rendering.                                             |
+ * |                                                                  |
+ * | - Input: animation, torsos array, configs                        |
+ * | - Output: fills torsos array with render data                    |
+ * +------------------------------------------------------------------+
+ */
 void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData** torsos,
     int* torsoCount, int* torsoCapacity, BoneConfig* boneConfigs, int boneConfigCount) {
 
@@ -558,6 +696,18 @@ void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData*
     }
 }
 
+/*
+ * +------------------------------------------------------------------+
+ * | Function: CalculateHeadPosition                                  |
+ * |                                                                  |
+ * | Calculate head position from facial features (eyes, nose, ears)  |
+ * | and neck position. Uses weighted averaging of face center with   |
+ * | depth offset for realistic head placement relative to neck.      |
+ * |                                                                  |
+ * | - Input: const Person* person                                    |
+ * | - Output: Vector3 head position or (0,0,0) if invalid            |
+ * +------------------------------------------------------------------+
+ */
 Vector3 CalculateHeadPosition(const Person* person) {
     if (!person || person->boneCount == 0) return (Vector3) { 0, 0, 0 };
 
@@ -678,6 +828,19 @@ Vector3 CalculateHeadPosition(const Person* person) {
     return (Vector3) { 0, 0, 0 };
 }
 
+/*
+ * +------------------------------------------------------------------+
+ * | Function: CalculateHeadOrientation                               |
+ * |                                                                  |
+ * | Compute head orientation from facial landmark positions.         |
+ * | Uses nose-to-ear/eye vectors to determine forward direction      |
+ * | and eye-line for right vector, creating proper head billboard    |
+ * | orientation for camera-relative rendering.                       |
+ * |                                                                  |
+ * | - Input: const Person* person                                    |
+ * | - Output: HeadOrientation with forward/up/right vectors          |
+ * +------------------------------------------------------------------+
+ */
 HeadOrientation CalculateHeadOrientation(const Person* person) {
     HeadOrientation orientation = { .valid = false };
     if (!person || person->boneCount == 0) return orientation;
@@ -752,6 +915,19 @@ HeadOrientation CalculateHeadOrientation(const Person* person) {
     return orientation;
 }
 
+/*
+ * +------------------------------------------------------------------+
+ * | Function: CalculateHeadRenderData                                |
+ * |                                                                  |
+ * | Determine atlas index, rotation and mirroring for head           |
+ * | billboard based on camera angle relative to head orientation.    |
+ * | Handles extreme pitch angles and uses world coordinates for      |
+ * | top/bottom views to maintain visual consistency.                 |
+ * |                                                                  |
+ * | - Input: HeadRenderData*, Camera, out params                     |
+ * | - Output: fills outChosenIndex, outRotation, outMirrored         |
+ * +------------------------------------------------------------------+
+ */
 void CalculateHeadRenderData(const HeadRenderData* headData, Camera camera,
     int* outChosenIndex, float* outRotation, bool* outMirrored) {
     if (!headData->orientation.valid) {
@@ -818,6 +994,18 @@ void CalculateHeadRenderData(const HeadRenderData* headData, Camera camera,
     }
 }
 
+/*
+ * +------------------------------------------------------------------+
+ * | Function: ShouldRenderHead                                       |
+ * |                                                                  |
+ * | Determine if a head billboard should be rendered for this        |
+ * | person based on availability of facial feature bones (need       |
+ * | at least 2 facial points: nose, eyes, or ears).                  |
+ * |                                                                  |
+ * | - Input: const Person* person                                    |
+ * | - Output: bool (true if head should be rendered)                 |
+ * +------------------------------------------------------------------+
+ */
 bool ShouldRenderHead(const Person* person) {
     if (!person || !person->active) return false;
 
@@ -837,6 +1025,17 @@ bool ShouldRenderHead(const Person* person) {
     return facialPoints >= 2;
 }
 
+/*
+ * +------------------------------------------------------------------+
+ * | Function: DrawHeadBillboard                                      |
+ * |                                                                  |
+ * | Render a single head billboard using calculated atlas position,  |
+ * | rotation and mirroring. Applies camera-facing orientation and    |
+ * | uses head-specific texture atlas coordinates for rendering.      |
+ * |                                                                  |
+ * | - Input: Texture2D, Camera, HeadRenderData*, physCols/Rows       |
+ * +------------------------------------------------------------------+
+ */
 void DrawHeadBillboard(Texture2D texture, Camera camera, const HeadRenderData* headData,
     int physCols, int physRows) {
     if (!headData || !headData->valid || !headData->visible) return;
@@ -857,6 +1056,19 @@ void DrawHeadBillboard(Texture2D texture, Camera camera, const HeadRenderData* h
     DrawBonetileCustom(texture, camera, src, headData->position, worldSize, rotation, finalMirror, "Head");
 }
 
+/*
+ * +------------------------------------------------------------------+
+ * | Function: CollectHeadsForRendering                               |
+ * |                                                                  |
+ * | Collect all head render data from current animation frame into   |
+ * | render arrays. Prevents duplicate processing per person,         |
+ * | applies head configuration settings, and prepares data for       |
+ * | depth-sorted billboard rendering pipeline.                       |
+ * |                                                                  |
+ * | - Input: animation, heads array, configs                         |
+ * | - Output: fills heads array with head render data                |
+ * +------------------------------------------------------------------+
+ */
 void CollectHeadsForRendering(const BonesAnimation* animation, HeadRenderData** heads,
     int* headCount, int* headCapacity, BoneConfig* boneConfigs, int boneConfigCount) {
     *headCount = 0;

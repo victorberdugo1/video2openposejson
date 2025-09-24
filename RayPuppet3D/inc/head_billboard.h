@@ -66,6 +66,11 @@ typedef struct {
     const Person* person;
 } TorsoRenderData;
 
+typedef struct {
+    Vector3 neck, lShoulder, rShoulder, lHip, rHip;
+    bool hasNeck, hasLShoulder, hasRShoulder, hasLHip, hasRHip;
+    int shoulderCount, hipCount;
+} CachedBones;
 
 // Funciones principales
 HeadOrientation CalculateHeadOrientation(const Person* person);

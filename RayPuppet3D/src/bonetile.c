@@ -44,7 +44,7 @@ static const struct {
     {"LAnkle", "LKnee", "", true, false, true},
     {"RHip", "RKnee", "Hip", false, true, true},
     {"RKnee", "RAnkle", "RHip", true, true, true},
-    {"RAnkle", "RKnee", "", true, false, true},
+    {"RAnkle", "RKnee", "", false, false, true},
     {"Neck", "HEAD_CALCULATED", "", true, false, true},
     {"", "", "", false, false, false}
 };
@@ -65,8 +65,8 @@ static const struct {
     {"LKnee", 90.0f, 110.0f, 90.0f},
     {"LAnkle",  90.0f, -90.0f, 90.0f},
     {"RHip", -90.0f, -40.0f, -75.0f},
-    {"RKnee", 90.0f, 90.0f, 90.0f},
-    {"RAnkle", 90.0f, -5.0f, 80.0f},
+    {"RKnee", -90.0f, 90.0f, 90.0f},
+    {"RAnkle", 90.0f, 180.0f, 90.0f},
     {"Neck", -85.0f, 175.0f, -85.0f},
     {"", 0.0f, 0.0f, 0.0f}
 };
@@ -745,9 +745,9 @@ void CalculateLimbBoneRenderData(const BoneRenderData* boneData, const Person* p
     if (boneData->boneName[0] != '\0') {
         if (strcmp(boneData->boneName, "Neck") != 0 &&
             strcmp(boneData->boneName, "RShoulder") != 0 &&
-            strcmp(boneData->boneName, "RHip") != 0 &&
-            strcmp(boneData->boneName, "LAnkle") != 0 &&
-            strcmp(boneData->boneName, "RAnkle") != 0) {
+            strcmp(boneData->boneName, "RHip") != 0 && 
+            strcmp(boneData->boneName, "RKnee") != 0 &&
+            strcmp(boneData->boneName, "LAnkle") != 0) {
             shouldInvertPitch = true;
         }
     }
