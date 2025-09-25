@@ -314,13 +314,17 @@ static int App_GetTextureIndex(AppState* app, const char* path) {
 static void App_HandleInput(AppState* app, float dt) {
     if (!app) return;
 
+	static int framesSinceLastPress = 0;
+
     // Frame navigation
     if (app->animation.isLoaded && app->maxFrames > 0) {
         bool frameChanged = false;
         int newFrame = app->currentFrame;
 
-        if (IsKeyPressed(KEY_LEFT) && newFrame > 0) { newFrame--; frameChanged = true; }
-        if (IsKeyPressed(KEY_RIGHT) && newFrame < app->maxFrames - 1) { newFrame++; frameChanged = true; }
+		framesSinceLastPress++;
+
+        if (IsKeyDown(KEY_LEFT) && newFrame > 0 && framesSinceLastPress > 15) { newFrame--; frameChanged = true; framesSinceLastPress = 0; }
+        if (IsKeyDown(KEY_RIGHT) && newFrame < app->maxFrames - 1 && framesSinceLastPress > 15) { newFrame++; frameChanged = true; framesSinceLastPress = 0; }
         if (IsKeyPressed(KEY_HOME)) { newFrame = 0; frameChanged = true; }
         if (IsKeyPressed(KEY_END) && app->maxFrames > 0) { newFrame = app->maxFrames - 1; frameChanged = true; }
 
