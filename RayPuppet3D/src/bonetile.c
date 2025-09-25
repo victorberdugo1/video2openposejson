@@ -941,6 +941,36 @@ void CalculateLimbBoneRenderData(const BoneRenderData* boneData, const Person* p
         }
     }
 
+        // Stabilization for front/back views (similar to torso stabilization)
+    if ((sector == 0 || sector == 4) &&
+        localPitchDeg < 60.0f && localPitchDeg > -60.0f) {
+
+        // For front and back views, minimize rotation compensation to reduce jitter
+        rotationCompensation *= 0.01f;  // Reduce compensation by 90%
+
+        // For certain limbs, completely disable rotation in front/back view
+        if (boneData->boneName[0] != '\0') {
+            if (strcmp(boneData->boneName, "LShoulder") == 0 ||
+                strcmp(boneData->boneName, "RShoulder") == 0 ||
+                strcmp(boneData->boneName, "LElbow") == 0 ||
+                strcmp(boneData->boneName, "RElbow") == 0 ||
+                strcmp(boneData->boneName, "LHip") == 0 ||
+                strcmp(boneData->boneName, "RHip") == 0 ||
+                strcmp(boneData->boneName, "LKnee") == 0 ||
+                strcmp(boneData->boneName, "RKnee") == 0) {
+                rotationCompensation = 0.0f;  // No rotation for major joints in front/back
+            }
+        }
+    }
+
+    // Additional stabilization for near-frontal views (sectors 7, 0, 1 and 3, 4, 5)
+    if (((sector >= 7 || sector <= 1) || (sector >= 3 && sector <= 5)) &&
+        localPitchDeg < 45.0f && localPitchDeg > -45.0f) {
+
+        // Reduce rotation jitter for near-frontal views
+        rotationCompensation *= 0.3f;
+    }
+
     *outRotation += rotationCompensation;
 
     while (*outRotation >= 360.0f) *outRotation -= 360.0f;
