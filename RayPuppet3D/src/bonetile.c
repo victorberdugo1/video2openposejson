@@ -37,7 +37,7 @@ static const struct {
     {"LElbow", "Neck", "LWrist", true, true, true},
     {"LWrist", "LElbow", "", false, false, true},
     {"RShoulder", "RElbow", "Neck", true, true, true},
-    {"RElbow", "Neck", "RWrist", true, true, true},
+    {"RElbow", "Neck", "RWrist", false, true, true},
     {"RWrist", "RElbow", "", false, false, true},
     {"LHip", "LKnee", "Hip", true, true, true},
     {"LKnee", "LAnkle", "LHip", true, true, true},
@@ -56,10 +56,10 @@ static const struct {
     float rollOffset;
 } BONE_ANGLE_OFFSETS[] = {
     {"LShoulder", 90.0f, 175.0f, -75.0f},
-    {"LElbow", 85.0f, 175.0f, -65.0f},
+    {"LElbow", 85.0f, 230.0f, -75.0f},
     {"LWrist", 90.0f, 180.0f, 90.0f},
     {"RShoulder", -90.0f, 0.0f, 75.0f},
-    {"RElbow", -85.0f, 175.0f, 75.0f},
+    {"RElbow", -85.0f, -75.0f, 75.0f},
     {"RWrist", 90.0f, 180.0f, 110.0f},
     {"LHip", 85.0f, -40.0f, 85.0f},
     {"LKnee", 90.0f, 110.0f, 90.0f},
@@ -569,7 +569,7 @@ void DrawBonetileCustomWithRoll(Texture2D tex, Camera camera, Rectangle src, Vec
         camToPos = Vector3Scale(camToPos, 1.0f / distance);
         float cameraPitchDeg = atan2f(-camToPos.y, sqrtf(camToPos.x * camToPos.x + camToPos.z * camToPos.z)) * RAD2DEG;
 
-        if (fabs(cameraPitchDeg) > 50.0f) {
+        if (fabs(cameraPitchDeg) > 50.0f && strcmp(boneData->boneName, "Neck") != 0) {
             Vector3 personCenter = GetBonePositionByName(person, "Neck");
             Vector3 toCenter = Vector3Normalize(Vector3Subtract(personCenter, boneData->position));
             Vector3 camForward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
@@ -746,6 +746,7 @@ void CalculateLimbBoneRenderData(const BoneRenderData* boneData, const Person* p
         if (strcmp(boneData->boneName, "Neck") != 0 &&
             strcmp(boneData->boneName, "RShoulder") != 0 &&
             strcmp(boneData->boneName, "RHip") != 0 && 
+            strcmp(boneData->boneName, "RElbow") != 0 &&
             strcmp(boneData->boneName, "RKnee") != 0 &&
             strcmp(boneData->boneName, "LAnkle") != 0) {
             shouldInvertPitch = true;
@@ -834,7 +835,7 @@ void CalculateLimbBoneRenderData(const BoneRenderData* boneData, const Person* p
 
     float rotationCompensation = 0.0f;
 
-    if (localPitchDeg >= 55.0f) {
+    if (localPitchDeg >= 52.5f) {
         *outChosenIndex = 3;
         //*outRotation = sector * 45.0f + 180.0f; rotation on DrawBonetileCustomWithRoll
         *outMirrored = false;

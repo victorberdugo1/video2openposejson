@@ -635,7 +635,7 @@ static void RenderBone(AppState* app, const BoneRenderData* bone, Vector3 render
  * |                                                               |
  * | - Input: AppState *app                                        |
  * +---------------------------------------------------------------+
- */
+
 static void DrawOpenPoseSkeleton(AppState* app) {
     if (!app || !app->animation.isLoaded || !BonesIsValidFrame(&app->animation, app->currentFrame)) return;
 
@@ -687,6 +687,7 @@ static void DrawOpenPoseSkeleton(AppState* app) {
         break;
     }
 }
+ */
 
 /*
  * +---------------------------------------------------------------+
@@ -850,7 +851,7 @@ static void App_Draw(AppState* app) {
         EndBlendMode();
     }
 
-    DrawOpenPoseSkeleton(app);
+    //DrawOpenPoseSkeleton(app);
     EndMode3D();
     EndDrawing();
 }
