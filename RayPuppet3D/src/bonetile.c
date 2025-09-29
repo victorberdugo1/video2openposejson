@@ -1070,21 +1070,18 @@ void CalculateHandBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenI
         if (*outChosenIndex < 0) *outChosenIndex = 0;
         if (*outChosenIndex > 24) *outChosenIndex = *outChosenIndex % 25;
 
-        return;
+        //return;
     }
 
-    const float TOP_THRESHOLD = 70.0f;
-    const float BOTTOM_THRESHOLD = -70.0f;
-
-    if (pitchDeg >= TOP_THRESHOLD) {
-        *outChosenIndex = 3;
+    if (pitchDeg >= 52.5f) {
+        *outChosenIndex = 22;
         *outRotation = sector * 45.0f + 180.0f;
         *outMirrored = false;
     }
-    else if (pitchDeg <= BOTTOM_THRESHOLD) {
-        *outChosenIndex = 22;
-        *outRotation = (8 - sector) * 45.0f + 180.0f;
-        if (*outRotation >= 360.0f) *outRotation -= 360.0f;
-        *outMirrored = true;
+    else if (pitchDeg <= -52.5f) {
+        *outChosenIndex = 3;
+        //*outRotation = (8 - sector) * 45.0f + 180.0f;
+        //if (*outRotation >= 360.0f) *outRotation -= 360.0f;
+        //*outMirrored = true;
     }
 }
