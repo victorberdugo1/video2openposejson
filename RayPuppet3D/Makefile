@@ -17,21 +17,15 @@ OBJ = $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/%.o, $(SRCS))
 # Raylib
 RAYLIB_DIR = raylib
 RAYLIB_LIB = libraylib.a
+
 ifeq ($(OS),Windows_NT)
 	# Windows (MSYS2 / MinGW)
 	CC = gcc
-	CFLAGS = -Wall -Wextra -Werror -I$(INC_DIR) -I$(RAYLIB_DIR)/src -g -MMD -MP
-	# Windows linking (Win32 libs) - NOTA: Se ha quitado -L. y -lraylib
-	LDFLAGS = -lopengl32 -lgdi32 -lwinmm -lole32 -lws2_32 -lm
-	RAYLIB_MAKE = $(MAKE)
-#ifeq ($(OS),Windows_NT)
-	# Windows (MSYS2 / MinGW)
-#	CC = gcc
 	# No AddressSanitizer on MinGW; keep -g for debug
-#	CFLAGS = -Wall -Wextra -Werror -I$(INC_DIR) -I$(RAYLIB_DIR)/src -g -MMD -MP
+	CFLAGS = -Wall -Wextra -Werror -I$(INC_DIR) -I$(RAYLIB_DIR)/src -g -MMD -MP
 	# Windows linking (Win32 libs)
-#	LDFLAGS = -L. -lraylib -lopengl32 -lgdi32 -lwinmm -lole32 -lws2_32 -lm
-#	RAYLIB_MAKE = $(MAKE)
+	LDFLAGS = -L. -lraylib -lopengl32 -lgdi32 -lwinmm -lole32 -lws2_32 -lm
+	RAYLIB_MAKE = $(MAKE)
 else
 	CC = cc
 	CFLAGS = -Wall -Wextra -Werror -I$(INC_DIR) -I$(RAYLIB_DIR)/src -g -fsanitize=address -fsanitize=leak -MMD -MP
@@ -55,12 +49,10 @@ $(RAYLIB_LIB):
 	@echo "$(RESET)Building raylib..."; \
 	$(RAYLIB_MAKE) -C $(RAYLIB_DIR)/src PLATFORM=PLATFORM_DESKTOP RAYLIB_LIBTYPE=STATIC; \
 	cp $(RAYLIB_DIR)/src/$(RAYLIB_LIB) .
+
 $(NAME): $(RAYLIB_LIB) $(OBJ)
-	$(CC) $(OBJ) -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(OBJ) $(LDFLAGS)
 	@echo "$(GREEN)Executable $(NAME) successfully created.$(RESET)"
-#$(NAME): $(RAYLIB_LIB) $(OBJ)
-#	$(CC) $(CFLAGS) -o $@ $(OBJ) $(LDFLAGS)
-#	@echo "$(GREEN)Executable $(NAME) successfully created.$(RESET)"
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
 	@mkdir -p $(@D)
