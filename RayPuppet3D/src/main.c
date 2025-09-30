@@ -20,13 +20,14 @@ static const float ORBIT_SENSITIVITY = 0.01f;
 static const float FPS_SENSITIVITY = 0.003f;
 static const float ZOOM_SENSITIVITY = 0.5f;
 static const float MIN_ORBIT_RADIUS = 0.5f;
-static const float MAX_ORBIT_RADIUS = 20.0f;
-static const float MIN_PITCH = -1.4f;
-static const float MAX_PITCH = 1.4f;
-static const float FPS_MIN_PITCH = -1.49f;
-static const float FPS_MAX_PITCH = 1.49f;
+//static const float MAX_ORBIT_RADIUS = 20.0f;
+static const float MIN_PITCH = -PI / 2.0f + 0.01f;
+static const float MAX_PITCH = PI / 2.0f - 0.01f;
+//static const float FPS_MIN_PITCH = -1.49f;
+//static const float FPS_MAX_PITCH = 1.49f;
+static const float BASE_SPEED = 5.0f;
 static const float MOVEMENT_SPEED = 3.0f;
-static const float FAST_SPEED = 8.0f;
+//static const float FAST_SPEED = 8.0f;
 static const float VALID_POSITION_THRESHOLD = 0.01f;
 static const float MIN_DISTANCE_THRESHOLD = 0.001f;
 
@@ -41,7 +42,6 @@ typedef struct {
     Camera camera;
     int camMode;
     float orbitYaw, orbitPitch, orbitRadius;
-    bool cameraMouseControl;
     
     // Core systems
     SimpleTextureSystem textureSystem;
@@ -92,6 +92,34 @@ typedef struct {
     float depthBias;
     bool hasZFighting;
 } RenderItem;
+
+/*
+ * +---------------------------------------------------------------+
+ * | Function: ft_GetMouseDelta                                    |
+ * |                                                               |
+ * | Calculates mouse movement delta manually. This is a robust    |
+ * | alternative to raylib's GetMouseDelta() on systems where it   |
+ * | behaves incorrectly (like some Linux window managers).        |
+ * |                                                               |
+ * | It works by:                                                  |
+ * |   1. Reading the current mouse position.                      |
+ * |   2. Calculating the difference from the screen center.       |
+ * |   3. Resetting the mouse position back to the center.         |
+ * |   4. Returning the calculated difference as the delta.        |
+ * |                                                               |
+ * | NOTE: This requires DisableCursor() to be active to hide the  |
+ * |       cursor, otherwise it will be visibly jumping.           |
+ * +---------------------------------------------------------------+
+ */
+/*static Vector2 ft_GetMouseDelta(void)
+{
+    Vector2 mousePosition = GetMousePosition();
+    Vector2 screenCenter = { (float)GetScreenWidth() / 2.0f, (float)GetScreenHeight() / 2.0f };
+    Vector2 delta = Vector2Subtract(mousePosition, screenCenter);
+    SetMousePosition((int)screenCenter.x, (int)screenCenter.y);
+
+    return (delta);
+}*/
 
 /*
  * +--------------------------------------------------------------+
@@ -191,7 +219,7 @@ static bool App_Init(AppState* app) {
     for (int i = 0; i < 5; i++) PollInputEvents();
 #endif
     MaximizeWindow();
-    SetTargetFPS(60);
+    SetTargetFPS(120);
 
     // Initialize camera
     app->camera = (Camera){
@@ -357,27 +385,30 @@ static void App_HandleInput(AppState* app, float dt) {
     // Camera mode switching
     if (IsKeyPressed(KEY_ONE)) {
         app->camMode = 1;
-        app->cameraMouseControl = false;
-        EnableCursor();
-    }
+		Vector3 target = app->autoCenterCalculated ? app->autoCenter : (Vector3) { 0, 0.6f, 0 };
+		Vector3 dir = Vector3Subtract(app->camera.position, target);
+		float orbit_distance = Vector3Length(dir);
+		app->orbitYaw = atan2f(dir.z, dir.x);
+		app->orbitPitch = asinf(Clamp(dir.y / orbit_distance, -1.0f, 1.0f));
+		app->orbitRadius = orbit_distance; 
+		app->camera.target = target; 
+		EnableCursor();
+	}
     if (IsKeyPressed(KEY_TWO)) {
         app->camMode = 2;
-        app->cameraMouseControl = true;
-        DisableCursor();
+		Vector3 target = app->autoCenterCalculated ? app->autoCenter : (Vector3) { 0, 0.6f, 0 };
+		Vector3 dir = Vector3Subtract(app->camera.position, target);
+        float orbit_distance = Vector3Length(dir);
+		float orbit_yaw = atan2f(dir.z, dir.x);
+        float orbit_pitch = asinf(Clamp(dir.y / orbit_distance, -1.0f, 1.0f));
+		app->camera.position.x = orbit_distance * cosf(orbit_pitch) * cosf(orbit_yaw) + target.x;
+        app->camera.position.y = orbit_distance * sinf(orbit_pitch) + target.y;
+        app->camera.position.z = orbit_distance * cosf(orbit_pitch) * sinf(orbit_yaw) + target.z;
 
-        Vector3 target = app->autoCenterCalculated ? app->autoCenter : (Vector3) { 0, 0.6f, 0 };
-        app->camera.position = (Vector3){ target.x, target.y + 0.5f, target.z + 2.0f };
-        app->camera.target = target;
-
-        Vector3 direction = Vector3Subtract(target, app->camera.position);
-        app->orbitYaw = atan2f(direction.x, direction.z);
-        app->orbitPitch = atan2f(direction.y, sqrtf(direction.x * direction.x + direction.z * direction.z));
-    }
-
-    if (IsKeyPressed(KEY_C)) {
-        app->cameraMouseControl = !app->cameraMouseControl;
-        if (app->cameraMouseControl) DisableCursor();
-        else EnableCursor();
+		app->camera.target = target;
+        app->orbitYaw = orbit_yaw + PI;
+        app->orbitPitch = -orbit_pitch;
+		DisableCursor();
     }
 
     if (IsKeyPressed(KEY_H)) {
@@ -411,14 +442,20 @@ static void App_UpdateCamera(AppState* app, float dt) {
     if (app->camMode == 1) {
         // Orbit camera
         if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+			HideCursor();
             Vector2 mouseDelta = GetMouseDelta();
             app->orbitYaw += mouseDelta.x * ORBIT_SENSITIVITY;
             app->orbitPitch = Clamp(app->orbitPitch - mouseDelta.y * ORBIT_SENSITIVITY, MIN_PITCH, MAX_PITCH);
         }
-
+		else
+		{
+			ShowCursor();
+		}
         float wheel = GetMouseWheelMove();
         if (wheel != 0.0f) {
-            app->orbitRadius = Clamp(app->orbitRadius - wheel * ZOOM_SENSITIVITY, MIN_ORBIT_RADIUS, MAX_ORBIT_RADIUS);
+			app->orbitRadius -= wheel * ZOOM_SENSITIVITY;
+			if (app->orbitRadius < MIN_ORBIT_RADIUS)
+				app->orbitRadius = MIN_ORBIT_RADIUS;
         }
 
         float cosP = cosf(app->orbitPitch);
@@ -427,39 +464,47 @@ static void App_UpdateCamera(AppState* app, float dt) {
         float sinY = sinf(app->orbitYaw);
 
         app->camera.position = (Vector3){
-            cameraTarget.x + app->orbitRadius * cosP * sinY,
+            cameraTarget.x + app->orbitRadius * cosP * cosY,
             cameraTarget.y + app->orbitRadius * sinP,
-            cameraTarget.z + app->orbitRadius * cosP * cosY
+            cameraTarget.z + app->orbitRadius * cosP * sinY
         };
         app->camera.target = cameraTarget;
     }
     else {
         // FPS camera
-        if (app->cameraMouseControl) {
-            Vector2 mouseDelta = GetMouseDelta();
-            app->orbitYaw -= mouseDelta.x * FPS_SENSITIVITY;
-            app->orbitPitch = Clamp(app->orbitPitch - mouseDelta.y * FPS_SENSITIVITY, FPS_MIN_PITCH, FPS_MAX_PITCH);
-        }
-
-        float cosP = cosf(app->orbitPitch);
-        float sinP = sinf(app->orbitPitch);
-        float cosY = cosf(app->orbitYaw);
-        float sinY = sinf(app->orbitYaw);
-
-        Vector3 forward = Vector3Normalize((Vector3){ sinY * cosP, sinP, cosY * cosP });
-        Vector3 right = Vector3Normalize((Vector3){ cosY, 0, -sinY });
-
-        float speed = (IsKeyDown(KEY_LEFT_SHIFT) ? FAST_SPEED : MOVEMENT_SPEED) * dt;
-
-        if (IsKeyDown(KEY_W)) app->camera.position = Vector3Add(app->camera.position, Vector3Scale(forward, speed));
-        if (IsKeyDown(KEY_S)) app->camera.position = Vector3Subtract(app->camera.position, Vector3Scale(forward, speed));
-        if (IsKeyDown(KEY_A)) app->camera.position = Vector3Subtract(app->camera.position, Vector3Scale(right, speed));
-        if (IsKeyDown(KEY_D)) app->camera.position = Vector3Add(app->camera.position, Vector3Scale(right, speed));
-        if (IsKeyDown(KEY_SPACE)) app->camera.position.y += speed;
-        if (IsKeyDown(KEY_LEFT_CONTROL)) app->camera.position.y -= speed;
-
-        app->camera.target = Vector3Add(app->camera.position, forward);
-    }
+		Vector2 mouse_delta = GetMouseDelta();
+		app->orbitYaw += mouse_delta.x * FPS_SENSITIVITY;
+		app->orbitPitch -= mouse_delta.y * FPS_SENSITIVITY;
+		app->orbitPitch = Clamp(app->orbitPitch, MIN_PITCH, MAX_PITCH);
+		Vector3   forward;
+		forward.x = cosf(app->orbitPitch) * cosf(app->orbitYaw);
+		forward.y = sinf(app->orbitPitch);
+		forward.z = cosf(app->orbitPitch) * sinf(app->orbitYaw);
+		forward = Vector3Normalize(forward);
+		Vector3 right_dir = Vector3Normalize(Vector3CrossProduct(forward, app->camera.up));
+		float speed = BASE_SPEED * dt;
+		if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
+			speed *= MOVEMENT_SPEED;
+		if (IsKeyDown(KEY_W))
+			app->camera.position = Vector3Add(app->camera.position,
+				Vector3Scale(forward, speed));
+		if (IsKeyDown(KEY_S))
+			app->camera.position = Vector3Subtract(app->camera.position,
+				Vector3Scale(forward, speed));
+		if (IsKeyDown(KEY_D))
+			app->camera.position = Vector3Add(app->camera.position,
+				Vector3Scale(right_dir, speed));
+		if (IsKeyDown(KEY_A))
+			app->camera.position = Vector3Subtract(app->camera.position,
+				Vector3Scale(right_dir, speed));
+		if (IsKeyDown(KEY_Q))
+			app->camera.position = Vector3Add(app->camera.position,
+				Vector3Scale(app->camera.up, speed));
+		if (IsKeyDown(KEY_LEFT_CONTROL))
+			app->camera.position = Vector3Subtract(app->camera.position,
+				Vector3Scale(app->camera.up, speed));
+		app->camera.target = Vector3Add(app->camera.position, forward);
+	}
 }
 
 /*
@@ -725,10 +770,10 @@ static void App_Draw(AppState* app) {
     DrawText(frameText, 10, 55, 16, DARKGRAY);
 
     char statsText[256];
-    snprintf(statsText, sizeof(statsText), "Bones: %d | Heads: %s (%d) | Torsos: %s (%d) | Camera Mode: %d | Mouse Control: %s",
+    snprintf(statsText, sizeof(statsText), "Bones: %d | Heads: %s (%d) | Torsos: %s (%d) | Camera Mode: %d",
         app->renderBonesCount, app->renderHeadBillboards ? "ON" : "OFF", app->renderHeadsCount,
         app->renderTorsoBillboards ? "ON" : "OFF", app->renderTorsosCount,
-        app->camMode, app->cameraMouseControl ? "ON" : "OFF");
+        app->camMode);
     DrawText(statsText, 10, 75, 16, DARKGRAY);
 
     BeginMode3D(app->camera);
@@ -874,8 +919,8 @@ static void App_Draw(AppState* app) {
 int main(void) {
     AppState app;
     if (!App_Init(&app)) return -1;
-
-    while (!WindowShouldClose()) {
+    
+	while (!WindowShouldClose()) {
         float dt = GetFrameTime();
         App_HandleInput(&app, dt);
         App_UpdateCamera(&app, dt);
@@ -883,7 +928,6 @@ int main(void) {
         App_PrepareRenderData(&app);
         App_Draw(&app);
     }
-
     App_Shutdown(&app);
     return 0;
 }
