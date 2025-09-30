@@ -497,7 +497,7 @@ static void App_UpdateCamera(AppState* app, float dt) {
 		if (IsKeyDown(KEY_A))
 			app->camera.position = Vector3Subtract(app->camera.position,
 				Vector3Scale(right_dir, speed));
-		if (IsKeyDown(KEY_SPACE))
+		if (IsKeyDown(KEY_Q))
 			app->camera.position = Vector3Add(app->camera.position,
 				Vector3Scale(app->camera.up, speed));
 		if (IsKeyDown(KEY_LEFT_CONTROL))
