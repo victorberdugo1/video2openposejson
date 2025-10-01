@@ -55,10 +55,10 @@ static const struct {
     float pitchOffset;
     float rollOffset;
 } BONE_ANGLE_OFFSETS[] = {
-    {"LShoulder", 90.0f, 175.0f, -75.0f},
+    {"LShoulder", 90.0f, 180.0f, -90.0f},
     {"LElbow", 85.0f, 230.0f, -75.0f},
     {"LWrist", 90.0f, 180.0f, 90.0f},
-    {"RShoulder", -90.0f, 0.0f, 75.0f},
+    {"RShoulder", -90.0f, 0.0f, 90.0f},
     {"RElbow", -85.0f, -75.0f, 75.0f},
     {"RWrist", 90.0f, 180.0f, 110.0f},
     {"LHip", 85.0f, -40.0f, 85.0f},
