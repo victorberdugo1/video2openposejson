@@ -20,9 +20,9 @@ static const float ORBIT_SENSITIVITY = 0.01f;
 static const float FPS_SENSITIVITY = 0.003f;
 static const float ZOOM_SENSITIVITY = 0.5f;
 static const float MIN_ORBIT_RADIUS = 0.5f;
-//static const float MAX_ORBIT_RADIUS = 20.0f;
-static const float MIN_PITCH = -PI / 2.0f + 0.01f;
-static const float MAX_PITCH = PI / 2.0f - 0.01f;
+static const float MAX_ORBIT_RADIUS = 20.0f;
+static const float MIN_PITCH = -85.0f * PI / 180.0f;
+static const float MAX_PITCH = 85.0f * PI / 180.0f;
 //static const float FPS_MIN_PITCH = -1.49f;
 //static const float FPS_MAX_PITCH = 1.49f;
 static const float BASE_SPEED = 5.0f;
@@ -385,14 +385,14 @@ static void App_HandleInput(AppState* app, float dt) {
     // Camera mode switching
     if (IsKeyPressed(KEY_ONE)) {
         app->camMode = 1;
-		Vector3 target = app->autoCenterCalculated ? app->autoCenter : (Vector3) { 0, 0.6f, 0 };
-		Vector3 dir = Vector3Subtract(app->camera.position, target);
-		float orbit_distance = Vector3Length(dir);
-		app->orbitYaw = atan2f(dir.z, dir.x);
-		app->orbitPitch = asinf(Clamp(dir.y / orbit_distance, -1.0f, 1.0f));
-		app->orbitRadius = orbit_distance; 
-		app->camera.target = target; 
-		EnableCursor();
+        Vector3 target = app->autoCenterCalculated ? app->autoCenter : (Vector3) { 0, 0.6f, 0 };
+        Vector3 dir = Vector3Subtract(app->camera.position, target);
+        float orbit_distance = Vector3Length(dir);
+        app->orbitYaw = atan2f(dir.x, dir.z);
+        app->orbitPitch = asinf(Clamp(dir.y / orbit_distance, -1.0f, 1.0f));
+        app->orbitRadius = orbit_distance;
+        app->camera.target = target;
+        EnableCursor();
 	}
     if (IsKeyPressed(KEY_TWO)) {
         app->camMode = 2;
@@ -441,21 +441,16 @@ static void App_UpdateCamera(AppState* app, float dt) {
 
     if (app->camMode == 1) {
         // Orbit camera
+        // Orbit camera
         if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
-			HideCursor();
             Vector2 mouseDelta = GetMouseDelta();
             app->orbitYaw += mouseDelta.x * ORBIT_SENSITIVITY;
             app->orbitPitch = Clamp(app->orbitPitch - mouseDelta.y * ORBIT_SENSITIVITY, MIN_PITCH, MAX_PITCH);
         }
-		else
-		{
-			ShowCursor();
-		}
+
         float wheel = GetMouseWheelMove();
         if (wheel != 0.0f) {
-			app->orbitRadius -= wheel * ZOOM_SENSITIVITY;
-			if (app->orbitRadius < MIN_ORBIT_RADIUS)
-				app->orbitRadius = MIN_ORBIT_RADIUS;
+            app->orbitRadius = Clamp(app->orbitRadius - wheel * ZOOM_SENSITIVITY, MIN_ORBIT_RADIUS, MAX_ORBIT_RADIUS);
         }
 
         float cosP = cosf(app->orbitPitch);
@@ -464,9 +459,9 @@ static void App_UpdateCamera(AppState* app, float dt) {
         float sinY = sinf(app->orbitYaw);
 
         app->camera.position = (Vector3){
-            cameraTarget.x + app->orbitRadius * cosP * cosY,
+            cameraTarget.x + app->orbitRadius * cosP * sinY,
             cameraTarget.y + app->orbitRadius * sinP,
-            cameraTarget.z + app->orbitRadius * cosP * sinY
+            cameraTarget.z + app->orbitRadius * cosP * cosY
         };
         app->camera.target = cameraTarget;
     }
