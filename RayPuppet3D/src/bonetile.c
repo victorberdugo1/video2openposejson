@@ -835,7 +835,7 @@ void CalculateLimbBoneRenderData(const BoneRenderData* boneData, const Person* p
 
     float rotationCompensation = 0.0f;
 
-    if (localPitchDeg >= 52.5f) {
+    if (localPitchDeg >= 50.5f) {
         *outChosenIndex = 3;
         //*outRotation = sector * 45.0f + 180.0f; rotation on DrawBonetileCustomWithRoll
         *outMirrored = false;
@@ -1078,7 +1078,7 @@ void CalculateHandBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenI
         *outRotation = sector * 45.0f + 180.0f;
         *outMirrored = false;
     }
-    else if (pitchDeg <= -52.5f) {
+    else if (pitchDeg <= -51.0f) {
         *outChosenIndex = 3;
         //*outRotation = (8 - sector) * 45.0f + 180.0f;
         //if (*outRotation >= 360.0f) *outRotation -= 360.0f;
