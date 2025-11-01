@@ -1,6 +1,6 @@
 #include "bones3d.h"
 #include "bonetile.h"
-#include "head_billboard.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

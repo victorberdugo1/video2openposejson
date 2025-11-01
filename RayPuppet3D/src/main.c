@@ -7,7 +7,7 @@
 #include "raymath.h"
 #include "bonetile.h"
 #include "bones3d.h"
-#include "head_billboard.h"
+//#include "head_billboard.h"
 
 // ====== NUEVO: Sistema de eventos de animación ======
 #define BONES_ANIMATION_EVENTS_IMPLEMENTATION
@@ -97,6 +97,235 @@ typedef struct {
     float depthBias;
     bool hasZFighting;
 } RenderItem;
+
+
+void CollectHeadsForRendering(const BonesAnimation* animation, HeadRenderData** heads,
+    int* headCount, int* headCapacity, BoneConfig* boneConfigs, int boneConfigCount) {
+    *headCount = 0;
+    if (!animation->isLoaded) return;
+
+    int currentFrame = BonesGetCurrentFrame(animation);
+    if (!BonesIsValidFrame(animation, currentFrame)) return;
+
+    const AnimationFrame* frame = &animation->frames[currentFrame];
+
+    if (*headCapacity < frame->personCount) {
+        HeadRenderData* newArray = realloc(*heads, sizeof(HeadRenderData) * frame->personCount);
+        if (!newArray) return;
+        *heads = newArray;
+        *headCapacity = frame->personCount;
+    }
+
+    static char processedHeads[100][20];
+    int processedCount = 0;
+
+    for (int p = 0; p < frame->personCount; p++) {
+        const Person* person = &frame->persons[p];
+        if (!ShouldRenderHead(person)) continue;
+
+        bool alreadyProcessed = false;
+        for (int i = 0; i < processedCount; i++) {
+            if (strcmp(processedHeads[i], person->personId) == 0) {
+                alreadyProcessed = true;
+                break;
+            }
+        }
+        if (alreadyProcessed) continue;
+
+        if (processedCount < 100) {
+            strncpy(processedHeads[processedCount], person->personId, 19);
+            processedHeads[processedCount][19] = '\0';
+            processedCount++;
+        }
+
+        HeadRenderData* headData = &(*heads)[*headCount];
+        memset(headData, 0, sizeof(HeadRenderData));
+
+        headData->position = CalculateHeadPosition(person);
+        headData->orientation = CalculateHeadOrientation(person);
+
+        if (!headData->orientation.valid && Vector3Length(headData->position) < 1e-6f) continue;
+
+        headData->valid = true;
+        headData->visible = true;
+
+        bool textureFound = false;
+        if (g_textureSets && g_textureSets->loaded) {
+            const char* activeTexture = BonesTextureSets_GetActiveTexture(g_textureSets, "Head");
+            if (activeTexture) {
+                strncpy(headData->texturePath, activeTexture, MAX_FILE_PATH_LENGTH - 1);
+                headData->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
+                textureFound = true;
+                
+                printf("HEAD_RENDER: Using texture %s\n", activeTexture);
+            }
+        }
+        
+        // Fallback al config normal si no hay texture set
+        if (!textureFound) {
+            BoneConfig* headConfig = FindBoneConfig(boneConfigs, boneConfigCount, "Head");
+            if (headConfig) {
+                strncpy(headData->texturePath, headConfig->texturePath, MAX_FILE_PATH_LENGTH - 1);
+                headData->size = headConfig->size;
+                headData->visible = headConfig->visible;
+            }
+            else {
+                strncpy(headData->texturePath, "data/textures/hil/Head.png", MAX_FILE_PATH_LENGTH - 1);
+                headData->size = 0.25f;
+                headData->visible = true;
+            }
+            headData->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
+        } else {
+            // Usar size del config aunque la textura venga del texture set
+            BoneConfig* headConfig = FindBoneConfig(boneConfigs, boneConfigCount, "Head");
+            if (headConfig) {
+                headData->size = headConfig->size;
+            } else {
+                headData->size = 0.25f;
+            }
+        }
+
+        strncpy(headData->personId, person->personId, 15);
+        headData->personId[15] = '\0';
+
+        (*headCount)++;
+    }
+}
+
+void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData** torsos,
+    int* torsoCount, int* torsoCapacity, BoneConfig* boneConfigs, int boneConfigCount) {
+
+    *torsoCount = 0;
+    if (!animation->isLoaded) return;
+
+    int currentFrame = BonesGetCurrentFrame(animation);
+    if (!BonesIsValidFrame(animation, currentFrame)) return;
+
+    const AnimationFrame* frame = &animation->frames[currentFrame];
+    int estimatedTorsos = frame->personCount * 2;
+
+    if (*torsoCapacity < estimatedTorsos) {
+        TorsoRenderData* newArray = (TorsoRenderData*)realloc(*torsos, sizeof(TorsoRenderData) * estimatedTorsos);
+        if (!newArray) return;
+        *torsos = newArray;
+        *torsoCapacity = estimatedTorsos;
+    }
+
+    static char processedTorsos[200][25];
+    int processedCount = 0;
+
+    for (int p = 0; p < frame->personCount; p++) {
+        const Person* person = &frame->persons[p];
+
+        if (ShouldRenderChest(person)) {
+            char torsoKey[25];
+            snprintf(torsoKey, sizeof(torsoKey), "%s_chest", person->personId);
+
+            bool alreadyProcessed = false;
+            for (int i = 0; i < processedCount; i++) {
+                if (strcmp(processedTorsos[i], torsoKey) == 0) {
+                    alreadyProcessed = true;
+                    break;
+                }
+            }
+
+            if (!alreadyProcessed) {
+                if (processedCount < 200) {
+                    strncpy(processedTorsos[processedCount], torsoKey, 24);
+                    processedTorsos[processedCount][24] = '\0';
+                    processedCount++;
+                }
+
+                TorsoRenderData* torsoData = &(*torsos)[*torsoCount];
+                memset(torsoData, 0, sizeof(TorsoRenderData));
+
+                torsoData->position = CalculateChestPosition(person);
+                torsoData->orientation = CalculateChestOrientation(person);
+                torsoData->type = TORSO_CHEST;
+                torsoData->person = person;
+
+                if (!torsoData->orientation.valid && Vector3Length(torsoData->position) < 1e-6f) {
+                    continue;
+                }
+
+                torsoData->valid = true;
+                torsoData->visible = true;
+
+                BoneConfig* chestConfig = FindBoneConfig(boneConfigs, boneConfigCount, "Chest");
+                if (chestConfig) {
+                    strncpy(torsoData->texturePath, chestConfig->texturePath, MAX_FILE_PATH_LENGTH - 1);
+                    torsoData->size = chestConfig->size;
+                    torsoData->visible = chestConfig->visible;
+                }
+                else {
+                    strncpy(torsoData->texturePath, "tex/Chest.png", MAX_FILE_PATH_LENGTH - 1);
+                    torsoData->size = 0.4f;
+                    torsoData->visible = true;
+                }
+                torsoData->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
+
+                strncpy(torsoData->personId, person->personId, 15);
+                torsoData->personId[15] = '\0';
+
+                (*torsoCount)++;
+            }
+        }
+
+        if (ShouldRenderHip(person)) {
+            char torsoKey[25];
+            snprintf(torsoKey, sizeof(torsoKey), "%s_hip", person->personId);
+
+            bool alreadyProcessed = false;
+            for (int i = 0; i < processedCount; i++) {
+                if (strcmp(processedTorsos[i], torsoKey) == 0) {
+                    alreadyProcessed = true;
+                    break;
+                }
+            }
+
+            if (!alreadyProcessed) {
+                if (processedCount < 200) {
+                    strncpy(processedTorsos[processedCount], torsoKey, 24);
+                    processedTorsos[processedCount][24] = '\0';
+                    processedCount++;
+                }
+
+                TorsoRenderData* torsoData = &(*torsos)[*torsoCount];
+                memset(torsoData, 0, sizeof(TorsoRenderData));
+
+                torsoData->position = CalculateHipPosition(person);
+                torsoData->orientation = CalculateHipOrientation(person);
+                torsoData->type = TORSO_HIP;
+                torsoData->person = person;
+
+                if (!torsoData->orientation.valid && Vector3Length(torsoData->position) < 1e-6f) {
+                    continue;
+                }
+
+                torsoData->valid = true;
+                torsoData->visible = true;
+
+                BoneConfig* hipConfig = FindBoneConfig(boneConfigs, boneConfigCount, "Hip");
+                if (hipConfig) {
+                    strncpy(torsoData->texturePath, hipConfig->texturePath, MAX_FILE_PATH_LENGTH - 1);
+                    torsoData->size = hipConfig->size;
+                    torsoData->visible = hipConfig->visible;
+                }
+                else {
+                    strncpy(torsoData->texturePath, "tex/Hip.png", MAX_FILE_PATH_LENGTH - 1);
+                    torsoData->size = 0.35f;
+                    torsoData->visible = true;
+                }
+                torsoData->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
+
+                strncpy(torsoData->personId, person->personId, 15);
+                torsoData->personId[15] = '\0';
+
+                (*torsoCount)++;
+            }
+        }
+    }
+}
 
 /*
  * +---------------------------------------------------------------+

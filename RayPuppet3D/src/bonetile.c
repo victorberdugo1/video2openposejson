@@ -1,6 +1,5 @@
 #include "bonetile.h"
-#include "bones3d.h" 
-#include "head_billboard.h"
+#include "bones3d.h"
 #include <string.h>
 #include <math.h>
 
@@ -71,18 +70,12 @@ static const struct {
     {"", 0.0f, 0.0f, 0.0f}
 };
 
-/*
- * +------------------------------------------------------------------+
- * | Function: GetBoneConnectionsWithPriority                         |
- * |                                                                  |
- * | Look up connection names and priorities for a given bone name.   |
- * | Copies up to three connection names into the `connections` out   |
- * | array and fills `priorities`. Returns true if an entry was found.|
- * |                                                                  |
- * | - Input: boneName, out connections[3][32], out priorities[3]     |
- * | - Output: bool (found or not)                                    |
- * +------------------------------------------------------------------+
- */
+static const float HEAD_DEPTH_OFFSET = 0.04f;
+static const float CHEST_OFFSET_Y = -0.06f;
+static const float CHEST_OFFSET_Z = -0.005f;
+static const float CHEST_FALLBACK_Y = -0.08f;
+static const float HIP_OFFSET_Y = -0.02f;
+
 bool GetBoneConnectionsWithPriority(const char* boneName, char connections[3][32], float priorities[3]) {
     for (int i = 0; BONE_CONNECTIONS[i].boneName[0]; i++) {
         if (strcmp(BONE_CONNECTIONS[i].boneName, boneName) == 0) {
@@ -97,18 +90,6 @@ bool GetBoneConnectionsWithPriority(const char* boneName, char connections[3][32
     return false;
 }
 
-/*
- * +------------------------------------------------------------------+
- * | Function: GetBonePositionByName                                   |
- * |                                                                  |
- * | Returns a bone position for a Person by name. Handles special    |
- * | token "HEAD_CALCULATED" which returns a computed head position.  |
- * | If no bone found or invalid, returns (0,0,0).                    |
- * |                                                                  |
- * | - Input: Person*, boneName                                        |
- * | - Output: Vector3 position                                        |
- * +------------------------------------------------------------------+
- */
 Vector3 GetBonePositionByName(const Person* person, const char* boneName) {
     if (!person || !boneName) return (Vector3) { 0, 0, 0 };
 
@@ -125,37 +106,12 @@ Vector3 GetBonePositionByName(const Person* person, const char* boneName) {
     return (Vector3) { 0, 0, 0 };
 }
 
-/*
- * +------------------------------------------------------------------+
- * | Function: SafeNormalize                                          |
- * |                                                                  |
- * | Normalize a Vector3 safely: if vector length is nearly zero,     |
- * | return a reasonable default forward vector (0,0,1). Otherwise    |
- * | return normalized vector.                                        |
- * |                                                                  |
- * | - Input: Vector3 v                                               |
- * | - Output: Vector3 normalized or default                          |
- * +------------------------------------------------------------------+
- */
 Vector3 SafeNormalize(Vector3 v) {
     float length = Vector3Length(v);
     if (length < 1e-6f) return (Vector3) { 0, 0, 1 };
     return Vector3Scale(v, 1.0f / length);
 }
 
-/*
- * +-------------------------------------------------------------------+
- * | Function: GetStablePerpendicularVector                            |
- * |                                                                   |
- * | Given a forward vector, pick a stable perpendicular axis from     |
- * | the world axis candidates (X,Y,Z) that has the smallest dot with  |
- * | forward, to avoid near-collinearity and produce a robust up/right |
- * | candidate.                                                        |
- * |                                                                   |
- * | - Input: forward Vector3                                          |
- * | - Output: Vector3 candidate perpendicular                         |
- * +-------------------------------------------------------------------+
- */
 static Vector3 GetStablePerpendicularVector(Vector3 forward) {
     forward = SafeNormalize(forward);
 
@@ -179,18 +135,6 @@ static Vector3 GetStablePerpendicularVector(Vector3 forward) {
     return bestCandidate;
 }
 
-/*
- * +-------------------------------------------------------------------+
- * | Function: RotateVectorAroundAxis                                  |
- * |                                                                   |
- * | Rotate a vector around an arbitrary axis using Rodrigues' formula |
- * | (constructed from cos/sin/oneMinusCos). If angle is nearly zero,  |
- * | returns the original vector.                                      |
- * |                                                                   |
- * | - Input: vector, axis, angle (radians)                            |
- * | - Output: rotated Vector3                                         |
- * +-------------------------------------------------------------------+
- */
 static Vector3 RotateVectorAroundAxis(Vector3 vector, Vector3 axis, float angle) {
     if (fabs(angle) < 1e-6f) return vector;
 
@@ -216,19 +160,6 @@ static Vector3 RotateVectorAroundAxis(Vector3 vector, Vector3 axis, float angle)
     return result;
 }
 
-/*
- * +------------------------------------------------------------------+
- * | Function: CalculateBoneOrientation                               |
- * |                                                                  |
- * | Compute orientation axes (forward/up/right) and Euler-like       |
- * | angles (yaw, pitch, roll) for a bone based on configured         |
- * | primary/secondary connections and angle offsets. Uses safe fall- |
- * | backs when data is missing.                                      |
- * |                                                                  |
- * | - Input: boneName, Person*, bonePosition                         |
- * | - Output: BoneOrientation struct (valid flag set when success)   |
- * +------------------------------------------------------------------+
- */
 BoneOrientation CalculateBoneOrientation(const char* boneName, const Person* person, Vector3 bonePosition) {
     BoneOrientation orientation = { 0 };
     orientation.position = bonePosition;
@@ -357,17 +288,6 @@ BoneOrientation CalculateBoneOrientation(const char* boneName, const Person* per
     return orientation;
 }
 
-/*
- * +------------------------------------------------------------------+
- * | Function: DrawQuadTextured3D                                     |
- * |                                                                  |
- * | Low-level helper to draw a textured 3D quad with simple UVs.     |
- * | Binds texture, issues RL_QUADS with vertex positions and UVs,    |
- * | then unbinds texture.                                            |
- * |                                                                  |
- * | - Input: Texture2D tex, v0..v3 positions, u0/v0..u1/v1 UV coords |
- * +------------------------------------------------------------------+
- */
 static void DrawQuadTextured3D(Texture2D tex, Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3,
     float u0, float v0t, float u1, float v1t) {
     rlSetTexture(tex.id);
@@ -381,18 +301,6 @@ static void DrawQuadTextured3D(Texture2D tex, Vector3 v0, Vector3 v1, Vector3 v2
     rlSetTexture(0);
 }
 
-/*
- * +------------------------------------------------------------------+
- * | Function: SrcFromLogical                                         |
- * |                                                                  |
- * | Convert logical atlas coordinates (col,row) into a source        |
- * | Rectangle in pixel space. Clamps indices and returns a Rectangle.|
- * | Optionally reports if mirroring was applied via outMirrored.     |
- * |                                                                  |
- * | - Input: tex, logicalCol,row, physCols,physRows, mirrored        |
- * | - Output: Rectangle src                                          |
- * +------------------------------------------------------------------+
- */
 Rectangle SrcFromLogical(Texture2D tex, int logicalCol, int logicalRow, int physCols, int physRows,
     bool mirrored, bool* outMirrored) {
     if (logicalCol < 0) logicalCol = 0;
@@ -409,23 +317,13 @@ Rectangle SrcFromLogical(Texture2D tex, int logicalCol, int logicalRow, int phys
 
     if (outMirrored) *outMirrored = mirrored;
     return (Rectangle) {
-        logicalCol* cellW,
-            logicalRow* cellH,
-            cellW,
-            cellH
+        logicalCol * cellW,
+        logicalRow * cellH,
+        cellW,
+        cellH
     };
 }
 
-/*
- * +------------------------------------------------------------------+
- * | Function: DrawQuadTextured3D_UVs                                 |
- * |                                                                  |
- * | Variant of DrawQuadTextured3D that accepts full per-vertex UV    |
- * | coordinates (Vector2) for non-rectangular UV mapping.            |
- * |                                                                  |
- * | - Input: Texture2D, v0..v3, uv0..uv3                             |
- * +------------------------------------------------------------------+
- */
 static void DrawQuadTextured3D_UVs(Texture2D tex,
     Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3,
     Vector2 uv0, Vector2 uv1, Vector2 uv2, Vector2 uv3) {
@@ -440,18 +338,6 @@ static void DrawQuadTextured3D_UVs(Texture2D tex,
     rlSetTexture(0);
 }
 
-/*
- * +------------------------------------------------------------------+
- * | Function: ShouldFlipBoneTexture                                  |
- * |                                                                  |
- * | Return true if the given bone name belongs to a set of bones     |
- * | that require vertical flip in the atlas sampling for correct     |
- * | appearance (left/right symmetry).                                |
- * |                                                                  |
- * | - Input: boneName                                                |
- * | - Output: bool (flip or not)                                     |
- * +------------------------------------------------------------------+
- */
 static bool ShouldFlipBoneTexture(const char* boneName) {
     if (!boneName) return false;
 
@@ -466,31 +352,11 @@ static bool ShouldFlipBoneTexture(const char* boneName) {
     return false;
 }
 
-/*
- * +------------------------------------------------------------------+
- * | Function: IsWristBone                                            |
- * |                                                                  |
- * | Simple predicate: returns true if boneName is LWrist or RWrist.  |
- * | Used to apply wrist-specific tile/layout logic.                  |
- * +------------------------------------------------------------------+
- */
 bool IsWristBone(const char* boneName) {
     if (!boneName) return false;
     return (strcmp(boneName, "LWrist") == 0) || (strcmp(boneName, "RWrist") == 0);
 }
 
-/*
- * +-------------------------------------------------------------------+
- * | Function: DrawBonetileCustom                                      |
- * |                                                                   |
- * | Draw a camera-facing textured bone quad (bonetile) at a 3D pos.   |
- * | Computes camera-facing axes (right/up), applies rotation degrees, |
- * | optional mirroring and vertex UVs, then delegates to quad drawer. |
- * |                                                                   |
- * | - Input: tex, camera, src rect, pos, size, rotationDeg, mirrored, |
- * |          boneName                                                 |
- * +-------------------------------------------------------------------+
- */
 void DrawBonetileCustom(Texture2D tex, Camera camera, Rectangle src, Vector3 pos, Vector2 size,
     float rotationDeg, bool mirrored, const char* boneName) {
     Vector3 camForward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
@@ -525,14 +391,6 @@ void DrawBonetileCustom(Texture2D tex, Camera camera, Rectangle src, Vector3 pos
     DrawQuadTextured3D(tex, p0, p1, p2, p3, u_left, v0t, u_right, v1t);
 }
 
-/*
- * +------------------------------------------------------------------+
- * | Function: ShouldUseVariableHeight                                |
- * |                                                                  |
- * | Returns true for bones that may change vertical size based on    |
- * | neighbor distance (limbs), enabling dynamic tile stretching.     |
- * +------------------------------------------------------------------+
- */
 static bool ShouldUseVariableHeight(const char* boneName) {
     if (!boneName) return false;
 
@@ -547,18 +405,6 @@ static bool ShouldUseVariableHeight(const char* boneName) {
     return false;
 }
 
-/*
- * +------------------------------------------------------------------+
- * | Function: DrawBonetileCustomWithRoll                             |
- * |                                                                  |
- * | Draw a bonetile similar to DrawBonetileCustom but compute an     |
- * | additional roll based on neighbor direction and optionally scale |
- * | vertical size by neighbor distance. Uses UV variant drawer.      |
- * |                                                                  |
- * | - Input: tex, camera, src, pos, size, rotationDeg, mirrored,     |
- * |          neighborValid, neighborPos, boneName                    |
- * +------------------------------------------------------------------+
- */
 void DrawBonetileCustomWithRoll(Texture2D tex, Camera camera, Rectangle src, Vector3 pos, Vector2 size,
     float rotationDeg, bool mirrored, bool neighborValid, Vector3 neighborPos, const BoneRenderData* boneData,
     const Person* person) {
@@ -583,7 +429,7 @@ void DrawBonetileCustomWithRoll(Texture2D tex, Camera camera, Rectangle src, Vec
             float upComponent = Vector3DotProduct(projectedToCenter, camUp);
 
             rotationDeg = atan2f(rightComponent, upComponent) * RAD2DEG + 180.0f;
-            neighborValid = false; // Desactivar roll adicional
+            neighborValid = false;
         }
     }
 
@@ -638,17 +484,6 @@ void DrawBonetileCustomWithRoll(Texture2D tex, Camera camera, Rectangle src, Vec
     DrawQuadTextured3D_UVs(tex, p0, p1, p2, p3, uv0, uv1, uv2, uv3);
 }
 
-/*
- * +-------------------------------------------------------------------+
- * | Function: FindRenderBoneByName                                    |
- * |                                                                   |
- * | Search a BoneRenderData array for the first matching valid and    |
- * | visible bone by name and return a pointer to it or NULL if none.  |
- * |                                                                   |
- * | - Input: bones[], count, name                                     |
- * | - Output: BoneRenderData* or NULL                                 |
- * +-----------------------------------------------------------------*-+
- */
 BoneRenderData* FindRenderBoneByName(BoneRenderData* bones, int count, const char* name) {
     if (!bones || !name) return NULL;
     for (int i = 0; i < count; i++) {
@@ -659,18 +494,6 @@ BoneRenderData* FindRenderBoneByName(BoneRenderData* bones, int count, const cha
     return NULL;
 }
 
-/*
- * +-------------------------------------------------------------------+
- * | Function: GetBoneConnectionPositionsEx                            |
- * |                                                                   |
- * | For a given BoneRenderData, return two positions: the bone's own  |
- * | position (pos0) and a neighbor connection position (pos1) if any. |
- * | The neighbor search consults BONE_CONNECTIONS and person data.    |
- * |                                                                   |
- * | - Input: boneData, Person*                                        |
- * | - Output: BoneConnectionPositions { pos0, pos1 }                  |
- * +-------------------------------------------------------------------+
- */
 BoneConnectionPositions GetBoneConnectionPositionsEx(const BoneRenderData* boneData, const Person* person) {
     BoneConnectionPositions result = { 0 };
 
@@ -700,19 +523,6 @@ BoneConnectionPositions GetBoneConnectionPositionsEx(const BoneRenderData* boneD
     return result;
 }
 
-/*
- * +-------------------------------------------------------------------+
- * | Function: CalculateLimbBoneRenderData                             |
- * |                                                                   |
- * | Decide which atlas index/row to use for a limb bone based on      |
- * | camera direction relative to bone orientation. Computes sector,   |
- * | pitch rows and optional rotation compensation for diagonal limbs. |
- * | Fills outChosenIndex, outRotation and outMirrored accordingly.    |
- * |                                                                   |
- * | - Input: boneData, person, camera                                 |
- * | - Output: outChosenIndex, outRotation, outMirrored                |
- * +-------------------------------------------------------------------+
- */
 void CalculateLimbBoneRenderData(const BoneRenderData* boneData, const Person* person, Camera camera, int* outChosenIndex, float* outRotation, bool* outMirrored) {
 
     if (!boneData->orientation.valid) {
@@ -837,7 +647,7 @@ void CalculateLimbBoneRenderData(const BoneRenderData* boneData, const Person* p
 
     if (localPitchDeg >= 50.5f) {
         *outChosenIndex = 3;
-        //*outRotation = sector * 45.0f + 180.0f; rotation on DrawBonetileCustomWithRoll
+        *outRotation = 0.0f;
         *outMirrored = false;
         return;
     }
@@ -853,7 +663,6 @@ void CalculateLimbBoneRenderData(const BoneRenderData* boneData, const Person* p
         *outRotation = 0.0f;
         *outMirrored = (sector >= 1 && sector <= 4);
 
-        // Ajuste espec fico para Right
         if (boneData->boneName[0] == 'R') {
             *outMirrored = !(*outMirrored);
         }
@@ -926,7 +735,6 @@ void CalculateLimbBoneRenderData(const BoneRenderData* boneData, const Person* p
         }
     }
 
-    // Special neck rotation toward head 
     if (strcmp(boneData->boneName, "Neck") == 0 && person) {
         Vector3 headPos = CalculateHeadPosition(person);
         Vector3 neckToHead = Vector3Subtract(headPos, boneData->position);
@@ -942,14 +750,11 @@ void CalculateLimbBoneRenderData(const BoneRenderData* boneData, const Person* p
         }
     }
 
-        // Stabilization for front/back views (similar to torso stabilization)
     if ((sector == 0 || sector == 4) &&
         localPitchDeg < 60.0f && localPitchDeg > -60.0f) {
 
-        // For front and back views, minimize rotation compensation to reduce jitter
-        rotationCompensation *= 0.01f;  // Reduce compensation by 90%
+        rotationCompensation *= 0.01f;
 
-        // For certain limbs, completely disable rotation in front/back view
         if (boneData->boneName[0] != '\0') {
             if (strcmp(boneData->boneName, "LShoulder") == 0 ||
                 strcmp(boneData->boneName, "RShoulder") == 0 ||
@@ -959,16 +764,13 @@ void CalculateLimbBoneRenderData(const BoneRenderData* boneData, const Person* p
                 strcmp(boneData->boneName, "RHip") == 0 ||
                 strcmp(boneData->boneName, "LKnee") == 0 ||
                 strcmp(boneData->boneName, "RKnee") == 0) {
-                rotationCompensation = 0.0f;  // No rotation for major joints in front/back
+                rotationCompensation = 0.0f;
             }
         }
     }
 
-    // Additional stabilization for near-frontal views (sectors 7, 0, 1 and 3, 4, 5)
     if (((sector >= 7 || sector <= 1) || (sector >= 3 && sector <= 5)) &&
         localPitchDeg < 45.0f && localPitchDeg > -45.0f) {
-
-        // Reduce rotation jitter for near-frontal views
         rotationCompensation *= 0.3f;
     }
 
@@ -978,19 +780,6 @@ void CalculateLimbBoneRenderData(const BoneRenderData* boneData, const Person* p
     while (*outRotation < 0.0f) *outRotation += 360.0f;
 }
 
-/*
- * +-------------------------------------------------------------------+
- * | Function: CalculateHandBoneRenderData                             |
- * |                                                                   |
- * | Specialized picker for hand/wrist sprites: compute camera vector  |
- * | with optional per-bone yaw/pitch offsets, select hand tile index  |
- * | from a 3x8 table based on yaw sector and pitch row. Applies some  |
- * | wrist-specific clamping and mirroring rules.                      |
- * |                                                                   |
- * | - Input: bonePos, camera, outChosenIndex, outRotation, outMirror, |
- * |          boneName                                                 |
- * +-------------------------------------------------------------------+
- */
 void CalculateHandBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex,
     float* outRotation, bool* outMirrored, const char* boneName) {
 
@@ -1069,8 +858,6 @@ void CalculateHandBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenI
 
         if (*outChosenIndex < 0) *outChosenIndex = 0;
         if (*outChosenIndex > 24) *outChosenIndex = *outChosenIndex % 25;
-
-        //return;
     }
 
     if (pitchDeg >= 52.5f) {
@@ -1080,8 +867,711 @@ void CalculateHandBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenI
     }
     else if (pitchDeg <= -51.0f) {
         *outChosenIndex = 3;
-        //*outRotation = (8 - sector) * 45.0f + 180.0f;
-        //if (*outRotation >= 360.0f) *outRotation -= 360.0f;
-        //*outMirrored = true;
     }
+}
+
+static CachedBones CacheBones(const Person* person) {
+    CachedBones cache = { 0 };
+
+    for (int i = 0; i < person->boneCount; i++) {
+        const Bone* bone = &person->bones[i];
+        if (!bone->position.valid) continue;
+
+        const char* name = bone->name;
+        Vector3 pos = bone->position.position;
+
+        if (strcmp(name, "Neck") == 0) {
+            cache.neck = pos; cache.hasNeck = true;
+        }
+        else if (strcmp(name, "LShoulder") == 0) {
+            cache.lShoulder = pos; cache.hasLShoulder = true; cache.shoulderCount++;
+        }
+        else if (strcmp(name, "RShoulder") == 0) {
+            cache.rShoulder = pos; cache.hasRShoulder = true; cache.shoulderCount++;
+        }
+        else if (strcmp(name, "LHip") == 0) {
+            cache.lHip = pos; cache.hasLHip = true; cache.hipCount++;
+        }
+        else if (strcmp(name, "RHip") == 0) {
+            cache.rHip = pos; cache.hasRHip = true; cache.hipCount++;
+        }
+    }
+    return cache;
+}
+
+Vector3 CalculateChestPosition(const Person* person) {
+    if (!person || person->boneCount == 0) return (Vector3) { 0, 0, 0 };
+
+    CachedBones cache = CacheBones(person);
+
+    if (cache.hasNeck && cache.shoulderCount > 0) {
+        Vector3 shoulderCenter = cache.hasLShoulder && cache.hasRShoulder ?
+            Vector3Scale(Vector3Add(cache.lShoulder, cache.rShoulder), 0.5f) :
+            (cache.hasLShoulder ? cache.lShoulder : cache.rShoulder);
+
+        return (Vector3) {
+            (cache.neck.x + shoulderCenter.x) * 0.5f,
+            cache.neck.y + CHEST_OFFSET_Y,
+            cache.neck.z + CHEST_OFFSET_Z
+        };
+    }
+
+    if (cache.shoulderCount > 0 || cache.hasNeck) {
+        Vector3 total = { 0,0,0 };
+        int count = 0;
+
+        if (cache.hasNeck) { total = Vector3Add(total, cache.neck); count++; }
+        if (cache.hasLShoulder) { total = Vector3Add(total, cache.lShoulder); count++; }
+        if (cache.hasRShoulder) { total = Vector3Add(total, cache.rShoulder); count++; }
+
+        Vector3 result = Vector3Scale(total, 1.0f / count);
+        result.y += CHEST_FALLBACK_Y;
+        return result;
+    }
+
+    return (Vector3) { 0, 0, 0 };
+}
+
+Vector3 CalculateHipPosition(const Person* person) {
+    if (!person || person->boneCount == 0) return (Vector3) { 0, 0, 0 };
+
+    CachedBones cache = CacheBones(person);
+
+    if (cache.hipCount == 0) return (Vector3) { 0, 0, 0 };
+
+    Vector3 hipCenter = { 0, 0, 0 };
+    int hipPointCount = 0;
+
+    if (cache.hasLHip) {
+        hipCenter = Vector3Add(hipCenter, cache.lHip);
+        hipPointCount++;
+    }
+    if (cache.hasRHip) {
+        hipCenter = Vector3Add(hipCenter, cache.rHip);
+        hipPointCount++;
+    }
+
+    hipCenter = Vector3Scale(hipCenter, 1.0f / hipPointCount);
+
+    Vector3 hipTorsoCenter = { 0, 0, 0 };
+    int hipTorsoCenterCount = 0;
+
+    hipTorsoCenter = Vector3Add(hipTorsoCenter, hipCenter);
+    hipTorsoCenter = Vector3Add(hipTorsoCenter, hipCenter);
+    hipTorsoCenterCount += 2;
+
+    if (cache.shoulderCount > 0) {
+        Vector3 shoulderCenter = { 0, 0, 0 };
+        int shoulderPointCount = 0;
+
+        if (cache.hasLShoulder) {
+            shoulderCenter = Vector3Add(shoulderCenter, cache.lShoulder);
+            shoulderPointCount++;
+        }
+        if (cache.hasRShoulder) {
+            shoulderCenter = Vector3Add(shoulderCenter, cache.rShoulder);
+            shoulderPointCount++;
+        }
+
+        if (shoulderPointCount > 0) {
+            shoulderCenter = Vector3Scale(shoulderCenter, 1.0f / shoulderPointCount);
+            hipTorsoCenter = Vector3Add(hipTorsoCenter, shoulderCenter);
+            hipTorsoCenterCount++;
+        }
+    }
+
+    hipTorsoCenter = Vector3Scale(hipTorsoCenter, 1.0f / hipTorsoCenterCount);
+
+    Vector3 hipDirection = { 0, 0, 1 };
+    if (cache.shoulderCount > 0) {
+        Vector3 shoulderCenter = { 0, 0, 0 };
+        int shoulderPointCount = 0;
+
+        if (cache.hasLShoulder) {
+            shoulderCenter = Vector3Add(shoulderCenter, cache.lShoulder);
+            shoulderPointCount++;
+        }
+        if (cache.hasRShoulder) {
+            shoulderCenter = Vector3Add(shoulderCenter, cache.rShoulder);
+            shoulderPointCount++;
+        }
+
+        if (shoulderPointCount > 0) {
+            shoulderCenter = Vector3Scale(shoulderCenter, 1.0f / shoulderPointCount);
+            Vector3 shoulderToHip = Vector3Subtract(hipCenter, shoulderCenter);
+            float torsoLength = Vector3Length(shoulderToHip);
+            if (torsoLength > 1e-6f) {
+                hipDirection = Vector3Scale(shoulderToHip, 1.0f / torsoLength);
+            }
+        }
+    }
+
+    Vector3 hipPos = Vector3Add(hipTorsoCenter, Vector3Scale(hipDirection, 0.01f));
+
+    Vector3 chestPos = CalculateChestPosition(person);
+    if (Vector3Length(chestPos) > 0.0f) {
+        Vector3 chestToOriginalHip = Vector3Subtract(hipCenter, chestPos);
+        float torsoDistance = Vector3Length(chestToOriginalHip);
+
+        if (torsoDistance > 0.12f) {
+            Vector3 torsoDirection = Vector3Scale(chestToOriginalHip, 1.0f / torsoDistance);
+            hipPos = Vector3Add(chestPos, Vector3Scale(torsoDirection, 0.10f));
+        }
+    }
+
+    hipPos.y += HIP_OFFSET_Y;
+
+    return hipPos;
+}
+
+VirtualSpine CalculateVirtualSpine(const Person* person) {
+    VirtualSpine spine = { 0 };
+    if (!person || person->boneCount == 0) return spine;
+
+    CachedBones cache = CacheBones(person);
+
+    if (!cache.hasLShoulder || !cache.hasRShoulder || !cache.hasLHip || !cache.hasRHip) {
+        return spine;
+    }
+
+    spine.chestPosition = CalculateChestPosition(person);
+    spine.hipPosition = CalculateHipPosition(person);
+
+    Vector3 spineVec = Vector3Subtract(spine.chestPosition, spine.hipPosition);
+    float spineLength = Vector3Length(spineVec);
+    if (spineLength < EPSILON) return spine;
+
+    spine.spineDirection = Vector3Scale(spineVec, 1.0f / spineLength);
+
+    Vector3 shoulderLine = Vector3Subtract(cache.rShoulder, cache.lShoulder);
+    float shoulderLength = Vector3Length(shoulderLine);
+    if (shoulderLength < EPSILON) return spine;
+
+    spine.spineRight = Vector3Scale(shoulderLine, 1.0f / shoulderLength);
+    spine.spineForward = Vector3CrossProduct(spine.spineRight, spine.spineDirection);
+
+    float forwardLength = Vector3Length(spine.spineForward);
+    if (forwardLength < EPSILON) return spine;
+
+    spine.spineForward = Vector3Scale(spine.spineForward, 1.0f / forwardLength);
+    spine.spineRight = Vector3CrossProduct(spine.spineDirection, spine.spineForward);
+
+    float rightLength = Vector3Length(spine.spineRight);
+    if (rightLength > EPSILON) {
+        spine.spineRight = Vector3Scale(spine.spineRight, 1.0f / rightLength);
+    }
+
+    spine.valid = true;
+    return spine;
+}
+
+static TorsoOrientation CreateOrientation(Vector3 pos, Vector3 forward, Vector3 up, Vector3 right) {
+    TorsoOrientation orientation = { 0 };
+    orientation.position = pos;
+    orientation.forward = forward;
+    orientation.up = up;
+    orientation.right = right;
+
+    orientation.yaw = atan2f(forward.x, forward.z);
+
+    float horizDistance = sqrtf(forward.x * forward.x + forward.z * forward.z);
+    orientation.pitch = atan2f(-forward.y, horizDistance);
+
+    orientation.roll = atan2f(right.y, sqrtf(right.x * right.x + right.z * right.z));
+
+    orientation.valid = true;
+    return orientation;
+}
+
+TorsoOrientation CalculateChestOrientation(const Person* person) {
+    VirtualSpine spine = CalculateVirtualSpine(person);
+    if (!spine.valid) {
+        Vector3 chestPos = CalculateChestPosition(person);
+        if (Vector3Length(chestPos) > 0.0f) {
+            return CreateOrientation(chestPos, (Vector3) { 0, 0, 1 }, (Vector3) { 0, 1, 0 }, (Vector3) { 1, 0, 0 });
+        }
+        return (TorsoOrientation) { 0 };
+    }
+
+    return CreateOrientation(spine.chestPosition, spine.spineForward, spine.spineDirection, spine.spineRight);
+}
+
+TorsoOrientation CalculateHipOrientation(const Person* person) {
+    VirtualSpine spine = CalculateVirtualSpine(person);
+    if (!spine.valid) {
+        Vector3 hipPos = CalculateHipPosition(person);
+        if (Vector3Length(hipPos) > 0.0f) {
+            return CreateOrientation(hipPos, (Vector3) { 0, 0, 1 }, (Vector3) { 0, 1, 0 }, (Vector3) { 1, 0, 0 });
+        }
+        return (TorsoOrientation) { 0 };
+    }
+
+    return CreateOrientation(spine.hipPosition, spine.spineForward, spine.spineDirection, spine.spineRight);
+}
+
+void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
+    int* outChosenIndex, float* outRotation, bool* outMirrored) {
+
+    if (!torsoData->orientation.valid) {
+        CalculateHandBoneRenderData(torsoData->position, camera, outChosenIndex, outRotation, outMirrored, "");
+        return;
+    }
+
+    static const int indices[3][8] = {
+        {0,4,5,6,7,6,5,4},
+        {2,12,13,14,15,14,13,12},
+        {1,8,9,10,11,10,9,8}
+    };
+
+    Vector3 camDir = Vector3Subtract(torsoData->position, camera.position);
+    camDir = SafeNormalize(camDir);
+
+    Vector3 localCamDir = {
+        Vector3DotProduct(camDir, torsoData->orientation.right),
+        Vector3DotProduct(camDir, torsoData->orientation.up),
+        Vector3DotProduct(camDir, torsoData->orientation.forward)
+    };
+
+    float localYaw = atan2f(localCamDir.x, localCamDir.z);
+    if (localYaw < 0.0f) localYaw += 2.0f * PI;
+
+    float localPitchDeg = atan2f(localCamDir.y,
+        sqrtf(localCamDir.x * localCamDir.x + localCamDir.z * localCamDir.z)) * RAD2DEG;
+
+    localPitchDeg = -localPitchDeg;
+
+    float normalizedYaw = localYaw * RAD2DEG + 22.5f;
+    if (normalizedYaw >= 360.0f) normalizedYaw -= 360.0f;
+
+    int sector = (int)(normalizedYaw / 45.0f) % 8;
+
+    if (localPitchDeg >= 70.0f) {
+        *outChosenIndex = 3;
+        *outRotation = sector * 45.0f + 180.0f;
+        *outMirrored = false;
+    }
+    else if (localPitchDeg <= -70.0f) {
+        *outChosenIndex = 15;
+        *outRotation = (8 - sector) * 45.0f + 180.0f;
+        if (*outRotation >= 360.0f) *outRotation -= 360.0f;
+        *outMirrored = true;
+    }
+    else {
+        int row = (localPitchDeg >= 22.5f) ? 2 : (localPitchDeg >= -22.5f) ? 0 : 1;
+        *outChosenIndex = indices[row][sector];
+        *outRotation = 0.0f;
+        *outMirrored = (sector >= 1 && sector <= 4);
+    }
+
+    if (torsoData->type == TORSO_CHEST && torsoData->person &&
+        localPitchDeg < 70.0f && localPitchDeg > -70.0f && outRotation) {
+
+        Vector3 hipPosition = CalculateHipPosition(torsoData->person);
+
+        Vector3 chestToHip = Vector3Subtract(hipPosition, torsoData->position);
+        float distance = Vector3Length(chestToHip);
+        if (distance > 0.001f) {
+            chestToHip = Vector3Scale(chestToHip, 1.0f / distance);
+
+            float pitchToHip = atan2f(chestToHip.y,
+                sqrtf(chestToHip.x * chestToHip.x + chestToHip.z * chestToHip.z)) * RAD2DEG;
+
+            Vector3 camToTorso = Vector3Subtract(torsoData->position, camera.position);
+            camToTorso = SafeNormalize(camToTorso);
+            Vector3 torsoRight = torsoData->orientation.right;
+            float sideDot = Vector3DotProduct(camToTorso, torsoRight);
+            bool viewingFromRight = (sideDot > 0.0f);
+
+            if (viewingFromRight) {
+                *outRotation = -pitchToHip - 80.0f;
+            }
+            else {
+                *outRotation = pitchToHip + 80.0f;
+            }
+
+            while (*outRotation >= 360.0f) *outRotation -= 360.0f;
+            while (*outRotation < 0.0f) *outRotation += 360.0f;
+        }
+    }
+
+    if (torsoData->type == TORSO_HIP && torsoData->person &&
+        localPitchDeg < 70.0f && localPitchDeg > -70.0f) {
+
+        Vector3 chestPosition = CalculateChestPosition(torsoData->person);
+
+        Vector3 hipToChest = Vector3Subtract(chestPosition, torsoData->position);
+
+        float distance = Vector3Length(hipToChest);
+        if (distance > 0.001f) {
+            hipToChest = Vector3Scale(hipToChest, 1.0f / distance);
+
+            float pitchToChest = atan2f(hipToChest.y,
+                sqrtf(hipToChest.x * hipToChest.x + hipToChest.z * hipToChest.z)) * RAD2DEG;
+
+            Vector3 camToTorso = Vector3Subtract(torsoData->position, camera.position);
+            Vector3 torsoRight = torsoData->orientation.right;
+            float sideDot = Vector3DotProduct(camToTorso, torsoRight);
+            bool viewingFromRight = (sideDot > 0.0f);
+
+            if (viewingFromRight) {
+                *outRotation = pitchToChest - 80;
+            }
+            else {
+                *outRotation = -pitchToChest + 80;
+            }
+
+            while (*outRotation >= 360.0f) *outRotation -= 360.0f;
+            while (*outRotation < 0.0f) *outRotation += 360.0f;
+        }
+    }
+}
+
+bool ShouldRenderChest(const Person* person) {
+    if (!person || !person->active) return false;
+    return CacheBones(person).shoulderCount >= 1;
+}
+
+bool ShouldRenderHip(const Person* person) {
+    if (!person || !person->active) return false;
+    return CacheBones(person).hipCount >= 1;
+}
+
+void DrawTorsoBillboard(Texture2D texture, Camera camera, const TorsoRenderData* torsoData, int physCols, int physRows) {
+    if (!torsoData || !torsoData->valid || !torsoData->visible) return;
+    int chosenIndex;
+    float rotation;
+    bool mirrored;
+    CalculateTorsoRenderData(torsoData, camera, &chosenIndex, &rotation, &mirrored);
+
+    if (torsoData->orientation.valid) {
+        Vector3 camDir = Vector3Subtract(torsoData->position, camera.position);
+        camDir = SafeNormalize(camDir);
+        Vector3 localCamDir = {
+            Vector3DotProduct(camDir, torsoData->orientation.right),
+            Vector3DotProduct(camDir, torsoData->orientation.up),
+            Vector3DotProduct(camDir, torsoData->orientation.forward)
+        };
+
+        float localYaw = atan2f(localCamDir.x, localCamDir.z);
+        if (localYaw < 0.0f) localYaw += 2.0f * PI;
+
+        float localPitchDeg = atan2f(localCamDir.y,
+            sqrtf(localCamDir.x * localCamDir.x + localCamDir.z * localCamDir.z)) * RAD2DEG;
+        localPitchDeg = -localPitchDeg;
+
+        float normalizedYaw = localYaw * RAD2DEG + 22.5f;
+        if (normalizedYaw >= 360.0f) normalizedYaw -= 360.0f;
+        int sector = (int)(normalizedYaw / 45.0f) % 8;
+
+        if ((sector == 0 || sector == 4) &&
+            localPitchDeg < 70.0f && localPitchDeg > -70.0f) {
+            rotation = 0.0f;
+        }
+    }
+
+    int logicalCol = chosenIndex % ATLAS_COLS;
+    int logicalRow = chosenIndex / ATLAS_COLS;
+    bool finalMirror;
+    Rectangle src = SrcFromLogical(texture, logicalCol, logicalRow, physCols, physRows, mirrored, &finalMirror);
+    Vector2 worldSize = { torsoData->size, torsoData->size };
+    DrawBonetileCustom(texture, camera, src, torsoData->position, worldSize, rotation, finalMirror, "");
+}
+
+Vector3 CalculateHeadPosition(const Person* person) {
+    if (!person || person->boneCount == 0) return (Vector3) { 0, 0, 0 };
+
+    Vector3 eyeCenter = { 0, 0, 0 };
+    int eyeCount = 0;
+    Vector3 neckPos = { 0, 0, 0 };
+    bool hasNeck = false;
+    Vector3 nosePos = { 0, 0, 0 };
+    bool hasNose = false;
+    Vector3 lEar = { 0, 0, 0 }, rEar = { 0, 0, 0 };
+    bool hasLEar = false, hasREar = false;
+
+    for (int i = 0; i < person->boneCount; i++) {
+        const Bone* bone = &person->bones[i];
+        if (!bone->position.valid) continue;
+
+        const char* name = bone->name;
+        if (strcmp(name, "LEye") == 0 || strcmp(name, "REye") == 0) {
+            eyeCenter = Vector3Add(eyeCenter, bone->position.position);
+            eyeCount++;
+        }
+        else if (strcmp(name, "Nose") == 0) {
+            nosePos = bone->position.position;
+            hasNose = true;
+        }
+        else if (strcmp(name, "Neck") == 0) {
+            neckPos = bone->position.position;
+            hasNeck = true;
+        }
+        else if (strcmp(name, "LEar") == 0) {
+            lEar = bone->position.position;
+            hasLEar = true;
+        }
+        else if (strcmp(name, "REar") == 0) {
+            rEar = bone->position.position;
+            hasREar = true;
+        }
+    }
+
+    if (eyeCount > 0) {
+        eyeCenter = Vector3Scale(eyeCenter, 1.0f / eyeCount);
+    }
+
+    if (hasNose && eyeCount > 0 && (hasLEar || hasREar || hasNeck)) {
+        Vector3 faceCenter = { 0, 0, 0 };
+        int facePointCount = 0;
+
+        faceCenter = Vector3Add(faceCenter, nosePos);
+        faceCenter = Vector3Add(faceCenter, nosePos);
+        facePointCount += 2;
+
+        faceCenter = Vector3Add(faceCenter, eyeCenter);
+        facePointCount++;
+
+        Vector3 backReference;
+        bool hasBackReference = false;
+
+        if (hasLEar && hasREar) {
+            backReference = Vector3Scale(Vector3Add(lEar, rEar), 0.5f);
+            hasBackReference = true;
+        }
+        else if (hasLEar || hasREar) {
+            backReference = hasLEar ? lEar : rEar;
+            hasBackReference = true;
+        }
+        else if (hasNeck) {
+            backReference = neckPos;
+            hasBackReference = true;
+        }
+
+        if (hasBackReference) {
+            faceCenter = Vector3Add(faceCenter, backReference);
+            facePointCount++;
+        }
+
+        faceCenter = Vector3Scale(faceCenter, 1.0f / facePointCount);
+
+        Vector3 frontDirection = { 0, 0, 1 };
+        if (hasBackReference) {
+            Vector3 noseToBack = Vector3Subtract(backReference, nosePos);
+            float backDistance = Vector3Length(noseToBack);
+            if (backDistance > 1e-6f) {
+                frontDirection = Vector3Scale(noseToBack, 1.0f / backDistance);
+            }
+        }
+
+        Vector3 headPos = Vector3Add(faceCenter, Vector3Scale(frontDirection, HEAD_DEPTH_OFFSET));
+
+        Vector3 eyeToNose = Vector3Subtract(nosePos, eyeCenter);
+        float verticalComponent = eyeToNose.y;
+
+        float dynamicUpOffset = 0.03f;
+        if (verticalComponent < -0.01f) {
+            dynamicUpOffset = 0.015f;
+        }
+        else if (verticalComponent > 0.01f) {
+            dynamicUpOffset = 0.045f;
+        }
+
+        headPos.y += dynamicUpOffset;
+
+        return headPos;
+    }
+
+    if (eyeCount > 0 && hasNeck) {
+        Vector3 headPos = {
+            neckPos.x * 0.7f + eyeCenter.x * 0.3f,
+            eyeCenter.y,
+            hasNose ? neckPos.z * 0.8f + nosePos.z * 0.2f : neckPos.z * 0.9f + eyeCenter.z * 0.1f
+        };
+
+        headPos.z -= 0.01f;
+        headPos.y += 0.03f;
+
+        return headPos;
+    }
+
+    return (Vector3) { 0, 0, 0 };
+}
+
+HeadOrientation CalculateHeadOrientation(const Person* person) {
+    HeadOrientation orientation = { .valid = false };
+    if (!person || person->boneCount == 0) return orientation;
+
+    Vector3 nose = { 0,0,0 }, lEye = { 0,0,0 }, rEye = { 0,0,0 }, lEar = { 0,0,0 }, rEar = { 0,0,0 };
+    bool hasNose = false, hasLEye = false, hasREye = false, hasLEar = false, hasREar = false;
+
+    for (int i = 0; i < person->boneCount; i++) {
+        const Bone* bone = &person->bones[i];
+        if (!bone->position.valid) continue;
+
+        const char* name = bone->name;
+        if (strcmp(name, "Nose") == 0) {
+            nose = bone->position.position; hasNose = true;
+        }
+        else if (strcmp(name, "LEye") == 0) {
+            lEye = bone->position.position; hasLEye = true;
+        }
+        else if (strcmp(name, "REye") == 0) {
+            rEye = bone->position.position; hasREye = true;
+        }
+        else if (strcmp(name, "LEar") == 0) {
+            lEar = bone->position.position; hasLEar = true;
+        }
+        else if (strcmp(name, "REar") == 0) {
+            rEar = bone->position.position; hasREar = true;
+        }
+    }
+
+    if (!hasNose || !((hasLEye && hasREye) || (hasLEar && hasREar))) {
+        Vector3 centerFallback = CalculateHeadPosition(person);
+        if (Vector3Length(centerFallback) > 0.0f) {
+            orientation.position = centerFallback;
+            orientation.valid = true;
+        }
+        return orientation;
+    }
+
+    orientation.position = CalculateHeadPosition(person);
+
+    Vector3 rightVec = { 1,0,0 };
+    Vector3 backRef;
+
+    if (hasLEar && hasREar) {
+        rightVec = Vector3Normalize(Vector3Subtract(rEar, lEar));
+        backRef = Vector3Scale(Vector3Add(lEar, rEar), 0.5f);
+    }
+    else if (hasLEye && hasREye) {
+        rightVec = Vector3Normalize(Vector3Subtract(rEye, lEye));
+        backRef = Vector3Scale(Vector3Add(lEye, rEye), 0.5f);
+    }
+    else {
+        backRef = orientation.position;
+    }
+
+    Vector3 forward = Vector3Normalize(Vector3Subtract(nose, backRef));
+    if (Vector3Length(forward) < 1e-6f) forward = (Vector3){ 0,0,1 };
+
+    Vector3 up = Vector3Normalize(Vector3CrossProduct(rightVec, forward));
+    if (Vector3Length(up) < 1e-6f) up = (Vector3){ 0,1,0 };
+
+    rightVec = Vector3Normalize(Vector3CrossProduct(forward, up));
+
+    orientation.forward = forward;
+    orientation.up = up;
+    orientation.right = rightVec;
+    orientation.yaw = atan2f(forward.x, forward.z);
+    orientation.pitch = atan2f(-forward.y, sqrtf(forward.x * forward.x + forward.z * forward.z));
+    orientation.roll = atan2f(up.x, sqrtf(up.y * up.y + up.z * up.z));
+    orientation.valid = true;
+
+    return orientation;
+}
+
+void CalculateHeadRenderData(const HeadRenderData* headData, Camera camera,
+    int* outChosenIndex, float* outRotation, bool* outMirrored) {
+    if (!headData->orientation.valid) {
+        CalculateHandBoneRenderData(headData->position, camera, outChosenIndex, outRotation, outMirrored, "Head");
+        return;
+    }
+    static const int indices[3][8] = {
+        {  0,  4,  5,  6,  7,  6,  5,  4 },
+        {  2, 12, 13, 14, 15, 14, 13, 12 },
+        {  1,  8,  9, 10, 11, 10,  9,  8 }
+    };
+    Vector3 camDir = Vector3Subtract(camera.position, headData->position);
+    Vector3 localCamDir = {
+        -Vector3DotProduct(camDir, headData->orientation.right),
+        Vector3DotProduct(camDir, headData->orientation.up),
+        Vector3DotProduct(camDir, headData->orientation.forward)
+    };
+    float localYaw = atan2f(localCamDir.x, localCamDir.z);
+    if (localYaw < 0.0f) localYaw += 2.0f * PI;
+    float localYawDeg = localYaw * RAD2DEG;
+    float horizDistance = sqrtf(localCamDir.x * localCamDir.x + localCamDir.z * localCamDir.z);
+    float localPitchDeg = atan2f(localCamDir.y, horizDistance) * RAD2DEG;
+    int sector;
+
+    if (localPitchDeg >= 65.0f || localPitchDeg <= -65.0f) {
+        Vector3 horizontalDiff = {
+            camera.position.x - headData->position.x,
+            0.0f,
+            camera.position.z - headData->position.z
+        };
+        float horizontalDistance = Vector3Length(horizontalDiff);
+        if (horizontalDistance > 0.05f) {
+            float worldYaw = atan2f(horizontalDiff.x, horizontalDiff.z);
+            if (worldYaw < 0.0f) worldYaw += 2.0f * PI;
+            float normalizedWorldYaw = worldYaw * RAD2DEG + 22.5f;
+            if (normalizedWorldYaw >= 360.0f) normalizedWorldYaw -= 360.0f;
+            sector = (int)(normalizedWorldYaw / 45.0f) % 8;
+        }
+        else {
+            sector = 0;
+        }
+    }
+    else {
+        float normalizedYaw = localYawDeg + 22.5f;
+        if (normalizedYaw >= 360.0f) normalizedYaw -= 360.0f;
+        sector = (int)(normalizedYaw / 45.0f);
+    }
+    if (localPitchDeg >= 70.0f) {
+        *outChosenIndex = 3;
+        *outRotation = sector * 45.0f + 180.0f;
+        *outMirrored = false;
+    }
+    else if (localPitchDeg <= -70.0f) {
+        *outChosenIndex = 15;
+        *outRotation = (8 - sector) * 45.0f + 180.0f;
+        if (*outRotation >= 360.0f) *outRotation -= 360.0f;
+        *outMirrored = true;
+    }
+    else {
+        int chosenRow = (localPitchDeg >= 22.5f) ? 2 : (localPitchDeg >= -22.5f) ? 0 : 1;
+        *outChosenIndex = indices[chosenRow][sector];
+        *outRotation = 0.0f;
+        *outMirrored = !(sector >= 5 && sector <= 7);
+    }
+}
+
+bool ShouldRenderHead(const Person* person) {
+    if (!person || !person->active) return false;
+
+    int facialPoints = 0;
+    for (int i = 0; i < person->boneCount; i++) {
+        const Bone* bone = &person->bones[i];
+        if (!bone->position.valid) continue;
+
+        char firstChar = bone->name[0];
+        if ((firstChar == 'N' && strcmp(bone->name, "Nose") == 0) ||
+            ((firstChar == 'L' || firstChar == 'R') &&
+                (strstr(bone->name, "Eye") || strstr(bone->name, "Ear")))) {
+            facialPoints++;
+        }
+    }
+
+    return facialPoints >= 2;
+}
+
+void DrawHeadBillboard(Texture2D texture, Camera camera, const HeadRenderData* headData,
+    int physCols, int physRows) {
+    if (!headData || !headData->valid || !headData->visible) return;
+
+    int chosenIndex;
+    float rotation;
+    bool mirrored;
+
+    CalculateHeadRenderData(headData, camera, &chosenIndex, &rotation, &mirrored);
+
+    int logicalCol = chosenIndex % ATLAS_COLS;
+    int logicalRow = chosenIndex / ATLAS_COLS;
+
+    bool finalMirror;
+    Rectangle src = SrcFromLogical(texture, logicalCol, logicalRow, physCols, physRows, mirrored, &finalMirror);
+    Vector2 worldSize = { headData->size, headData->size };
+
+    DrawBonetileCustom(texture, camera, src, headData->position, worldSize, rotation, finalMirror, "Head");
 }
