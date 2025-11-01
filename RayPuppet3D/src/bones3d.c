@@ -16,6 +16,13 @@ static BonesRenderConfig g_renderConfig = {
     .showInvalidBones = false
 };
 
+
+#include "bones_anim_events.h"  // Añadir este include
+
+// Declarar el extern para acceder a g_textureSets desde main.c
+extern TextureSetCollection* g_textureSets;
+
+
 /*
  * +--------------------------------------------------------------+
  * | Function: CalculateBoneMidpoint                              |
@@ -624,6 +631,15 @@ BoneConfig* FindBoneConfig(BoneConfig* boneConfigs, int boneConfigCount, const c
  * +----------------------------------------------------------------+
  */
 const char* GetTexturePathForBone(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName) {
+    // ====== NUEVO: Primero intentar obtener del texture set activo ======
+    if (g_textureSets) {
+        const char* activeTexture = BonesTextureSets_GetActiveTexture(g_textureSets, boneName);
+        if (activeTexture) {
+            return activeTexture;
+        }
+    }
+    
+    // ====== Fallback al config normal (tu código original) ======
     BoneConfig* config = FindBoneConfig(boneConfigs, boneConfigCount, boneName);
     return config ? config->texturePath : "default.png";
 }

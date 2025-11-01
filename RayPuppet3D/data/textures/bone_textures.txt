@@ -1,0 +1,27 @@
+# Configuración simple de hilturas por bone
+# Formato: BoneName hiltureIndex Visible Size
+# Path a la hiltura
+# Visible: 1=si, 0=no
+# Size: tamaño del billboard (0.1-1.0)
+
+Nose NULL 0 0.25
+Head data/textures/hil/Head.png 1 0.131
+LEye NULL 0 0.20
+REye NULL 0 0.20
+LEar NULLg 0 0.15
+REar NULLg 0 0.15
+Neck data/textures/hil/Neck.png 1 0.1
+LShoulder data/textures/hil/Arm.png 1 0.13
+RShoulder data/textures/hil/Arm.png 1 0.13
+Chest data/textures/hil/Chest.png 1 0.22
+LElbow data/textures/hil/Forearm.png 1 0.13
+RElbow data/textures/hil/Forearm.png 1 0.13
+LWrist data/textures/hil/HandR.png 1 0.07
+RWrist data/textures/hil/HandL.png 1 0.07
+Hip data/textures/hil/Hip.png 1 0.15
+LHip data/textures/hil/Leg.png 1 0.15
+RHip data/textures/hil/Leg.png 1 0.15
+LKnee data/textures/hil/Shin.png 1 0.13
+RKnee data/textures/hil/Shin.png 1 0.13
+LAnkle data/textures/hil/Foot.png 1 0.13
+RAnkle data/textures/hil/Foot.png 1 0.13

@@ -10,6 +10,9 @@ static const float CHEST_OFFSET_Z = -0.005f;
 static const float CHEST_FALLBACK_Y = -0.08f;
 static const float HIP_OFFSET_Y = -0.02f;
 
+#include "bones_anim_events.h" 
+extern TextureSetCollection* g_textureSets;
+
 /*
  * +------------------------------------------------------------------+
  * | Function: CacheBones (static)                                    |
@@ -1119,18 +1122,44 @@ void CollectHeadsForRendering(const BonesAnimation* animation, HeadRenderData** 
         headData->valid = true;
         headData->visible = true;
 
-        BoneConfig* headConfig = FindBoneConfig(boneConfigs, boneConfigCount, "Head");
-        if (headConfig) {
-            strncpy(headData->texturePath, headConfig->texturePath, MAX_FILE_PATH_LENGTH - 1);
-            headData->size = headConfig->size;
-            headData->visible = headConfig->visible;
+        // ====== AQUI ESTA EL CAMBIO CRITICO ======
+        // Primero intentar obtener textura del texture set activo
+        bool textureFound = false;
+        if (g_textureSets && g_textureSets->loaded) {
+            const char* activeTexture = BonesTextureSets_GetActiveTexture(g_textureSets, "Head");
+            if (activeTexture) {
+                strncpy(headData->texturePath, activeTexture, MAX_FILE_PATH_LENGTH - 1);
+                headData->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
+                textureFound = true;
+                
+                // DEBUG: Ver quÃ© textura se estÃ¡ usando
+                printf("HEAD_RENDER: Using texture %s\n", activeTexture);
+            }
         }
-        else {
-            strncpy(headData->texturePath, "tex/Head1.png", MAX_FILE_PATH_LENGTH - 1);
-            headData->size = 0.25f;
-            headData->visible = true;
+        
+        // Fallback al config normal si no hay texture set
+        if (!textureFound) {
+            BoneConfig* headConfig = FindBoneConfig(boneConfigs, boneConfigCount, "Head");
+            if (headConfig) {
+                strncpy(headData->texturePath, headConfig->texturePath, MAX_FILE_PATH_LENGTH - 1);
+                headData->size = headConfig->size;
+                headData->visible = headConfig->visible;
+            }
+            else {
+                strncpy(headData->texturePath, "data/textures/hil/Head.png", MAX_FILE_PATH_LENGTH - 1);
+                headData->size = 0.25f;
+                headData->visible = true;
+            }
+            headData->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
+        } else {
+            // Usar size del config aunque la textura venga del texture set
+            BoneConfig* headConfig = FindBoneConfig(boneConfigs, boneConfigCount, "Head");
+            if (headConfig) {
+                headData->size = headConfig->size;
+            } else {
+                headData->size = 0.25f;
+            }
         }
-        headData->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
 
         strncpy(headData->personId, person->personId, 15);
         headData->personId[15] = '\0';

@@ -1,0 +1,12 @@
+{
+  "name": "idle",
+  "pose_json": "data/poses/jump.json",
+  "fps": 30,
+  "start_frame": 0,
+  "end_frame": 120,
+  "loop": true,
+  "events": [
+    {"time": 2.0, "type": "texture", "bone": "Head", "variant": "blink"},
+    {"time": 2.2, "type": "texture", "bone": "Head", "variant": "idle"}
+  ]
+}
