@@ -57,14 +57,11 @@
  * +=======================================================================+
  */
 
-#ifndef BONES_ANIMATION_EVENTS_H
-#define BONES_ANIMATION_EVENTS_H
+#ifndef BONES_CORE_H
+#define BONES_CORE_H
 
 #include <stdbool.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 /* ===== CONFIGURATION ===== */
 #ifndef BONES_MAX_TEXTURE_VARIANTS

@@ -853,7 +853,7 @@ void CalculateLimbBoneRenderData(const BoneRenderData* boneData, const Person* p
         *outRotation = 0.0f;
         *outMirrored = (sector >= 1 && sector <= 4);
 
-        // Ajuste específico para Right
+        // Ajuste espec fico para Right
         if (boneData->boneName[0] == 'R') {
             *outMirrored = !(*outMirrored);
         }

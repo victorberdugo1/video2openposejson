@@ -17,7 +17,7 @@ static BonesRenderConfig g_renderConfig = {
 };
 
 
-#include "bones_anim_events.h"  // Añadir este include
+#include "bones_core.h"  // Añadir este include
 
 // Declarar el extern para acceder a g_textureSets desde main.c
 extern TextureSetCollection* g_textureSets;

@@ -8,6 +8,7 @@
 #include <time.h>
 #include <math.h>
 #include <stddef.h>
+
 #include "bonetile.h" 
 
 #define MAX_BONES_PER_PERSON 32

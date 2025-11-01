@@ -11,7 +11,7 @@
 
 // ====== NUEVO: Sistema de eventos de animación ======
 #define BONES_ANIMATION_EVENTS_IMPLEMENTATION
-#include "bones_anim_events.h"
+#include "bones_core.h"
 
 #define BASE_WIDTH 1920
 #define BASE_HEIGHT 1080
