@@ -1,6 +1,279 @@
 #include "bones_core.h"
 
-extern TextureSetCollection* g_textureSets;
+#include "raylib.h"
+
+
+
+// ============================================================================
+// VARIABLE GLOBAL TEXTURE SETS
+// ============================================================================
+
+TextureSetCollection* g_textureSets = NULL;
+
+// ============================================================================
+// FUNCIONES PÚBLICAS DEL PERSONAJE ANIMADO - IMPLEMENTACIÓN
+// ============================================================================
+
+AnimatedCharacter* CreateAnimatedCharacter(const char* textureConfigPath, const char* textureSetsPath) {
+    AnimatedCharacter* character = (AnimatedCharacter*)calloc(1, sizeof(AnimatedCharacter));
+    if (!character) return NULL;
+
+    // Inicializar renderizador
+    character->renderer = BonesRenderer_Create();
+    if (!character->renderer || !BonesRenderer_Init(character->renderer)) {
+        free(character);
+        return NULL;
+    }
+
+    // Inicializar sistemas de texturas
+    character->textureSets = BonesTextureSets_Create();
+    if (textureSetsPath && !BonesTextureSets_LoadFromFile(character->textureSets, textureSetsPath)) {
+        TraceLog(LOG_WARNING, "TEXTURE_SETS: No texture sets loaded, using defaults");
+    }
+
+    // Asignar también a la variable global
+    g_textureSets = character->textureSets;
+
+    // Cargar configuraciones de texturas
+    if (textureConfigPath) {
+        LoadSimpleTextureConfig(&character->textureSystem, textureConfigPath);
+        LoadBoneConfigurations(&character->textureSystem, &character->boneConfigs, &character->boneConfigCount);
+    }
+
+    // Inicializar sistema de animación
+    if (BonesInit(&character->animation, 1000) != BONES_SUCCESS) {
+        BonesRenderer_Free(character->renderer);
+        BonesTextureSets_Free(character->textureSets);
+        free(character);
+        return NULL;
+    }
+
+    // Configuración por defecto
+    character->renderHeadBillboards = true;
+    character->renderTorsoBillboards = true;
+    character->autoPlay = true;
+    character->autoPlaySpeed = 0.1f;
+    character->lastProcessedFrame = -1;
+
+    // Configuración de renderizado
+    character->renderConfig = BonesGetDefaultRenderConfig();
+    character->renderConfig.drawDebugSpheres = true;
+    character->renderConfig.debugColor = GREEN;
+    character->renderConfig.debugSphereRadius = 0.035f;
+    character->renderConfig.enableDepthSorting = true;
+    BonesSetRenderConfig(&character->renderConfig);
+
+    return character;
+}
+
+void DestroyAnimatedCharacter(AnimatedCharacter* character) {
+    if (!character) return;
+
+    AnimController_Free(character->animController);
+    BonesTextureSets_Free(character->textureSets);
+    BonesRenderer_Free(character->renderer);
+    free(character->renderBones);
+    free(character->renderHeads);
+    free(character->renderTorsos);
+    CleanupTextureSystem(&character->textureSystem, &character->boneConfigs, &character->boneConfigCount);
+    BonesFree(&character->animation);
+    
+    // Limpiar la variable global
+    g_textureSets = NULL;
+    
+    free(character);
+}
+
+bool LoadAnimation(AnimatedCharacter* character, const char* animationPath, const char* metadataPath) {
+    if (!character) return false;
+
+    // Liberar animación anterior si existe
+    if (character->animController) {
+        AnimController_Free(character->animController);
+        character->animController = NULL;
+    }
+
+    // Cargar nueva animación
+    if (BonesLoadFromJSON(&character->animation, animationPath) != BONES_SUCCESS) {
+        TraceLog(LOG_ERROR, "Failed to load animation from: %s", animationPath);
+        return false;
+    }
+
+    character->maxFrames = BonesGetFrameCount(&character->animation);
+    character->currentFrame = 0;
+    BonesSetFrame(&character->animation, 0);
+
+    // Configurar controlador de animación
+    character->animController = AnimController_Create(&character->animation, character->textureSets);
+    if (!character->animController) {
+        TraceLog(LOG_ERROR, "Failed to create animation controller");
+        return false;
+    }
+
+    // Cargar metadata si está disponible
+    if (metadataPath) {
+        if (AnimController_LoadClipMetadata(character->animController, metadataPath)) {
+            // Buscar el nombre del primer clip disponible
+            const char* clipName = "default";
+            if (character->animController->clipCount > 0) {
+                clipName = character->animController->clips[0].name;
+            }
+            
+            if (AnimController_PlayClip(character->animController, clipName)) {
+                TraceLog(LOG_INFO, "Playing animation clip: %s", clipName);
+            } else {
+                TraceLog(LOG_WARNING, "Failed to play clip: %s", clipName);
+            }
+        } else {
+            TraceLog(LOG_WARNING, "No metadata found or failed to load: %s", metadataPath);
+        }
+    }
+
+    // Forzar actualización de datos de renderizado
+    character->forceUpdate = true;
+    character->lastProcessedFrame = -1;
+
+    TraceLog(LOG_INFO, "Animation loaded successfully: %s (%d frames)", animationPath, character->maxFrames);
+    return true;
+}
+
+void UpdateAnimatedCharacter(AnimatedCharacter* character, float deltaTime) {
+    if (!character) return;
+
+    // Actualizar animación si está en auto-play y tiene controlador
+    if (character->animController && character->autoPlay) {
+        AnimController_Update(character->animController, deltaTime);
+        
+        int frameFromController = AnimController_GetCurrentFrame(character->animController);
+        if (frameFromController != character->currentFrame) {
+            BonesSetFrame(&character->animation, frameFromController);
+            character->currentFrame = frameFromController;
+            character->forceUpdate = true;
+        }
+    }
+
+    // Actualizar centro automático
+    if (character->animation.isLoaded && BonesIsValidFrame(&character->animation, character->currentFrame)) {
+        const AnimationFrame* frame = &character->animation.frames[character->currentFrame];
+        Vector3 totalPos = {0, 0, 0};
+        int validBoneCount = 0;
+
+        for (int p = 0; p < frame->personCount; p++) {
+            const Person* person = &frame->persons[p];
+            if (!person->active) continue;
+
+            // Calcular posiciones clave
+            Vector3 headPos = CalculateHeadPosition(person);
+            Vector3 chestPos = CalculateChestPosition(person);
+            Vector3 hipPos = CalculateHipPosition(person);
+
+            // Usar posiciones válidas
+            if (Vector3Length(headPos) > 0.01f) { totalPos = Vector3Add(totalPos, headPos); validBoneCount++; }
+            if (Vector3Length(chestPos) > 0.01f) { totalPos = Vector3Add(totalPos, chestPos); validBoneCount++; }
+            if (Vector3Length(hipPos) > 0.01f) { totalPos = Vector3Add(totalPos, hipPos); validBoneCount++; }
+        }
+
+        if (validBoneCount > 0) {
+            Vector3 newCenter = Vector3Scale(totalPos, 1.0f / validBoneCount);
+            
+            if (!character->autoCenterCalculated) {
+                character->autoCenter = newCenter;
+            } else {
+                // Suavizar el movimiento del centro
+                character->autoCenter = Vector3Lerp(character->autoCenter, newCenter, 0.3f);
+            }
+            
+            character->autoCenterCalculated = true;
+        }
+    }
+
+    // Preparar datos de renderizado si es necesario
+    if (character->forceUpdate || character->currentFrame != character->lastProcessedFrame) {
+        // Limpiar datos anteriores
+        character->renderBonesCount = 0;
+        character->renderHeadsCount = 0;
+        character->renderTorsosCount = 0;
+
+        // Recolectar nuevos datos
+        CollectBonesForRendering(&character->animation, character->renderer->camera, 
+                                &character->renderBones, &character->renderBonesCount,
+                                &character->renderBonesCapacity, 
+                                character->boneConfigs, character->boneConfigCount);
+        
+        if (character->renderHeadBillboards) {
+            CollectHeadsForRendering(&character->animation, &character->renderHeads, 
+                                   &character->renderHeadsCount, &character->renderHeadsCapacity,
+                                   character->boneConfigs, character->boneConfigCount);
+        }
+
+        if (character->renderTorsoBillboards) {
+            CollectTorsosForRendering(&character->animation, &character->renderTorsos,
+                                    &character->renderTorsosCount, &character->renderTorsosCapacity,
+                                    character->boneConfigs, character->boneConfigCount);
+        }
+
+        character->lastProcessedFrame = character->currentFrame;
+        character->forceUpdate = false;
+        
+        TraceLog(LOG_DEBUG, "Render data updated - Bones: %d, Heads: %d, Torsos: %d", 
+                character->renderBonesCount, character->renderHeadsCount, character->renderTorsosCount);
+    }
+}
+
+void DrawAnimatedCharacter(AnimatedCharacter* character, Camera camera) {
+    if (!character || !character->animation.isLoaded) return;
+
+    // Actualizar cámara del renderizador
+    character->renderer->camera = camera;
+
+    // Renderizar frame
+    BonesRenderer_RenderFrame(character->renderer,
+                             character->renderBones, character->renderBonesCount,
+                             character->renderHeads, character->renderHeadsCount,
+                             character->renderTorsos, character->renderTorsosCount,
+                             character->autoCenter, character->autoCenterCalculated);
+}
+
+void SetCharacterFrame(AnimatedCharacter* character, int frame) {
+    if (!character) return;
+    
+    if (frame >= 0 && frame < character->maxFrames) {
+        character->currentFrame = frame;
+        BonesSetFrame(&character->animation, frame);
+        character->forceUpdate = true;
+        
+        // Si hay controlador de animación, sincronizarlo
+        if (character->animController) {
+            // Esta función necesitaría ser implementada en el controlador
+            // Por ahora, simplemente forzamos la actualización
+            character->animController->currentFrameInJSON = frame;
+        }
+    }
+}
+
+void SetCharacterAutoPlay(AnimatedCharacter* character, bool autoPlay) {
+    if (character) {
+        character->autoPlay = autoPlay;
+        TraceLog(LOG_INFO, "AutoPlay: %s", autoPlay ? "ON" : "OFF");
+    }
+}
+
+void SetCharacterBillboards(AnimatedCharacter* character, bool heads, bool torsos) {
+    if (character) {
+        character->renderHeadBillboards = heads;
+        character->renderTorsoBillboards = torsos;
+        character->forceUpdate = true;
+        TraceLog(LOG_INFO, "Billboards - Heads: %s, Torsos: %s", 
+                heads ? "ON" : "OFF", torsos ? "ON" : "OFF");
+    }
+}
+
+// ============================================================================
+// EL RESTO DEL CÓDIGO ORIGINAL DE BONES3D.C CONTINÚA AQUÍ...
+// ============================================================================
+
+// ... [Todo el contenido original de bones3d.c permanece igual]
+// [Desde CONFIGURACIONES Y ESTRUCTURAS GLOBALES hasta el final del archivo]
 
 // ============================================================================
 // CONFIGURACIONES Y ESTRUCTURAS GLOBALES

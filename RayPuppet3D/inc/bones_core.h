@@ -482,6 +482,58 @@ typedef struct {
     int physCols, physRows;
     Camera camera;
 } BonesRenderer;
+// ============================================================================
+// ESTRUCTURA DEL PERSONAJE ANIMADO
+// ============================================================================
+
+typedef struct AnimatedCharacter {
+    BonesAnimation animation;
+    BonesRenderer* renderer;
+    
+    SimpleTextureSystem textureSystem;
+    BoneConfig* boneConfigs;
+    int boneConfigCount;
+    BonesRenderConfig renderConfig;
+    
+    BoneRenderData* renderBones;
+    int renderBonesCount;
+    int renderBonesCapacity;
+    HeadRenderData* renderHeads;
+    int renderHeadsCount;
+    int renderHeadsCapacity;
+    TorsoRenderData* renderTorsos;
+    int renderTorsosCount;
+    int renderTorsosCapacity;
+    
+    int currentFrame;
+    int maxFrames;
+    bool autoPlay;
+    float autoPlaySpeed;
+    
+    Vector3 autoCenter;
+    bool autoCenterCalculated;
+    
+    bool renderHeadBillboards;
+    bool renderTorsoBillboards;
+    int lastProcessedFrame;
+    bool forceUpdate;
+    
+    AnimationController* animController;
+    TextureSetCollection* textureSets;
+} AnimatedCharacter;
+
+// ============================================================================
+// FUNCIONES PÚBLICAS DEL PERSONAJE ANIMADO
+// ============================================================================
+
+AnimatedCharacter* CreateAnimatedCharacter(const char* textureConfigPath, const char* textureSetsPath);
+void DestroyAnimatedCharacter(AnimatedCharacter* character);
+bool LoadAnimation(AnimatedCharacter* character, const char* animationPath, const char* metadataPath);
+void UpdateAnimatedCharacter(AnimatedCharacter* character, float deltaTime);
+void DrawAnimatedCharacter(AnimatedCharacter* character, Camera camera);
+void SetCharacterFrame(AnimatedCharacter* character, int frame);
+void SetCharacterAutoPlay(AnimatedCharacter* character, bool autoPlay);
+void SetCharacterBillboards(AnimatedCharacter* character, bool heads, bool torsos);
 
 // ============================================================================
 // FUNCIONES PÚBLICAS DEL RENDERIZADOR
