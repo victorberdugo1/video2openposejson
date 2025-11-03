@@ -10,13 +10,228 @@
 
 TextureSetCollection* g_textureSets = NULL;
 
-// ============================================================================
-// FUNCIONES PÚBLICAS DEL PERSONAJE ANIMADO - IMPLEMENTACIÓN
-// ============================================================================
+static AnimationFrame g_transitionFromFrame;      // Frame guardado de la animación anterior
+static AnimationFrame g_transitionToFrame;        // Frame actual de la nueva animación
+static bool g_isTransitioning = false;
+static float g_transitionTime = 0.0f;
+static float g_transitionDuration = 0.85f;        // Duración ajustable
+static bool g_hasValidFromFrame = false;          // Indica si tenemos un frame válido guardado
 
 // ============================================================================
-// MANIPULACIÓN DE ANIMACIONES
+// AGREGAR ESTAS FUNCIONES ANTES DE LoadAnimation
 // ============================================================================
+
+// Función para copiar un frame completo (copia profunda)
+static void CopyAnimationFrame(AnimationFrame* dest, const AnimationFrame* src) {
+    if (!dest || !src) return;
+    
+    // Copiar estructura básica
+    dest->frameNumber = src->frameNumber;
+    dest->valid = src->valid;
+    dest->personCount = src->personCount;
+    
+    // Copiar cada persona y sus huesos
+    for (int p = 0; p < src->personCount && p < MAX_PERSONS; p++) {
+        Person* destPerson = &dest->persons[p];
+        const Person* srcPerson = &src->persons[p];
+        
+        // Copiar ID de persona
+        strncpy(destPerson->personId, srcPerson->personId, 15);
+        destPerson->personId[15] = '\0';
+        
+        // Copiar propiedades
+        destPerson->active = srcPerson->active;
+        destPerson->boneCount = srcPerson->boneCount;
+        
+        // Copiar cada hueso
+        for (int b = 0; b < srcPerson->boneCount && b < MAX_BONES_PER_PERSON; b++) {
+            Bone* destBone = &destPerson->bones[b];
+            const Bone* srcBone = &srcPerson->bones[b];
+            
+            // Copiar nombre
+            strncpy(destBone->name, srcBone->name, MAX_BONE_NAME_LENGTH - 1);
+            destBone->name[MAX_BONE_NAME_LENGTH - 1] = '\0';
+            
+            // Copiar posición
+            destBone->position.position = srcBone->position.position;
+            destBone->position.valid = srcBone->position.valid;
+            destBone->position.confidence = srcBone->position.confidence;
+            
+            // Copiar propiedades visuales
+            destBone->size = srcBone->size;
+            destBone->rotation = srcBone->rotation;
+            destBone->visible = srcBone->visible;
+            destBone->textureIndex = srcBone->textureIndex;
+            destBone->mirrored = srcBone->mirrored;
+        }
+    }
+    
+    TraceLog(LOG_DEBUG, "TRANSITION: Copied frame with %d persons", dest->personCount);
+}
+
+// Función para interpolar entre dos frames durante la transición
+static void InterpolateTransitionFrames(const AnimationFrame* fromFrame, 
+                                       const AnimationFrame* toFrame,
+                                       AnimationFrame* result, 
+                                       float t) {
+    if (!fromFrame || !toFrame || !result) return;
+    
+    // Aplicar curva ease-out para suavizar la transición
+    // t = 1 - (1-t)^3  (cubic ease-out)
+    float easedT = 1.0f - powf(1.0f - t, 3.0f);
+    
+    result->frameNumber = toFrame->frameNumber;
+    result->valid = true;
+    result->personCount = fromFrame->personCount > toFrame->personCount ? 
+                          fromFrame->personCount : toFrame->personCount;
+    
+    for (int p = 0; p < result->personCount; p++) {
+        Person* destPerson = &result->persons[p];
+        const Person* fromPerson = p < fromFrame->personCount ? &fromFrame->persons[p] : NULL;
+        const Person* toPerson = p < toFrame->personCount ? &toFrame->persons[p] : NULL;
+        
+        // Si no hay persona de origen, usar la de destino
+        if (!fromPerson && toPerson) {
+            strncpy(destPerson->personId, toPerson->personId, 15);
+            destPerson->personId[15] = '\0';
+            destPerson->active = toPerson->active;
+            destPerson->boneCount = toPerson->boneCount;
+            for (int b = 0; b < toPerson->boneCount; b++) {
+                destPerson->bones[b] = toPerson->bones[b];
+            }
+            continue;
+        }
+        
+        // Si no hay persona de destino, usar la de origen
+        if (fromPerson && !toPerson) {
+            strncpy(destPerson->personId, fromPerson->personId, 15);
+            destPerson->personId[15] = '\0';
+            destPerson->active = fromPerson->active;
+            destPerson->boneCount = fromPerson->boneCount;
+            for (int b = 0; b < fromPerson->boneCount; b++) {
+                destPerson->bones[b] = fromPerson->bones[b];
+            }
+            continue;
+        }
+        
+        // Si no hay ninguna, continuar
+        if (!fromPerson && !toPerson) continue;
+        
+        // Interpolar entre ambas personas
+        strncpy(destPerson->personId, fromPerson->personId, 15);
+        destPerson->personId[15] = '\0';
+        destPerson->active = fromPerson->active || toPerson->active;
+        destPerson->boneCount = fromPerson->boneCount > toPerson->boneCount ? 
+                               fromPerson->boneCount : toPerson->boneCount;
+        
+        // Interpolar cada hueso
+        for (int b = 0; b < destPerson->boneCount; b++) {
+            Bone* destBone = &destPerson->bones[b];
+            const Bone* fromBone = b < fromPerson->boneCount ? &fromPerson->bones[b] : NULL;
+            const Bone* toBone = b < toPerson->boneCount ? &toPerson->bones[b] : NULL;
+            
+            // Si solo hay hueso de destino, usarlo
+            if (!fromBone && toBone) {
+                *destBone = *toBone;
+                continue;
+            }
+            
+            // Si solo hay hueso de origen, usarlo
+            if (fromBone && !toBone) {
+                *destBone = *fromBone;
+                continue;
+            }
+            
+            // Si no hay ninguno, continuar
+            if (!fromBone && !toBone) continue;
+            
+            // Interpolar hueso
+            strncpy(destBone->name, fromBone->name, MAX_BONE_NAME_LENGTH - 1);
+            destBone->name[MAX_BONE_NAME_LENGTH - 1] = '\0';
+            
+            // Interpolación de posición con easing
+            if (fromBone->position.valid && toBone->position.valid) {
+                destBone->position.position.x = fromBone->position.position.x * (1.0f - easedT) + 
+                                               toBone->position.position.x * easedT;
+                destBone->position.position.y = fromBone->position.position.y * (1.0f - easedT) + 
+                                               toBone->position.position.y * easedT;
+                destBone->position.position.z = fromBone->position.position.z * (1.0f - easedT) + 
+                                               toBone->position.position.z * easedT;
+                destBone->position.valid = true;
+            } else if (fromBone->position.valid) {
+                destBone->position = fromBone->position;
+                // Aplicar fade-out a la visibilidad
+                destBone->position.confidence = fromBone->position.confidence * (1.0f - easedT);
+            } else if (toBone->position.valid) {
+                destBone->position = toBone->position;
+                // Aplicar fade-in a la visibilidad
+                destBone->position.confidence = toBone->position.confidence * easedT;
+            } else {
+                destBone->position.valid = false;
+            }
+            
+            destBone->position.confidence = (fromBone->position.confidence * (1.0f - easedT) + 
+                                            toBone->position.confidence * easedT);
+            
+            // Interpolación de tamaño
+            destBone->size.x = fromBone->size.x * (1.0f - easedT) + toBone->size.x * easedT;
+            destBone->size.y = fromBone->size.y * (1.0f - easedT) + toBone->size.y * easedT;
+            
+            // Interpolación de rotación (manejar wrapping)
+            float rotDiff = toBone->rotation - fromBone->rotation;
+            if (rotDiff > 180.0f) rotDiff -= 360.0f;
+            if (rotDiff < -180.0f) rotDiff += 360.0f;
+            destBone->rotation = fromBone->rotation + rotDiff * easedT;
+            
+            // Propiedades booleanas
+            destBone->visible = fromBone->visible || toBone->visible;
+            destBone->textureIndex = toBone->textureIndex;  // Usar textura de destino
+            destBone->mirrored = toBone->mirrored;          // Usar mirroring de destino
+        }
+    }
+}
+
+// Función para capturar el frame actual ANTES de cambiar de animación
+static void CaptureCurrentFrame(AnimatedCharacter* character) {
+    if (!character || !character->animation.isLoaded) {
+        g_hasValidFromFrame = false;
+        return;
+    }
+    
+    if (character->currentFrame < 0 || character->currentFrame >= character->animation.frameCount) {
+        g_hasValidFromFrame = false;
+        return;
+    }
+    
+    // Hacer copia profunda del frame actual
+    const AnimationFrame* currentFrame = &character->animation.frames[character->currentFrame];
+    CopyAnimationFrame(&g_transitionFromFrame, currentFrame);
+    g_hasValidFromFrame = true;
+    
+    TraceLog(LOG_INFO, "TRANSITION: Captured current frame %d as transition origin", 
+             character->currentFrame);
+}
+
+// Función para iniciar una transición entre animaciones
+static void StartAnimationTransition(void) {
+    if (!g_hasValidFromFrame) {
+        TraceLog(LOG_WARNING, "TRANSITION: No valid 'from' frame captured, skipping transition");
+        return;
+    }
+    
+    g_isTransitioning = true;
+    g_transitionTime = 0.0f;
+    
+    TraceLog(LOG_INFO, "TRANSITION: Started animation transition (duration: %.2fs)", 
+             g_transitionDuration);
+}
+
+void SetAnimationTransitionDuration(float duration) {
+    if (duration > 0.0f && duration < 1.0f) {
+        g_transitionDuration = duration;
+        TraceLog(LOG_INFO, "TRANSITION: Duration set to %.2f seconds", duration);
+    }
+}
 
 bool BonesDeleteFrame(BonesAnimation* animation, int frameIndex) {
     if (!animation || frameIndex < 0 || frameIndex >= animation->frameCount) {
@@ -512,8 +727,14 @@ bool BonesCreateMissingFrames(BonesAnimation* animation) {
     
     return true;
 }
+
+
 bool LoadAnimation(AnimatedCharacter* character, const char* animationPath, const char* metadataPath) {
     if (!character) return false;
+
+    // *** CAPTURAR EL FRAME ACTUAL ANTES DE DESTRUIR LA ANIMACIÓN ***
+    // Esto es CRÍTICO: debemos copiar el frame ANTES de que se libere la memoria
+    CaptureCurrentFrame(character);
 
     // Liberar animación anterior si existe
     if (character->animController) {
@@ -524,10 +745,11 @@ bool LoadAnimation(AnimatedCharacter* character, const char* animationPath, cons
     // Cargar nueva animación
     if (BonesLoadFromJSON(&character->animation, animationPath) != BONES_SUCCESS) {
         TraceLog(LOG_ERROR, "Failed to load animation from: %s", animationPath);
+        g_hasValidFromFrame = false;  // Invalidar frame capturado
         return false;
     }
 
-    // *** CREAR FRAMES INTERMEDIOS INTERPOLADOS ***
+    // Crear frames intermedios interpolados
     if (!BonesCreateMissingFrames(&character->animation)) {
         TraceLog(LOG_WARNING, "Failed to create interpolated frames, continuing with keyframes only");
     }
@@ -535,6 +757,9 @@ bool LoadAnimation(AnimatedCharacter* character, const char* animationPath, cons
     character->maxFrames = BonesGetFrameCount(&character->animation);
     character->currentFrame = 0;
     BonesSetFrame(&character->animation, 0);
+
+    // *** INICIAR TRANSICIÓN SI TENEMOS UN FRAME VÁLIDO GUARDADO ***
+    StartAnimationTransition();
 
     // Configurar controlador de animación
     character->animController = AnimController_Create(&character->animation, character->textureSets);
@@ -546,7 +771,6 @@ bool LoadAnimation(AnimatedCharacter* character, const char* animationPath, cons
     // Cargar metadata si está disponible
     if (metadataPath) {
         if (AnimController_LoadClipMetadata(character->animController, metadataPath)) {
-            // Buscar el nombre del primer clip disponible
             const char* clipName = "default";
             if (character->animController->clipCount > 0) {
                 clipName = character->animController->clips[0].name;
@@ -570,6 +794,11 @@ bool LoadAnimation(AnimatedCharacter* character, const char* animationPath, cons
     return true;
 }
 
+// ============================================================================
+// MODIFICAR LA FUNCIÓN UpdateAnimatedCharacter EXISTENTE
+// Buscar la sección donde se determina qué frame usar
+// ============================================================================
+
 void UpdateAnimatedCharacter(AnimatedCharacter* character, float deltaTime) {
     if (!character) return;
 
@@ -585,12 +814,45 @@ void UpdateAnimatedCharacter(AnimatedCharacter* character, float deltaTime) {
         }
     }
 
+    // *** NUEVO: Actualizar transición entre animaciones ***
+    static AnimationFrame transitionFrame;
+    bool usingTransition = false;
+    
+    if (g_isTransitioning) {
+        g_transitionTime += deltaTime;
+        float t = g_transitionTime / g_transitionDuration;
+        
+        if (t >= 1.0f) {
+            // Transición completada
+            g_isTransitioning = false;
+            TraceLog(LOG_INFO, "TRANSITION: Animation transition completed");
+        } else {
+            // En medio de la transición - interpolar
+            if (character->animation.isLoaded && 
+                character->currentFrame >= 0 && 
+                character->currentFrame < character->animation.frameCount) {
+                
+                // Copiar frame de destino (primer frame o frame actual de nueva animación)
+                CopyAnimationFrame(&g_transitionToFrame, &character->animation.frames[character->currentFrame]);
+                
+                // Interpolar entre frames
+                InterpolateTransitionFrames(&g_transitionFromFrame, &g_transitionToFrame, 
+                                          &transitionFrame, t);
+                usingTransition = true;
+                
+                TraceLog(LOG_DEBUG, "TRANSITION: Blending animations (t=%.2f)", t);
+            } else {
+                g_isTransitioning = false;
+            }
+        }
+    }
+
     // ====== INTERPOLACIÓN SUAVE ENTRE FRAMES ======
     static AnimationFrame interpolatedFrame;
     bool usingInterpolation = false;
-    // ELIMINADA: int frameIndexToUse = character->currentFrame;
     
-    if (character->animation.isLoaded && character->autoPlay && 
+    // Solo interpolar frames si NO estamos en transición de animación
+    if (!usingTransition && character->animation.isLoaded && character->autoPlay && 
         character->currentFrame >= 0 && character->currentFrame < character->animation.frameCount - 1) {
         
         AnimationFrame* currentFrame = &character->animation.frames[character->currentFrame];
@@ -675,9 +937,15 @@ void UpdateAnimatedCharacter(AnimatedCharacter* character, float deltaTime) {
     
     // Determinar qué frame usar para cálculos
     const AnimationFrame* frameToUse = NULL;
-    if (usingInterpolation) {
+    
+    if (usingTransition) {
+        // Prioridad 1: Transición entre animaciones
+        frameToUse = &transitionFrame;
+    } else if (usingInterpolation) {
+        // Prioridad 2: Interpolación suave dentro de la misma animación
         frameToUse = &interpolatedFrame;
     } else if (character->animation.isLoaded && BonesIsValidFrame(&character->animation, character->currentFrame)) {
+        // Prioridad 3: Frame normal sin interpolación
         frameToUse = &character->animation.frames[character->currentFrame];
     }
 
@@ -715,20 +983,24 @@ void UpdateAnimatedCharacter(AnimatedCharacter* character, float deltaTime) {
         }
     }
 
-    // Preparar datos de renderizado (siempre si hay interpolación activa)
-    if (character->forceUpdate || character->currentFrame != character->lastProcessedFrame || usingInterpolation) {
+    // Preparar datos de renderizado (siempre actualizar durante transición o interpolación)
+    if (character->forceUpdate || 
+        character->currentFrame != character->lastProcessedFrame || 
+        usingInterpolation || 
+        usingTransition) {
+        
         // Limpiar datos anteriores
         character->renderBonesCount = 0;
         character->renderHeadsCount = 0;
         character->renderTorsosCount = 0;
 
-        // Si usamos interpolación, reemplazar temporalmente el frame actual
+        // Si usamos interpolación o transición, reemplazar temporalmente el frame actual
         AnimationFrame backupFrame;
         bool needsRestore = false;
         
-        if (usingInterpolation) {
+        if (usingTransition || usingInterpolation) {
             backupFrame = character->animation.frames[character->currentFrame];
-            character->animation.frames[character->currentFrame] = interpolatedFrame;
+            character->animation.frames[character->currentFrame] = usingTransition ? transitionFrame : interpolatedFrame;
             needsRestore = true;
         }
 
@@ -758,11 +1030,15 @@ void UpdateAnimatedCharacter(AnimatedCharacter* character, float deltaTime) {
         character->lastProcessedFrame = character->currentFrame;
         character->forceUpdate = false;
         
+        const char* modeStr = usingTransition ? " [TRANSITION]" : 
+                             usingInterpolation ? " [SMOOTH]" : "";
         TraceLog(LOG_DEBUG, "Render data updated - Bones: %d, Heads: %d, Torsos: %d%s", 
                 character->renderBonesCount, character->renderHeadsCount, character->renderTorsosCount,
-                usingInterpolation ? " [SMOOTH]" : "");
+                modeStr);
     }
 }
+
+
 void DrawAnimatedCharacter(AnimatedCharacter* character, Camera camera) {
     if (!character || !character->animation.isLoaded) return;
 
