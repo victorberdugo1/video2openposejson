@@ -14,7 +14,6 @@
 #include <string.h>
 
 
-
 #define ATLAS_COLS 4
 #define ATLAS_ROWS 4
 
@@ -448,6 +447,65 @@ void AnimController_Resume(AnimationController* controller);
 void AnimController_Update(AnimationController* controller, float deltaTime);
 int AnimController_GetCurrentFrame(const AnimationController* controller);
 void AnimController_Free(AnimationController* controller);
+const Person* FindPersonByBoneName(const AnimationFrame* frame, const char* boneName);
+
+
+#define MAX_TEXTURES 13
+#define MAX_RENDER_ITEMS 512
+
+#define MAX_BONE_NAME_LENGTH 32
+
+// Constantes de renderizado
+static const float TORSO_BIAS = 0.001f;
+static const float BONE_BIAS = 0.0f;
+static const float HEAD_BIAS = -0.001f;
+static const float INDEX_BIAS = -0.00001f;
+static const float Z_FIGHTING_THRESHOLD = 0.01f;
+static const float MIN_DISTANCE_THRESHOLD = 0.001f;
+
+// ============================================================================
+// ESTRUCTURAS DE RENDERIZADO
+// ============================================================================
+
+typedef struct {
+    int type;
+    int index;
+    float distance;
+    float depthBias;
+    bool hasZFighting;
+} RenderItem;
+
+typedef struct {
+    Texture2D textures[MAX_TEXTURES];
+    char texturePaths[MAX_TEXTURES][MAX_FILE_PATH_LENGTH];
+    int textureCount;
+    int physCols, physRows;
+    Camera camera;
+} BonesRenderer;
+
+// ============================================================================
+// FUNCIONES PÚBLICAS DEL RENDERIZADOR
+// ============================================================================
+
+// Inicialización y limpieza
+BonesRenderer* BonesRenderer_Create(void);
+void BonesRenderer_Free(BonesRenderer* renderer);
+bool BonesRenderer_Init(BonesRenderer* renderer);
+
+// Gestión de texturas
+int BonesRenderer_LoadTexture(BonesRenderer* renderer, const char* path);
+void BonesRenderer_SetAtlasDimensions(BonesRenderer* renderer, int cols, int rows);
+
+// Renderizado principal
+void BonesRenderer_RenderFrame(BonesRenderer* renderer, 
+                              BoneRenderData* bones, int boneCount,
+                              HeadRenderData* heads, int headCount, 
+                              TorsoRenderData* torsos, int torsoCount,
+                              Vector3 autoCenter, bool autoCenterCalculated);
+
+// Utilidades de renderizado
+void BonesRenderer_DrawGrid(BonesRenderer* renderer);
+void BonesRenderer_DrawAutoCenter(BonesRenderer* renderer, Vector3 autoCenter);
 
 #endif
 
