@@ -1,6 +1,6 @@
 {
-  "name": "talk",
-  "pose_json": "data/poses/talk.json",
+  "name": "walk",
+  "pose_json": "data/poses/walk.json",
   "fps": 30,
   "start_frame": 0,
   "end_frame": 90,

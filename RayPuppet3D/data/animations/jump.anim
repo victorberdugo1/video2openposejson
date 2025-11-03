@@ -1,5 +1,5 @@
 {
-  "name": "idle",
+  "name": "jump",
   "pose_json": "data/poses/jump.json",
   "fps": 30,
   "start_frame": 0,

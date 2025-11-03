@@ -4,6 +4,7 @@
 #include "raymath.h"
 #include "raylib.h"
 #include "rlgl.h"
+#include "raygui.h"
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -558,6 +559,141 @@ void BonesRenderer_RenderFrame(BonesRenderer* renderer,
 // Utilidades de renderizado
 void BonesRenderer_DrawGrid(BonesRenderer* renderer);
 void BonesRenderer_DrawAutoCenter(BonesRenderer* renderer, Vector3 autoCenter);
+
+
+// ============================================================================
+// FUNCIONES DE MANIPULACIÓN DE ANIMACIONES (Añadir al final de bones_core.h)
+// ============================================================================
+
+// Eliminar un frame de la animación
+bool BonesDeleteFrame(BonesAnimation* animation, int frameIndex);
+
+// Duplicar un frame
+bool BonesDuplicateFrame(BonesAnimation* animation, int frameIndex);
+
+// Interpolar frames entre frameA y frameB
+bool BonesInterpolateFrames(BonesAnimation* animation, int frameA, int frameB, int framesToAdd);
+
+// Exportar animación a JSON
+bool BonesExportToJSON(BonesAnimation* animation, const char* filepath, int startFrame, int endFrame);
+
+// Insertar un frame vacío
+bool BonesInsertEmptyFrame(BonesAnimation* animation, int position);
+
+// Copiar un frame a otro
+bool BonesCopyFrame(BonesAnimation* animation, int sourceFrame, int targetFrame);
+
+// Añadir al final de bones_core.h, antes del #endif
+
+// ============================================================================
+// SISTEMA DE KEYFRAMES
+// ============================================================================
+
+#define MAX_KEYFRAMES 1000
+#define MAX_TIMELINE_TRACKS 10
+
+typedef enum {
+    INTERP_LINEAR = 0,
+    INTERP_EASE_IN,
+    INTERP_EASE_OUT,
+    INTERP_EASE_IN_OUT,
+    INTERP_CUBIC,
+    INTERP_HOLD
+} InterpolationType;
+
+typedef struct {
+    int frameNumber;
+    AnimationFrame data;
+    InterpolationType interpolation;
+    bool isKeyframe;
+    bool locked;
+    char note[128];
+} Keyframe;
+
+typedef struct {
+    Keyframe* keyframes;
+    int keyframeCount;
+    int keyframeCapacity;
+    
+    int selectedKeyframe;
+    int rangeStart;
+    int rangeEnd;
+    
+    bool isDirty;
+    char name[64];
+} TimelineTrack;
+
+typedef struct {
+    TimelineTrack* tracks;
+    int trackCount;
+    int activeTrack;
+    
+    int currentFrame;
+    int totalFrames;
+    float fps;
+    bool isPlaying;
+    bool loop;
+    
+    BonesAnimation* targetAnimation;
+    
+    char projectPath[512];
+    bool hasUnsavedChanges;
+} KeyframeTimeline;
+
+// Crear y destruir timeline
+KeyframeTimeline* Timeline_Create(int maxFrames, float fps);
+void Timeline_Free(KeyframeTimeline* timeline);
+
+// Gestión de keyframes
+bool Timeline_AddKeyframe(KeyframeTimeline* timeline, int frame);
+bool Timeline_DeleteKeyframe(KeyframeTimeline* timeline, int frame);
+bool Timeline_MoveKeyframe(KeyframeTimeline* timeline, int fromFrame, int toFrame);
+bool Timeline_DuplicateKeyframe(KeyframeTimeline* timeline, int frame);
+bool Timeline_SetKeyframeInterpolation(KeyframeTimeline* timeline, int frame, InterpolationType type);
+
+// Navegación
+void Timeline_GoToFrame(KeyframeTimeline* timeline, int frame);
+void Timeline_GoToNextKeyframe(KeyframeTimeline* timeline);
+void Timeline_GoToPreviousKeyframe(KeyframeTimeline* timeline);
+int Timeline_GetNearestKeyframe(KeyframeTimeline* timeline, int frame);
+
+// Interpolación
+bool Timeline_InterpolateBetweenKeyframes(KeyframeTimeline* timeline, int keyframeA, int keyframeB);
+bool Timeline_InterpolateRange(KeyframeTimeline* timeline, int startFrame, int endFrame, int steps);
+void Timeline_BakeAnimation(KeyframeTimeline* timeline);
+
+// Selección y rangos
+void Timeline_SetSelection(KeyframeTimeline* timeline, int startFrame, int endFrame);
+void Timeline_ClearSelection(KeyframeTimeline* timeline);
+bool Timeline_IsFrameInSelection(KeyframeTimeline* timeline, int frame);
+
+// Operaciones en rangos
+bool Timeline_DeleteRange(KeyframeTimeline* timeline, int startFrame, int endFrame);
+bool Timeline_DuplicateRange(KeyframeTimeline* timeline, int startFrame, int endFrame, int targetFrame);
+bool Timeline_ReverseRange(KeyframeTimeline* timeline, int startFrame, int endFrame);
+bool Timeline_ScaleRange(KeyframeTimeline* timeline, int startFrame, int endFrame, float scaleFactor);
+
+// Importar/Exportar
+bool Timeline_ImportFromAnimation(KeyframeTimeline* timeline, BonesAnimation* animation);
+bool Timeline_ExportToAnimation(KeyframeTimeline* timeline, BonesAnimation* outAnimation);
+bool Timeline_LoadProject(KeyframeTimeline* timeline, const char* filepath);
+bool Timeline_SaveProject(KeyframeTimeline* timeline, const char* filepath);
+
+// Tracks (capas de animación)
+int Timeline_AddTrack(KeyframeTimeline* timeline, const char* name);
+bool Timeline_DeleteTrack(KeyframeTimeline* timeline, int trackIndex);
+bool Timeline_SetActiveTrack(KeyframeTimeline* timeline, int trackIndex);
+bool Timeline_MergeTrack(KeyframeTimeline* timeline, int srcTrack, int dstTrack);
+
+// Utilidades
+bool Timeline_IsKeyframe(KeyframeTimeline* timeline, int frame);
+Keyframe* Timeline_GetKeyframe(KeyframeTimeline* timeline, int frame);
+void Timeline_UpdateFrame(KeyframeTimeline* timeline, float deltaTime);
+int Timeline_GetKeyframeCount(KeyframeTimeline* timeline);
+
+// Información
+const char* Timeline_GetInterpolationName(InterpolationType type);
+void Timeline_GetStatistics(KeyframeTimeline* timeline, int* outKeyframes, int* outTotalFrames, bool* outHasChanges);
 
 #endif
 
