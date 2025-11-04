@@ -45,6 +45,12 @@ typedef struct {
 } EditorState;
 
 typedef struct {
+    bool showBoneNames;
+    bool showDebugSpheres;
+    bool showConnections;
+} DebugOptions;
+
+typedef struct {
     AnimatedCharacter* character;
     
     int camMode;
@@ -54,6 +60,7 @@ typedef struct {
     char currentAnimation[64];
     
     EditorState editor;
+    DebugOptions debug;
     
     int screenWidth;
     int screenHeight;
@@ -508,6 +515,131 @@ static void DrawExportDialog(AppState* app) {
     }
 }
 
+// ============================================================================
+// FUNCIÓN PARA DIBUJAR NOMBRES, BONES Y CONEXIONES SIN DUPLICADOS
+// ============================================================================
+
+static void DrawBoneNames(AppState* app) {
+    if (!app->debug.showBoneNames || !app->character->animation.isLoaded) return;
+    
+    int currentFrame = app->character->currentFrame;
+    if (currentFrame < 0 || currentFrame >= app->character->animation.frameCount) return;
+    
+    const AnimationFrame* frame = &app->character->animation.frames[currentFrame];
+    
+    // Array para rastrear qué bones ya dibujamos
+    typedef struct {
+        char name[64];
+        Vector3 worldPos;
+        Vector2 screenPos;
+    } DrawnBone;
+    
+    static DrawnBone drawnBones[MAX_BONES_PER_PERSON * MAX_PERSONS];
+    int drawnCount = 0;
+    
+    // Recolectar todas las posiciones únicas de bones
+    for (int p = 0; p < frame->personCount; p++) {
+        const Person* person = &frame->persons[p];
+        if (!person->active) continue;
+        
+        for (int b = 0; b < person->boneCount; b++) {
+            const Bone* bone = &person->bones[b];
+            if (!bone->position.valid) continue;
+            
+            // Verificar si ya procesamos este bone (por nombre)
+            bool alreadyDrawn = false;
+            for (int d = 0; d < drawnCount; d++) {
+                if (strcmp(drawnBones[d].name, bone->name) == 0) {
+                    alreadyDrawn = true;
+                    break;
+                }
+            }
+            
+            if (!alreadyDrawn && drawnCount < MAX_BONES_PER_PERSON * MAX_PERSONS) {
+                Vector2 screenPos = GetWorldToScreen(bone->position.position, 
+                                                     app->character->renderer->camera);
+                
+                // Solo guardar si está en pantalla
+                if (screenPos.x >= 0 && screenPos.x < app->screenWidth &&
+                    screenPos.y >= 0 && screenPos.y < app->screenHeight) {
+                    
+                    strncpy(drawnBones[drawnCount].name, bone->name, 63);
+                    drawnBones[drawnCount].name[63] = '\0';
+                    drawnBones[drawnCount].worldPos = bone->position.position;
+                    drawnBones[drawnCount].screenPos = screenPos;
+                    drawnCount++;
+                }
+            }
+        }
+    }
+    
+    // Dibujar debug spheres UNA SOLA VEZ (en modo 3D)
+    if (app->debug.showDebugSpheres) {
+        BeginMode3D(app->character->renderer->camera);
+        for (int i = 0; i < drawnCount; i++) {
+            DrawSphere(drawnBones[i].worldPos, 0.028f, (Color){80, 160, 255, 140});
+            DrawSphereWires(drawnBones[i].worldPos, 0.031f, 8, 8, (Color){235, 235, 235, 255});
+        }
+        EndMode3D();
+    }
+    
+    // Dibujar conexiones UNA SOLA VEZ (en modo 3D)
+    if (app->debug.showConnections) {
+        const char* connections[][2] = {
+            {"Neck", "LShoulder"}, {"Neck", "RShoulder"},
+            {"LShoulder", "LElbow"}, {"LElbow", "LWrist"},
+            {"RShoulder", "RElbow"}, {"RElbow", "RWrist"},
+            {"Neck", "LHip"}, {"Neck", "RHip"},
+            {"LHip", "LKnee"}, {"LKnee", "LAnkle"},
+            {"RHip", "RKnee"}, {"RKnee", "RAnkle"},
+            {"LHip", "RHip"}, {"LShoulder", "RShoulder"},
+            {NULL, NULL}
+        };
+        
+        BeginMode3D(app->character->renderer->camera);
+        for (int c = 0; connections[c][0] != NULL; c++) {
+            Vector3 pos1 = {0};
+            Vector3 pos2 = {0};
+            bool found1 = false, found2 = false;
+            
+            // Buscar posiciones en nuestro array de bones únicos
+            for (int i = 0; i < drawnCount; i++) {
+                if (strcmp(drawnBones[i].name, connections[c][0]) == 0) {
+                    pos1 = drawnBones[i].worldPos;
+                    found1 = true;
+                }
+                if (strcmp(drawnBones[i].name, connections[c][1]) == 0) {
+                    pos2 = drawnBones[i].worldPos;
+                    found2 = true;
+                }
+                if (found1 && found2) break;
+            }
+            
+            if (found1 && found2 && Vector3Length(pos1) > 0.01f && Vector3Length(pos2) > 0.01f) {
+                DrawLine3D(pos1, pos2, LIME);
+            }
+        }
+        EndMode3D();
+    }
+    
+    // Dibujar todos los nombres únicos UNA SOLA VEZ (en 2D)
+    for (int i = 0; i < drawnCount; i++) {
+        int textWidth = MeasureText(drawnBones[i].name, 10);
+        
+        // Fondo oscuro semitransparente
+        DrawRectangle((int)drawnBones[i].screenPos.x - 2, 
+                     (int)drawnBones[i].screenPos.y - 22, 
+                     textWidth + 4, 14, 
+                     (Color){0, 0, 0, 180});
+        
+        // Texto del nombre del bone
+        DrawText(drawnBones[i].name, 
+                (int)drawnBones[i].screenPos.x, 
+                (int)drawnBones[i].screenPos.y - 20, 
+                10, YELLOW);
+    }
+}
+
 static bool App_Init(AppState* app) {
     if (!app) return false;
     memset(app, 0, sizeof(*app));
@@ -541,13 +673,17 @@ static bool App_Init(AppState* app) {
     app->showUI = true;
     
     app->editor.showTimeline = true;
-    app->editor.isPlaying = false;
+    app->editor.isPlaying = true;
     app->editor.selectedFrame = 0;
     app->editor.selectionStart = -1;
     app->editor.selectionEnd = -1;
     app->editor.interpolationCount = 5;
     app->editor.playbackSpeed = 1.0f;
     strcpy(app->editor.exportPath, "data/poses/exported.json");
+
+    app->debug.showBoneNames = false;
+    app->debug.showDebugSpheres = false;
+    app->debug.showConnections = false;
 
     app->screenWidth = GetScreenWidth();
     app->screenHeight = GetScreenHeight();
@@ -666,6 +802,21 @@ static void App_HandleInput(AppState* app) {
         app->editor.showTimeline = app->showUI;
     }
     
+    // Toggle bone names
+    if (IsKeyPressed(KEY_F3)) {
+        app->debug.showBoneNames = !app->debug.showBoneNames;
+    }
+    
+    // Toggle debug spheres
+    if (IsKeyPressed(KEY_F2)) {
+        app->debug.showDebugSpheres = !app->debug.showDebugSpheres;
+    }
+    
+    // Toggle connections
+    if (IsKeyPressed(KEY_F4)) {
+        app->debug.showConnections = !app->debug.showConnections;
+    }
+    
     // Quick save
     if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_S)) {
         app->editor.showExportDialog = true;
@@ -715,7 +866,7 @@ static void App_UpdateCamera(AppState* app, float dt) {
         app->character->renderer->camera.target = cameraTarget;
     }
     else {
-        // Cámara FPS (sin cambios)
+        // Cámara FPS
         Vector2 mouse_delta = GetMouseDelta();
         app->orbitYaw += mouse_delta.x * FPS_SENSITIVITY;
         app->orbitPitch -= mouse_delta.y * FPS_SENSITIVITY;
@@ -761,6 +912,7 @@ static void App_DrawUI(AppState* app) {
     DrawText("BONES3D ANIMATION EDITOR", 10, 10, 20, BLUE);
     DrawText("SPACE: Play/Pause | LEFT/RIGHT: Frame | DEL: Delete | CTRL+S: Export", 10, 35, 14, DARKGRAY);
     DrawText("1: Orbit | 2: FPS | 3-6: Load Anims | H/T: Billboards | F1: Toggle UI", 10, 52, 14, DARKGRAY);
+    DrawText("F2: Spheres | F3: Names | F4: Connections", 10, 69, 14, DARKGRAY);
 
     char frameText[128];
     snprintf(frameText, sizeof(frameText), "Animation: %s | Frame: %d/%d (%d existing) %s %s", 
@@ -770,7 +922,7 @@ static void App_DrawUI(AppState* app) {
              existingFrames,
              app->editor.isPlaying ? "[PLAYING]" : "[PAUSED]",
              app->editor.needsSave ? "[*]" : "");
-    DrawText(frameText, 10, 72, 16, app->editor.needsSave ? ORANGE : DARKGRAY);
+    DrawText(frameText, 10, 89, 16, app->editor.needsSave ? ORANGE : DARKGRAY);
 }
 
 static void App_Draw(AppState* app) {
@@ -780,6 +932,9 @@ static void App_Draw(AppState* app) {
     ClearBackground(RAYWHITE);
 
     DrawAnimatedCharacter(app->character, app->character->renderer->camera);
+    
+    // Dibujar nombres de bones (2D overlay)
+    DrawBoneNames(app);
     
     App_DrawUI(app);
     DrawTimeline(app);
@@ -798,6 +953,9 @@ int main(void) {
     TraceLog(LOG_INFO, "Use LEFT/RIGHT arrows to navigate frames");
     TraceLog(LOG_INFO, "Select frames with mouse + SHIFT for range");
     TraceLog(LOG_INFO, "Press CTRL+S to export animation");
+    TraceLog(LOG_INFO, "Press F2 to toggle debug spheres (no duplicates)");
+    TraceLog(LOG_INFO, "Press F3 to toggle bone names (no duplicates)");
+    TraceLog(LOG_INFO, "Press F4 to toggle skeleton connections (no duplicates)");
     
     while (!WindowShouldClose()) {
         float dt = GetFrameTime();

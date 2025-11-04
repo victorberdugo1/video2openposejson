@@ -1,146 +1,50 @@
 #ifndef BONES_CORE_H
 #define BONES_CORE_H
 
-#include "raymath.h"
 #include "raylib.h"
+#include "raymath.h"
 #include "rlgl.h"
-#include "raygui.h"
 
 #include <stdbool.h>
 #include <stdio.h>
-#include <time.h>
-#include <math.h>
-#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
+#include <time.h>
 
+// ============================================================================
+// CONSTANTES
+// ============================================================================
 
 #define ATLAS_COLS 4
 #define ATLAS_ROWS 4
-
-
-#ifndef MAX_BONE_NAME_LENGTH
 #define MAX_BONE_NAME_LENGTH 32
-#endif
-#ifndef MAX_FILE_PATH_LENGTH
 #define MAX_FILE_PATH_LENGTH 512
-#endif
-
-typedef struct Person Person;
-
-typedef struct {
-    Vector3 position;
-    Vector3 forward;
-    Vector3 up;
-    Vector3 right;
-    float yaw;
-    float pitch;
-    float roll;
-    bool valid;
-} BoneOrientation;
-
-typedef struct {
-    char personId[16];
-    char boneName[MAX_BONE_NAME_LENGTH];
-    Vector3 position;
-    BoneOrientation orientation;
-    int atlasIndex;
-    float rotation;
-    bool mirrored;
-    float distance;
-    char texturePath[MAX_FILE_PATH_LENGTH];
-    float size;
-    bool valid;
-    bool visible;
-} BoneRenderData;
-
-typedef struct {
-    char boneName[MAX_BONE_NAME_LENGTH];
-    char texturePath[MAX_FILE_PATH_LENGTH];
-    float size;
-    bool visible;
-    bool valid;
-} BoneConfig;
-
-typedef struct {
-    Vector3 pos0;
-    Vector3 pos1;
-} BoneConnectionPositions;
-
-typedef struct {
-    Vector3 position;
-    Vector3 forward;
-    Vector3 up;
-    Vector3 right;
-    float yaw;
-    float pitch;
-    float roll;
-    bool valid;
-} HeadOrientation;
-
-typedef struct {
-    Vector3 position;
-    HeadOrientation orientation;
-    float size;
-    bool visible;
-    bool valid;
-    char texturePath[MAX_FILE_PATH_LENGTH];
-    char personId[16];
-} HeadRenderData;
-
-typedef struct {
-    bool valid;
-    Vector3 chestPosition;
-    Vector3 hipPosition;
-    Vector3 spineDirection;
-    Vector3 spineRight;
-    Vector3 spineForward;
-} VirtualSpine;
-
-typedef struct {
-    bool valid;
-    Vector3 position;
-    Vector3 forward;
-    Vector3 up;
-    Vector3 right;
-    float yaw, pitch, roll;
-} TorsoOrientation;
-
-typedef enum {
-    TORSO_CHEST = 0,
-    TORSO_HIP = 1
-} TorsoType;
-
-typedef struct {
-    bool valid;
-    bool visible;
-    Vector3 position;
-    TorsoOrientation orientation;
-    TorsoType type;
-    float size;
-    char texturePath[MAX_FILE_PATH_LENGTH];
-    char personId[16];
-    const Person* person;
-} TorsoRenderData;
-
-typedef struct {
-    Vector3 neck, lShoulder, rShoulder, lHip, rHip;
-    bool hasNeck, hasLShoulder, hasRShoulder, hasLHip, hasRHip;
-    int shoulderCount, hipCount;
-} CachedBones;
-
 #define MAX_BONES_PER_PERSON 32
 #define MAX_FRAMES 10000
 #define MAX_PERSONS 10
+#define MAX_TEXTURES 13
+#define MAX_RENDER_ITEMS 512
 
-#ifndef MAX_FILE_PATH_LENGTH
-#define MAX_BONE_NAME_LENGTH 32
-#define MAX_FILE_PATH_LENGTH 512
-#endif
+// Constantes de renderizado
+#define TORSO_BIAS 0.001f
+#define BONE_BIAS 0.0f
+#define HEAD_BIAS -0.001f
+#define INDEX_BIAS -0.00001f
+#define Z_FIGHTING_THRESHOLD 0.01f
+#define MIN_DISTANCE_THRESHOLD 0.001f
 
-#if MAX_BONE_NAME_LENGTH < 32
-#error "MAX_BONE_NAME_LENGTH debe ser al menos 32 bytes"
-#endif
+// Texture Sets y Animation System
+#define BONES_MAX_TEXTURE_VARIANTS 16
+#define BONES_MAX_TEXTURE_SETS 64
+#define BONES_MAX_ANIM_EVENTS 256
+#define BONES_MAX_ANIM_CLIPS 32
+#define BONES_AE_MAX_NAME 64
+#define BONES_AE_MAX_PATH 256
+
+// ============================================================================
+// ENUMERACIONES
+// ============================================================================
 
 typedef enum {
     BONES_SUCCESS = 0,
@@ -155,6 +59,22 @@ typedef enum {
     BONES_ERROR_BUFFER_OVERFLOW,
     BONES_ERROR_EMPTY_DATA
 } BonesError;
+
+typedef enum {
+    TORSO_CHEST = 0,
+    TORSO_HIP = 1
+} TorsoType;
+
+typedef enum {
+    ANIM_EVENT_TEXTURE,
+    ANIM_EVENT_SOUND,
+    ANIM_EVENT_PARTICLE,
+    ANIM_EVENT_CUSTOM
+} AnimEventType;
+
+// ============================================================================
+// ESTRUCTURAS BÁSICAS
+// ============================================================================
 
 typedef struct {
     Vector3 position;
@@ -184,6 +104,7 @@ typedef struct {
     Person persons[MAX_PERSONS];
     int personCount;
     bool valid;
+    bool isOriginalKeyframe;  
 } AnimationFrame;
 
 typedef struct {
@@ -195,6 +116,118 @@ typedef struct {
     char filePath[256];
 } BonesAnimation;
 
+// ============================================================================
+// ORIENTACIONES Y CONFIGURACIONES
+// ============================================================================
+
+typedef struct {
+    Vector3 position;
+    Vector3 forward;
+    Vector3 up;
+    Vector3 right;
+    float yaw;
+    float pitch;
+    float roll;
+    bool valid;
+} BoneOrientation;
+
+typedef struct {
+    Vector3 position;
+    Vector3 forward;
+    Vector3 up;
+    Vector3 right;
+    float yaw;
+    float pitch;
+    float roll;
+    bool valid;
+} HeadOrientation;
+
+typedef struct {
+    bool valid;
+    Vector3 position;
+    Vector3 forward;
+    Vector3 up;
+    Vector3 right;
+    float yaw, pitch, roll;
+} TorsoOrientation;
+
+typedef struct {
+    bool valid;
+    Vector3 chestPosition;
+    Vector3 hipPosition;
+    Vector3 spineDirection;
+    Vector3 spineRight;
+    Vector3 spineForward;
+} VirtualSpine;
+
+typedef struct {
+    Vector3 neck, lShoulder, rShoulder, lHip, rHip;
+    bool hasNeck, hasLShoulder, hasRShoulder, hasLHip, hasRHip;
+    int shoulderCount, hipCount;
+} CachedBones;
+
+typedef struct {
+    Vector3 pos0;
+    Vector3 pos1;
+} BoneConnectionPositions;
+
+// ============================================================================
+// RENDERIZADO
+// ============================================================================
+
+typedef struct {
+    char personId[16];
+    char boneName[MAX_BONE_NAME_LENGTH];
+    Vector3 position;
+    BoneOrientation orientation;
+    int atlasIndex;
+    float rotation;
+    bool mirrored;
+    float distance;
+    char texturePath[MAX_FILE_PATH_LENGTH];
+    float size;
+    bool valid;
+    bool visible;
+} BoneRenderData;
+
+typedef struct {
+    Vector3 position;
+    HeadOrientation orientation;
+    float size;
+    bool visible;
+    bool valid;
+    char texturePath[MAX_FILE_PATH_LENGTH];
+    char personId[16];
+} HeadRenderData;
+
+typedef struct {
+    bool valid;
+    bool visible;
+    Vector3 position;
+    TorsoOrientation orientation;
+    TorsoType type;
+    float size;
+    char texturePath[MAX_FILE_PATH_LENGTH];
+    char personId[16];
+    const Person* person;
+} TorsoRenderData;
+
+typedef struct {
+    int type;
+    int index;
+    float distance;
+    float depthBias;
+    bool hasZFighting;
+} RenderItem;
+
+typedef struct {
+    Texture2D textures[MAX_TEXTURES];
+    char texturePaths[MAX_TEXTURES][MAX_FILE_PATH_LENGTH];
+    int textureCount;
+    int physCols, physRows;
+    Camera camera;
+} BonesRenderer;
+
 typedef struct {
     float defaultBoneSize;
     bool drawDebugSpheres;
@@ -203,6 +236,10 @@ typedef struct {
     float debugSphereRadius;
     bool showInvalidBones;
 } BonesRenderConfig;
+
+// ============================================================================
+// SISTEMA DE TEXTURAS
+// ============================================================================
 
 typedef struct {
     char boneName[MAX_BONE_NAME_LENGTH];
@@ -219,46 +256,17 @@ typedef struct {
     time_t lastModified;
 } SimpleTextureSystem;
 
-static const struct {
-    const char* boneName;
-    const char* connectedBone;
-    float projectionFactor;
-} MIDPOINT_CONNECTIONS[] = {
-    {"Neck", "HEAD_CALCULATED", 1.0f},
-    {"LShoulder", "LElbow", 1.0f}, {"RShoulder", "RElbow", 1.0f},
-    {"LElbow", "LWrist", 1.0f}, {"RElbow", "RWrist", 1.0f},
-    {"LWrist", "LElbow", 1.3f}, {"RWrist", "RElbow", 1.3f},
-    {"LHip", "LKnee", 1.0f}, {"RHip", "RKnee", 1.0f},
-    {"LKnee", "LAnkle", 1.0f}, {"RKnee", "RAnkle", 1.0f},
-    {"LAnkle", "FOOT_FORWARD", 1.0f}, {"RAnkle", "FOOT_FORWARD", 1.0f},
-    {"", "", 0.0f}
-};
+typedef struct {
+    char boneName[MAX_BONE_NAME_LENGTH];
+    char texturePath[MAX_FILE_PATH_LENGTH];
+    float size;
+    bool visible;
+    bool valid;
+} BoneConfig;
 
-#ifndef BONES_MAX_TEXTURE_VARIANTS
-#define BONES_MAX_TEXTURE_VARIANTS 16
-#endif
-
-#ifndef BONES_MAX_TEXTURE_SETS
-#define BONES_MAX_TEXTURE_SETS 64
-#endif
-
-#ifndef BONES_MAX_ANIM_EVENTS
-#define BONES_MAX_ANIM_EVENTS 256
-#endif
-
-#ifndef BONES_MAX_ANIM_CLIPS
-#define BONES_MAX_ANIM_CLIPS 32
-#endif
-
-#ifndef BONES_AE_MAX_NAME
-#define BONES_AE_MAX_NAME 64
-#endif
-
-#ifndef BONES_AE_MAX_PATH
-#define BONES_AE_MAX_PATH 256
-#endif
-
-/* ===== TEXTURE SETS ===== */
+// ============================================================================
+// TEXTURE SETS
+// ============================================================================
 
 typedef struct {
     char variantName[BONES_AE_MAX_NAME];
@@ -280,34 +288,27 @@ typedef struct {
     bool loaded;
 } TextureSetCollection;
 
-/* ===== ANIMATION EVENTS ===== */
-
-typedef enum {
-    ANIM_EVENT_TEXTURE,      /* Cambiar textura de un bone */
-    ANIM_EVENT_SOUND,        /* Trigger de sonido */
-    ANIM_EVENT_PARTICLE,     /* Spawn de particula */
-    ANIM_EVENT_CUSTOM        /* Usuario define */
-} AnimEventType;
+// ============================================================================
+// ANIMATION SYSTEM
+// ============================================================================
 
 typedef struct {
-    float time;                          /* Tiempo en segundos desde inicio */
+    float time;
     AnimEventType type;
-    char boneName[BONES_AE_MAX_NAME];    /* "Head", "LWrist" */
-    char personId[BONES_AE_MAX_NAME];    /* "person_0" (opcional) */
-    char variantName[BONES_AE_MAX_NAME]; /* "blink", "talk_open" */
-    char stringParam[BONES_AE_MAX_NAME]; /* Parametro extra (sound path, etc) */
-    bool processed;                      /* Flag interno para evitar re-trigger */
+    char boneName[BONES_AE_MAX_NAME];
+    char personId[BONES_AE_MAX_NAME];
+    char variantName[BONES_AE_MAX_NAME];
+    char stringParam[BONES_AE_MAX_NAME];
+    bool processed;
     bool valid;
 } AnimationEvent;
 
-/* ===== ANIMATION CLIP METADATA ===== */
-
 typedef struct {
-    char name[BONES_AE_MAX_NAME];        /* "idle", "walk", "attack" */
-    float fps;                           /* Frames por segundo */
-    int startFrame;                      /* Frame inicial en el JSON */
-    int endFrame;                        /* Frame final */
-    bool loop;                           /* Loop automatico */
+    char name[BONES_AE_MAX_NAME];
+    float fps;
+    int startFrame;
+    int endFrame;
+    bool loop;
     
     AnimationEvent events[BONES_MAX_ANIM_EVENTS];
     int eventCount;
@@ -315,176 +316,24 @@ typedef struct {
     bool valid;
 } AnimationClipMetadata;
 
-/* ===== ANIMATION CONTROLLER ===== */
-
 typedef struct {
-    TextureSetCollection* textureSets;   /* Puntero a texture sets */
+    TextureSetCollection* textureSets;
     
     AnimationClipMetadata clips[BONES_MAX_ANIM_CLIPS];
     int clipCount;
     int currentClipIndex;
     
-    float localTime;                     /* Tiempo dentro del clip actual */
+    float localTime;
     bool playing;
     
-    /* Para integracion con tu BonesAnimation existente */
-    void* bonesAnimation;                /* Puntero a tu BonesAnimation* */
-    int currentFrameInJSON;              /* Frame actual en el JSON */
+    void* bonesAnimation;
+    int currentFrameInJSON;
     
     bool valid;
 } AnimationController;
 
-void CollectHeadsForRendering(const BonesAnimation* animation, HeadRenderData** heads,
-    int* headCount, int* headCapacity, BoneConfig* boneConfigs, int boneConfigCount);
-
-void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData** torsos,
-    int* torsoCount, int* torsoCapacity, BoneConfig* boneConfigs, int boneConfigCount);
-
-// Bone connections and orientation functions
-bool GetBoneConnectionsWithPriority(const char* boneName, char connections[3][MAX_BONE_NAME_LENGTH], float priorities[3]);
-BoneOrientation CalculateBoneOrientation(const char* boneName, const Person* person, Vector3 bonePosition);
-Vector3 GetBonePositionByName(const Person* person, const char* boneName);
-BoneConnectionPositions GetBoneConnectionPositionsEx(const BoneRenderData* boneData, const Person* person);
-
-// Utility functions
-Vector3 SafeNormalize(Vector3 v);
-bool IsWristBone(const char* boneName);
-
-// Texture and rendering functions
-Rectangle SrcFromLogical(Texture2D tex, int logicalCol, int logicalRow, int physCols, int physRows,
-    bool mirrored, bool* outMirrored);
-
-void DrawBonetileCustom(Texture2D tex, Camera camera, Rectangle src, Vector3 pos, Vector2 size,
-    float rotationDeg, bool mirrored, const char* boneName);
-
-void DrawBonetileCustomWithRoll(Texture2D tex, Camera camera, Rectangle src, Vector3 pos, Vector2 size,
-    float rotationDeg, bool mirrored, bool neighborValid, Vector3 neighborPos, const BoneRenderData* boneData, const Person* person);
-
-// Bone render data calculation
-BoneRenderData* FindRenderBoneByName(BoneRenderData* bones, int count, const char* name);
-
-void CalculateLimbBoneRenderData(const BoneRenderData* boneData, const Person* person, Camera camera,
-    int* outChosenIndex, float* outRotation, bool* outMirrored);
-
-void CalculateHandBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex,
-    float* outRotation, bool* outMirrored, const char* boneName);
-
-// Head functions
-Vector3 CalculateHeadPosition(const Person* person);
-HeadOrientation CalculateHeadOrientation(const Person* person);
-bool ShouldRenderHead(const Person* person);
-void CalculateHeadRenderData(const HeadRenderData* headData, Camera camera,
-    int* outChosenIndex, float* outRotation, bool* outMirrored);
-void DrawHeadBillboard(Texture2D texture, Camera camera, const HeadRenderData* headData, int physCols, int physRows);
-
-// Torso functions
-Vector3 CalculateChestPosition(const Person* person);
-Vector3 CalculateHipPosition(const Person* person);
-VirtualSpine CalculateVirtualSpine(const Person* person);
-TorsoOrientation CalculateChestOrientation(const Person* person);
-TorsoOrientation CalculateHipOrientation(const Person* person);
-bool ShouldRenderChest(const Person* person);
-bool ShouldRenderHip(const Person* person);
-void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
-    int* outChosenIndex, float* outRotation, bool* outMirrored);
-void DrawTorsoBillboard(Texture2D texture, Camera camera, const TorsoRenderData* torsoData, int physCols, int physRows);
-
-// Core animation functions
-BonesError BonesInit(BonesAnimation* animation, int maxFrames);
-void BonesFree(BonesAnimation* animation);
-BonesError BonesLoadFromJSON(BonesAnimation* animation, const char* jsonFilePath);
-BonesError BonesLoadFromString(BonesAnimation* animation, const char* jsonString);
-BonesError BonesSetFrame(BonesAnimation* animation, int frameNumber);
-int BonesGetCurrentFrame(const BonesAnimation* animation);
-int BonesGetFrameCount(const BonesAnimation* animation);
-bool BonesIsValidFrame(const BonesAnimation* animation, int frameNumber);
-
-// Utility functions
-bool BonesIsPositionValid(Vector3 position);
-BonesRenderConfig BonesGetDefaultRenderConfig(void);
-void BonesSetRenderConfig(const BonesRenderConfig* config);
-
-// Error handling
-const char* BonesGetErrorString(BonesError error);
-void BonesLogError(BonesError error, const char* context);
-
-// Texture system functions
-void CleanupTextureSystem(SimpleTextureSystem* textureSystem, BoneConfig** boneConfigs, int* boneConfigCount);
-time_t GetFileModificationTime(const char* filename);
-bool LoadSimpleTextureConfig(SimpleTextureSystem* system, const char* filename);
-void LoadBoneConfigurations(SimpleTextureSystem* textureSystem, BoneConfig** boneConfigs, int* boneConfigCount);
-
-// Bone configuration functions
-BoneConfig* FindBoneConfig(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName);
-const char* GetTexturePathForBone(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName);
-bool IsBoneVisible(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName);
-float GetBoneSize(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName);
-
-// Rendering functions
-bool ResizeRenderBonesArray(BoneRenderData** renderBones, int* renderBonesCapacity, int newCapacity);
-int CompareBonesByDistance(const void* a, const void* b);
-void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, BoneRenderData** renderBones,
-    int* renderBonesCount, int* renderBonesCapacity, BoneConfig* boneConfigs, int boneConfigCount);
-
-void EnrichBoneRenderDataWithOrientation(BoneRenderData* renderBone, const Person* person);
-
-/* ===== TEXTURE SETS API ===== */
-
-TextureSetCollection* BonesTextureSets_Create(void);
-void BonesTextureSets_Free(TextureSetCollection* collection);
-bool BonesTextureSets_LoadFromFile(TextureSetCollection* collection, const char* filePath);
-const char* BonesTextureSets_GetActiveTexture(const TextureSetCollection* collection, const char* boneName);
-bool BonesTextureSets_SetVariant(TextureSetCollection* collection, const char* boneName, const char* variantName);
-const char* BonesTextureSets_GetActiveVariantName(const TextureSetCollection* collection, const char* boneName);
-void BonesTextureSets_ResetAll(TextureSetCollection* collection);
-BoneTextureSet* BonesTextureSets_FindSet(TextureSetCollection* collection, const char* boneName);
-
-/* ===== ANIMATION CONTROLLER API ===== */
-AnimationController* AnimController_Create(void* bonesAnimation, TextureSetCollection* textureSets);
-bool AnimController_LoadClipMetadata(AnimationController* controller, const char* jsonPath);
-bool AnimController_PlayClip(AnimationController* controller, const char* clipName);
-void AnimController_Pause(AnimationController* controller);
-void AnimController_Resume(AnimationController* controller);
-void AnimController_Update(AnimationController* controller, float deltaTime);
-int AnimController_GetCurrentFrame(const AnimationController* controller);
-void AnimController_Free(AnimationController* controller);
-const Person* FindPersonByBoneName(const AnimationFrame* frame, const char* boneName);
-
-
-#define MAX_TEXTURES 13
-#define MAX_RENDER_ITEMS 512
-
-#define MAX_BONE_NAME_LENGTH 32
-
-// Constantes de renderizado
-static const float TORSO_BIAS = 0.001f;
-static const float BONE_BIAS = 0.0f;
-static const float HEAD_BIAS = -0.001f;
-static const float INDEX_BIAS = -0.00001f;
-static const float Z_FIGHTING_THRESHOLD = 0.01f;
-static const float MIN_DISTANCE_THRESHOLD = 0.001f;
-
 // ============================================================================
-// ESTRUCTURAS DE RENDERIZADO
-// ============================================================================
-
-typedef struct {
-    int type;
-    int index;
-    float distance;
-    float depthBias;
-    bool hasZFighting;
-} RenderItem;
-
-typedef struct {
-    Texture2D textures[MAX_TEXTURES];
-    char texturePaths[MAX_TEXTURES][MAX_FILE_PATH_LENGTH];
-    int textureCount;
-    int physCols, physRows;
-    Camera camera;
-} BonesRenderer;
-// ============================================================================
-// ESTRUCTURA DEL PERSONAJE ANIMADO
+// PERSONAJE ANIMADO
 // ============================================================================
 
 typedef struct AnimatedCharacter {
@@ -524,7 +373,194 @@ typedef struct AnimatedCharacter {
 } AnimatedCharacter;
 
 // ============================================================================
-// FUNCIONES PÚBLICAS DEL PERSONAJE ANIMADO
+// TABLAS DE CONEXIONES (CONSTANTES GLOBALES)
+// ============================================================================
+
+static const struct {
+    const char* boneName;
+    const char* connectedBone;
+    float projectionFactor;
+} MIDPOINT_CONNECTIONS[] = {
+    {"Neck", "HEAD_CALCULATED", 1.0f},
+    {"LShoulder", "LElbow", 1.0f}, {"RShoulder", "RElbow", 1.0f},
+    {"LElbow", "LWrist", 1.0f}, {"RElbow", "RWrist", 1.0f},
+    {"LWrist", "LElbow", 1.3f}, {"RWrist", "RElbow", 1.3f},
+    {"LHip", "LKnee", 1.0f}, {"RHip", "RKnee", 1.0f},
+    {"LKnee", "LAnkle", 1.0f}, {"RKnee", "RAnkle", 1.0f},
+    {"LAnkle", "FOOT_FORWARD", 1.0f}, {"RAnkle", "FOOT_FORWARD", 1.0f},
+    {"", "", 0.0f}
+};
+
+// ============================================================================
+// FUNCIONES CORE - ANIMACIÓN
+// ============================================================================
+
+BonesError BonesInit(BonesAnimation* animation, int maxFrames);
+void BonesFree(BonesAnimation* animation);
+BonesError BonesLoadFromJSON(BonesAnimation* animation, const char* jsonFilePath);
+BonesError BonesLoadFromString(BonesAnimation* animation, const char* jsonString);
+BonesError BonesSetFrame(BonesAnimation* animation, int frameNumber);
+int BonesGetCurrentFrame(const BonesAnimation* animation);
+int BonesGetFrameCount(const BonesAnimation* animation);
+bool BonesIsValidFrame(const BonesAnimation* animation, int frameNumber);
+bool BonesIsPositionValid(Vector3 position);
+const char* BonesGetErrorString(BonesError error);
+
+// ============================================================================
+// FUNCIONES DE EDICIÓN DE ANIMACIONES
+// ============================================================================
+
+bool BonesDeleteFrame(BonesAnimation* animation, int frameIndex);
+bool BonesDuplicateFrame(BonesAnimation* animation, int frameIndex);
+bool BonesInterpolateFrames(BonesAnimation* animation, int frameA, int frameB, int framesToAdd);
+bool BonesExportToJSON(BonesAnimation* animation, const char* filepath, int startFrame, int endFrame);
+bool BonesInsertEmptyFrame(BonesAnimation* animation, int position);
+bool BonesCopyFrame(BonesAnimation* animation, int sourceFrame, int targetFrame);
+bool BonesCreateMissingFrames(BonesAnimation* animation);
+
+// ============================================================================
+// FUNCIONES DE CONFIGURACIÓN
+// ============================================================================
+
+BonesRenderConfig BonesGetDefaultRenderConfig(void);
+void BonesSetRenderConfig(const BonesRenderConfig* config);
+void SetAnimationTransitionDuration(float duration);
+
+// ============================================================================
+// FUNCIONES DE CÁLCULO DE POSICIONES
+// ============================================================================
+
+Vector3 GetBonePositionByName(const Person* person, const char* boneName);
+Vector3 CalculateHeadPosition(const Person* person);
+Vector3 CalculateChestPosition(const Person* person);
+Vector3 CalculateHipPosition(const Person* person);
+VirtualSpine CalculateVirtualSpine(const Person* person);
+
+// ============================================================================
+// FUNCIONES DE ORIENTACIÓN
+// ============================================================================
+
+HeadOrientation CalculateHeadOrientation(const Person* person);
+TorsoOrientation CalculateChestOrientation(const Person* person);
+TorsoOrientation CalculateHipOrientation(const Person* person);
+BoneOrientation CalculateBoneOrientation(const char* boneName, const Person* person, Vector3 bonePosition);
+
+// ============================================================================
+// FUNCIONES DE RENDERIZADO - CÁLCULOS
+// ============================================================================
+
+bool ShouldRenderHead(const Person* person);
+bool ShouldRenderChest(const Person* person);
+bool ShouldRenderHip(const Person* person);
+
+void CalculateHeadRenderData(const HeadRenderData* headData, Camera camera,
+    int* outChosenIndex, float* outRotation, bool* outMirrored);
+void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
+    int* outChosenIndex, float* outRotation, bool* outMirrored);
+void CalculateLimbBoneRenderData(const BoneRenderData* boneData, const Person* person, Camera camera,
+    int* outChosenIndex, float* outRotation, bool* outMirrored);
+void CalculateHandBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex,
+    float* outRotation, bool* outMirrored, const char* boneName);
+
+// ============================================================================
+// FUNCIONES DE RECOLECCIÓN DE DATOS
+// ============================================================================
+
+void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, BoneRenderData** renderBones,
+    int* renderBonesCount, int* renderBonesCapacity, BoneConfig* boneConfigs, int boneConfigCount);
+void CollectHeadsForRendering(const BonesAnimation* animation, HeadRenderData** heads,
+    int* headCount, int* headCapacity, BoneConfig* boneConfigs, int boneConfigCount);
+void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData** torsos,
+    int* torsoCount, int* torsoCapacity, BoneConfig* boneConfigs, int boneConfigCount);
+
+void EnrichBoneRenderDataWithOrientation(BoneRenderData* renderBone, const Person* person);
+bool ResizeRenderBonesArray(BoneRenderData** renderBones, int* renderBonesCapacity, int newCapacity);
+
+// ============================================================================
+// FUNCIONES AUXILIARES
+// ============================================================================
+
+Vector3 SafeNormalize(Vector3 v);
+bool IsWristBone(const char* boneName);
+bool GetBoneConnectionsWithPriority(const char* boneName, char connections[3][32], float priorities[3]);
+BoneConnectionPositions GetBoneConnectionPositionsEx(const BoneRenderData* boneData, const Person* person);
+BoneRenderData* FindRenderBoneByName(BoneRenderData* bones, int count, const char* name);
+const Person* FindPersonByBoneName(const AnimationFrame* frame, const char* boneName);
+
+// ============================================================================
+// SISTEMA DE TEXTURAS
+// ============================================================================
+
+void CleanupTextureSystem(SimpleTextureSystem* textureSystem, BoneConfig** boneConfigs, int* boneConfigCount);
+bool LoadSimpleTextureConfig(SimpleTextureSystem* system, const char* filename);
+void LoadBoneConfigurations(SimpleTextureSystem* textureSystem, BoneConfig** boneConfigs, int* boneConfigCount);
+
+BoneConfig* FindBoneConfig(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName);
+const char* GetTexturePathForBone(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName);
+bool IsBoneVisible(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName);
+float GetBoneSize(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName);
+
+// ============================================================================
+// TEXTURE SETS API
+// ============================================================================
+
+TextureSetCollection* BonesTextureSets_Create(void);
+void BonesTextureSets_Free(TextureSetCollection* collection);
+bool BonesTextureSets_LoadFromFile(TextureSetCollection* collection, const char* filePath);
+const char* BonesTextureSets_GetActiveTexture(const TextureSetCollection* collection, const char* boneName);
+bool BonesTextureSets_SetVariant(TextureSetCollection* collection, const char* boneName, const char* variantName);
+const char* BonesTextureSets_GetActiveVariantName(const TextureSetCollection* collection, const char* boneName);
+void BonesTextureSets_ResetAll(TextureSetCollection* collection);
+BoneTextureSet* BonesTextureSets_FindSet(TextureSetCollection* collection, const char* boneName);
+
+// ============================================================================
+// ANIMATION CONTROLLER API
+// ============================================================================
+
+AnimationController* AnimController_Create(void* bonesAnimation, TextureSetCollection* textureSets);
+void AnimController_Free(AnimationController* controller);
+bool AnimController_LoadClipMetadata(AnimationController* controller, const char* jsonPath);
+bool AnimController_PlayClip(AnimationController* controller, const char* clipName);
+void AnimController_Pause(AnimationController* controller);
+void AnimController_Resume(AnimationController* controller);
+void AnimController_Update(AnimationController* controller, float deltaTime);
+int AnimController_GetCurrentFrame(const AnimationController* controller);
+
+// ============================================================================
+// RENDERER API
+// ============================================================================
+
+BonesRenderer* BonesRenderer_Create(void);
+void BonesRenderer_Free(BonesRenderer* renderer);
+bool BonesRenderer_Init(BonesRenderer* renderer);
+int BonesRenderer_LoadTexture(BonesRenderer* renderer, const char* path);
+void BonesRenderer_SetAtlasDimensions(BonesRenderer* renderer, int cols, int rows);
+void BonesRenderer_RenderFrame(BonesRenderer* renderer, 
+                              BoneRenderData* bones, int boneCount,
+                              HeadRenderData* heads, int headCount, 
+                              TorsoRenderData* torsos, int torsoCount,
+                              Vector3 autoCenter, bool autoCenterCalculated);
+void BonesRenderer_DrawGrid(BonesRenderer* renderer);
+void BonesRenderer_DrawAutoCenter(BonesRenderer* renderer, Vector3 autoCenter);
+
+// ============================================================================
+// FUNCIONES DE DIBUJADO
+// ============================================================================
+
+Rectangle SrcFromLogical(Texture2D tex, int logicalCol, int logicalRow, int physCols, int physRows,
+    bool mirrored, bool* outMirrored);
+void DrawBonetileCustom(Texture2D tex, Camera camera, Rectangle src, Vector3 pos, Vector2 size,
+    float rotationDeg, bool mirrored, const char* boneName);
+void DrawBonetileCustomWithRoll(Texture2D tex, Camera camera, Rectangle src, Vector3 pos, Vector2 size,
+    float rotationDeg, bool mirrored, bool neighborValid, Vector3 neighborPos, 
+    const BoneRenderData* boneData, const Person* person);
+void DrawHeadBillboard(Texture2D texture, Camera camera, const HeadRenderData* headData, 
+    int physCols, int physRows);
+void DrawTorsoBillboard(Texture2D texture, Camera camera, const TorsoRenderData* torsoData, 
+    int physCols, int physRows);
+
+// ============================================================================
+// PERSONAJE ANIMADO API
 // ============================================================================
 
 AnimatedCharacter* CreateAnimatedCharacter(const char* textureConfigPath, const char* textureSetsPath);
@@ -536,164 +572,4 @@ void SetCharacterFrame(AnimatedCharacter* character, int frame);
 void SetCharacterAutoPlay(AnimatedCharacter* character, bool autoPlay);
 void SetCharacterBillboards(AnimatedCharacter* character, bool heads, bool torsos);
 
-// ============================================================================
-// FUNCIONES PÚBLICAS DEL RENDERIZADOR
-// ============================================================================
-
-// Inicialización y limpieza
-BonesRenderer* BonesRenderer_Create(void);
-void BonesRenderer_Free(BonesRenderer* renderer);
-bool BonesRenderer_Init(BonesRenderer* renderer);
-
-// Gestión de texturas
-int BonesRenderer_LoadTexture(BonesRenderer* renderer, const char* path);
-void BonesRenderer_SetAtlasDimensions(BonesRenderer* renderer, int cols, int rows);
-
-// Renderizado principal
-void BonesRenderer_RenderFrame(BonesRenderer* renderer, 
-                              BoneRenderData* bones, int boneCount,
-                              HeadRenderData* heads, int headCount, 
-                              TorsoRenderData* torsos, int torsoCount,
-                              Vector3 autoCenter, bool autoCenterCalculated);
-
-// Utilidades de renderizado
-void BonesRenderer_DrawGrid(BonesRenderer* renderer);
-void BonesRenderer_DrawAutoCenter(BonesRenderer* renderer, Vector3 autoCenter);
-
-
-// ============================================================================
-// FUNCIONES DE MANIPULACIÓN DE ANIMACIONES (Añadir al final de bones_core.h)
-// ============================================================================
-
-// Eliminar un frame de la animación
-bool BonesDeleteFrame(BonesAnimation* animation, int frameIndex);
-
-// Duplicar un frame
-bool BonesDuplicateFrame(BonesAnimation* animation, int frameIndex);
-
-// Interpolar frames entre frameA y frameB
-bool BonesInterpolateFrames(BonesAnimation* animation, int frameA, int frameB, int framesToAdd);
-
-// Exportar animación a JSON
-bool BonesExportToJSON(BonesAnimation* animation, const char* filepath, int startFrame, int endFrame);
-
-// Insertar un frame vacío
-bool BonesInsertEmptyFrame(BonesAnimation* animation, int position);
-
-// Copiar un frame a otro
-bool BonesCopyFrame(BonesAnimation* animation, int sourceFrame, int targetFrame);
-
-// Añadir al final de bones_core.h, antes del #endif
-
-// ============================================================================
-// SISTEMA DE KEYFRAMES
-// ============================================================================
-
-#define MAX_KEYFRAMES 1000
-#define MAX_TIMELINE_TRACKS 10
-
-typedef enum {
-    INTERP_LINEAR = 0,
-    INTERP_EASE_IN,
-    INTERP_EASE_OUT,
-    INTERP_EASE_IN_OUT,
-    INTERP_CUBIC,
-    INTERP_HOLD
-} InterpolationType;
-
-typedef struct {
-    int frameNumber;
-    AnimationFrame data;
-    InterpolationType interpolation;
-    bool isKeyframe;
-    bool locked;
-    char note[128];
-} Keyframe;
-
-typedef struct {
-    Keyframe* keyframes;
-    int keyframeCount;
-    int keyframeCapacity;
-    
-    int selectedKeyframe;
-    int rangeStart;
-    int rangeEnd;
-    
-    bool isDirty;
-    char name[64];
-} TimelineTrack;
-
-typedef struct {
-    TimelineTrack* tracks;
-    int trackCount;
-    int activeTrack;
-    
-    int currentFrame;
-    int totalFrames;
-    float fps;
-    bool isPlaying;
-    bool loop;
-    
-    BonesAnimation* targetAnimation;
-    
-    char projectPath[512];
-    bool hasUnsavedChanges;
-} KeyframeTimeline;
-
-// Crear y destruir timeline
-KeyframeTimeline* Timeline_Create(int maxFrames, float fps);
-void Timeline_Free(KeyframeTimeline* timeline);
-
-// Gestión de keyframes
-bool Timeline_AddKeyframe(KeyframeTimeline* timeline, int frame);
-bool Timeline_DeleteKeyframe(KeyframeTimeline* timeline, int frame);
-bool Timeline_MoveKeyframe(KeyframeTimeline* timeline, int fromFrame, int toFrame);
-bool Timeline_DuplicateKeyframe(KeyframeTimeline* timeline, int frame);
-bool Timeline_SetKeyframeInterpolation(KeyframeTimeline* timeline, int frame, InterpolationType type);
-
-// Navegación
-void Timeline_GoToFrame(KeyframeTimeline* timeline, int frame);
-void Timeline_GoToNextKeyframe(KeyframeTimeline* timeline);
-void Timeline_GoToPreviousKeyframe(KeyframeTimeline* timeline);
-int Timeline_GetNearestKeyframe(KeyframeTimeline* timeline, int frame);
-
-// Interpolación
-bool Timeline_InterpolateBetweenKeyframes(KeyframeTimeline* timeline, int keyframeA, int keyframeB);
-bool Timeline_InterpolateRange(KeyframeTimeline* timeline, int startFrame, int endFrame, int steps);
-void Timeline_BakeAnimation(KeyframeTimeline* timeline);
-
-// Selección y rangos
-void Timeline_SetSelection(KeyframeTimeline* timeline, int startFrame, int endFrame);
-void Timeline_ClearSelection(KeyframeTimeline* timeline);
-bool Timeline_IsFrameInSelection(KeyframeTimeline* timeline, int frame);
-
-// Operaciones en rangos
-bool Timeline_DeleteRange(KeyframeTimeline* timeline, int startFrame, int endFrame);
-bool Timeline_DuplicateRange(KeyframeTimeline* timeline, int startFrame, int endFrame, int targetFrame);
-bool Timeline_ReverseRange(KeyframeTimeline* timeline, int startFrame, int endFrame);
-bool Timeline_ScaleRange(KeyframeTimeline* timeline, int startFrame, int endFrame, float scaleFactor);
-
-// Importar/Exportar
-bool Timeline_ImportFromAnimation(KeyframeTimeline* timeline, BonesAnimation* animation);
-bool Timeline_ExportToAnimation(KeyframeTimeline* timeline, BonesAnimation* outAnimation);
-bool Timeline_LoadProject(KeyframeTimeline* timeline, const char* filepath);
-bool Timeline_SaveProject(KeyframeTimeline* timeline, const char* filepath);
-
-// Tracks (capas de animación)
-int Timeline_AddTrack(KeyframeTimeline* timeline, const char* name);
-bool Timeline_DeleteTrack(KeyframeTimeline* timeline, int trackIndex);
-bool Timeline_SetActiveTrack(KeyframeTimeline* timeline, int trackIndex);
-bool Timeline_MergeTrack(KeyframeTimeline* timeline, int srcTrack, int dstTrack);
-
-// Utilidades
-bool Timeline_IsKeyframe(KeyframeTimeline* timeline, int frame);
-Keyframe* Timeline_GetKeyframe(KeyframeTimeline* timeline, int frame);
-void Timeline_UpdateFrame(KeyframeTimeline* timeline, float deltaTime);
-int Timeline_GetKeyframeCount(KeyframeTimeline* timeline);
-
-// Información
-const char* Timeline_GetInterpolationName(InterpolationType type);
-void Timeline_GetStatistics(KeyframeTimeline* timeline, int* outKeyframes, int* outTotalFrames, bool* outHasChanges);
-
-#endif
-
+#endif // BONES_CORE_H
