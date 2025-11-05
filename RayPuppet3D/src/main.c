@@ -44,7 +44,6 @@ typedef struct {
     
     float playbackSpeed;
 
-    // Sistema de selección de huesos
     bool hasBoneSelected;
     char selectedBoneName[64];
     int selectedBonePersonIndex;
@@ -58,7 +57,7 @@ typedef struct {
     bool showBoneNames;
     bool showDebugSpheres;
     bool showConnections;
-    bool showOrientation;  // Toggle para mostrar ejes de orientación
+    bool showOrientation;
 } DebugOptions;
 
 typedef struct {
@@ -77,9 +76,6 @@ typedef struct {
     int screenHeight;
 } AppState;
 
-// ============================================================================
-// FUNCIONES DE SELECCIÓN Y MOVIMIENTO DE HUESOS
-// ============================================================================
 static int GetCurrentFrameNumber(AppState* app) {
     if (app->character->currentFrame < 0 || 
         app->character->currentFrame >= app->character->animation.frameCount) {
@@ -106,7 +102,7 @@ static int FindMaxFrameNumber(AppState* app) {
     }
     return maxFrame;
 }
-// Encontrar el keyframe anterior más cercano
+
 static int FindPreviousKeyframe(AppState* app, int fromFrame) {
     for (int i = fromFrame - 1; i >= 0; i--) {
         int frameIndex = FindFrameIndexByNumber(app, i);
@@ -117,7 +113,6 @@ static int FindPreviousKeyframe(AppState* app, int fromFrame) {
     return -1;
 }
 
-// Encontrar el siguiente keyframe más cercano
 static int FindNextKeyframe(AppState* app, int fromFrame) {
     int maxFrameNumber = FindMaxFrameNumber(app);
     for (int i = fromFrame + 1; i <= maxFrameNumber; i++) {
@@ -129,7 +124,6 @@ static int FindNextKeyframe(AppState* app, int fromFrame) {
     return -1;
 }
 
-// Recalcular frames interpolados entre dos keyframes
 static void RecalculateInterpolatedFrames(AppState* app, int keyframeA, int keyframeB) {
     if (keyframeA < 0 || keyframeB < 0 || keyframeB <= keyframeA) return;
     
@@ -141,18 +135,15 @@ static void RecalculateInterpolatedFrames(AppState* app, int keyframeA, int keyf
     AnimationFrame* frameA = &app->character->animation.frames[indexA];
     AnimationFrame* frameB = &app->character->animation.frames[indexB];
     
-    // Recalcular cada frame interpolado entre A y B
     for (int frameNum = keyframeA + 1; frameNum < keyframeB; frameNum++) {
         int interpIndex = FindFrameIndexByNumber(app, frameNum);
         if (interpIndex == -1) continue;
         
         AnimationFrame* interpFrame = &app->character->animation.frames[interpIndex];
         
-        // Solo recalcular si es un frame interpolado
         if (!interpFrame->isOriginalKeyframe) {
             float t = (float)(frameNum - keyframeA) / (float)(keyframeB - keyframeA);
             
-            // Interpolar cada persona
             for (int p = 0; p < frameA->personCount && p < frameB->personCount; p++) {
                 Person* personA = &frameA->persons[p];
                 Person* personB = &frameB->persons[p];
@@ -160,22 +151,18 @@ static void RecalculateInterpolatedFrames(AppState* app, int keyframeA, int keyf
                 
                 if (!personA->active || !personB->active) continue;
                 
-                // Interpolar cada hueso
                 for (int bA = 0; bA < personA->boneCount; bA++) {
                     Bone* boneA = &personA->bones[bA];
                     if (!boneA->position.valid) continue;
                     
-                    // Buscar el hueso correspondiente en frameB
                     for (int bB = 0; bB < personB->boneCount; bB++) {
                         Bone* boneB = &personB->bones[bB];
                         if (strcmp(boneA->name, boneB->name) == 0 && boneB->position.valid) {
                             
-                            // Buscar el hueso en el frame interpolado
                             for (int bI = 0; bI < interpPerson->boneCount; bI++) {
                                 Bone* boneInterp = &interpPerson->bones[bI];
                                 if (strcmp(boneInterp->name, boneA->name) == 0) {
                                     
-                                    // Interpolar posición
                                     boneInterp->position.position = Vector3Lerp(
                                         boneA->position.position,
                                         boneB->position.position,
@@ -198,35 +185,26 @@ static void RecalculateInterpolatedFrames(AppState* app, int keyframeA, int keyf
     }
 }
 
-// Recalcular todas las interpolaciones afectadas por el movimiento de un keyframe
 static void RecalculateAffectedInterpolations(AppState* app, int movedKeyframe) {
-    // Buscar el keyframe anterior
     int prevKeyframe = FindPreviousKeyframe(app, movedKeyframe);
-    // Buscar el siguiente keyframe
     int nextKeyframe = FindNextKeyframe(app, movedKeyframe);
     
-    // Recalcular interpolaciones entre previo y actual
     if (prevKeyframe != -1) {
         RecalculateInterpolatedFrames(app, prevKeyframe, movedKeyframe);
-        TraceLog(LOG_INFO, "Recalculated interpolations between frames %d and %d", 
-                 prevKeyframe, movedKeyframe);
     }
     
-    // Recalcular interpolaciones entre actual y siguiente
     if (nextKeyframe != -1) {
         RecalculateInterpolatedFrames(app, movedKeyframe, nextKeyframe);
-        TraceLog(LOG_INFO, "Recalculated interpolations between frames %d and %d", 
-                 movedKeyframe, nextKeyframe);
     }
 }
-// Verificar si el frame actual es un keyframe
+
 static bool IsCurrentFrameKeyframe(AppState* app) {
     int currentFrame = app->character->currentFrame;
     if (currentFrame < 0 || currentFrame >= app->character->animation.frameCount) return false;
     
     return app->character->animation.frames[currentFrame].isOriginalKeyframe;
 }
-// Encontrar el hueso más cercano al rayo del mouse
+
 static bool FindBoneUnderMouse(AppState* app, char* outBoneName, int* outPersonIndex, Vector3* outBonePos) {
     if (!app->character->animation.isLoaded) return false;
     
@@ -237,7 +215,7 @@ static bool FindBoneUnderMouse(AppState* app, char* outBoneName, int* outPersonI
     Camera camera = app->character->renderer->camera;
     Vector2 mousePos = GetMousePosition();
     
-    float closestDist = 50.0f; // Radio de detección en píxeles
+    float closestDist = 50.0f;
     bool found = false;
     
     for (int p = 0; p < frame->personCount; p++) {
@@ -248,10 +226,8 @@ static bool FindBoneUnderMouse(AppState* app, char* outBoneName, int* outPersonI
             const Bone* bone = &person->bones[b];
             if (!bone->position.valid) continue;
             
-            // Proyectar el hueso a pantalla
             Vector2 screenPos = GetWorldToScreen(bone->position.position, camera);
             
-            // Verificar si el mouse está cerca
             float dist = Vector2Distance(mousePos, screenPos);
             if (dist < closestDist) {
                 closestDist = dist;
@@ -267,16 +243,15 @@ static bool FindBoneUnderMouse(AppState* app, char* outBoneName, int* outPersonI
     return found;
 }
 
-// Calcular la intersección del rayo del mouse con un plano perpendicular a la cámara
 static bool RayPlaneIntersection(Ray ray, Vector3 planePoint, Vector3 planeNormal, Vector3* outPoint) {
     float denom = Vector3DotProduct(planeNormal, ray.direction);
     
-    if (fabsf(denom) < 0.0001f) return false; // Paralelo al plano
+    if (fabsf(denom) < 0.0001f) return false;
     
     Vector3 diff = Vector3Subtract(planePoint, ray.position);
     float t = Vector3DotProduct(diff, planeNormal) / denom;
     
-    if (t < 0) return false; // Intersección detrás del rayo
+    if (t < 0) return false;
     
     *outPoint = Vector3Add(ray.position, Vector3Scale(ray.direction, t));
     return true;
@@ -292,18 +267,14 @@ static void MoveBoneWithMouse(AppState* app) {
     AnimationFrame* frame = &app->character->animation.frames[currentFrame];
     Camera camera = app->character->renderer->camera;
     
-    // Obtener el rayo del mouse actual
     Vector2 mousePos = GetMousePosition();
     Ray mouseRay = GetMouseRay(mousePos, camera);
     
-    // Crear un plano perpendicular a la cámara que pasa por el hueso
     Vector3 camToPoint = Vector3Subtract(app->editor.selectedBonePosition, camera.position);
     Vector3 planeNormal = Vector3Normalize(camToPoint);
     
-    // Calcular la intersección
     Vector3 newPosition;
     if (RayPlaneIntersection(mouseRay, app->editor.selectedBonePosition, planeNormal, &newPosition)) {
-        // Actualizar la posición del hueso en el frame actual
         for (int p = 0; p < frame->personCount; p++) {
             Person* person = &frame->persons[p];
             if (!person->active) continue;
@@ -315,7 +286,6 @@ static void MoveBoneWithMouse(AppState* app) {
                     app->editor.selectedBonePosition = newPosition;
                     app->editor.needsSave = true;
                     
-                    // Forzar actualización del render
                     app->character->forceUpdate = true;
                     return;
                 }
@@ -333,21 +303,18 @@ static Rectangle GetTimelineRect(AppState* app) {
     };
 }
 
-// Actualizar el estado de selección de huesos
-
 static void UpdateBoneSelection(AppState* app) {
-    if (app->camMode != 1) { // Solo en modo Orbit
+    if (app->camMode != 1) {
         app->editor.hasBoneSelected = false;
         app->editor.isDraggingBone = false;
         return;
     }
     
-    if (app->editor.isDraggingSlider) return; // No interferir con el timeline
+    if (app->editor.isDraggingSlider) return;
     
     Vector2 mousePos = GetMousePosition();
     Rectangle timeline = GetTimelineRect(app);
     
-    // Click izquierdo para seleccionar
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !CheckCollisionPointRec(mousePos, timeline)) {
         char boneName[64];
         int personIndex;
@@ -364,7 +331,6 @@ static void UpdateBoneSelection(AppState* app) {
         }
     }
     
-    // Click derecho para arrastrar
     if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT) && app->editor.hasBoneSelected) {
         if (!CheckCollisionPointRec(mousePos, timeline)) {
             char boneName[64];
@@ -373,10 +339,7 @@ static void UpdateBoneSelection(AppState* app) {
             
             if (FindBoneUnderMouse(app, boneName, &personIndex, &bonePos)) {
                 if (strcmp(boneName, app->editor.selectedBoneName) == 0) {
-                    // Verificar si es un keyframe antes de permitir el movimiento
                     if (!IsCurrentFrameKeyframe(app)) {
-                        TraceLog(LOG_WARNING, "Cannot move bones in interpolated frame %d", 
-                                GetCurrentFrameNumber(app));
                         return;
                     }
                     
@@ -388,24 +351,18 @@ static void UpdateBoneSelection(AppState* app) {
         }
     }
     
-    // Mover hueso mientras se arrastra
     if (app->editor.isDraggingBone && IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) {
         MoveBoneWithMouse(app);
     }
     
-    // Soltar al liberar el botón
     if (IsMouseButtonReleased(MOUSE_BUTTON_RIGHT) && app->editor.isDraggingBone) {
         app->editor.isDraggingBone = false;
         
-        // IMPORTANTE: Recalcular interpolaciones afectadas
         int currentFrameNumber = GetCurrentFrameNumber(app);
         RecalculateAffectedInterpolations(app, currentFrameNumber);
-        
-        TraceLog(LOG_INFO, "Bone movement completed, interpolations recalculated");
     }
 }
 
-// Dibujar feedback visual para el hueso seleccionado
 static void DrawBoneSelectionFeedback(AppState* app) {
     if (!app->editor.hasBoneSelected) return;
     if (!app->character->animation.isLoaded) return;
@@ -416,7 +373,6 @@ static void DrawBoneSelectionFeedback(AppState* app) {
     const AnimationFrame* frame = &app->character->animation.frames[currentFrame];
     Camera camera = app->character->renderer->camera;
     
-    // Encontrar el hueso seleccionado
     for (int p = 0; p < frame->personCount; p++) {
         const Person* person = &frame->persons[p];
         if (!person->active) continue;
@@ -426,14 +382,12 @@ static void DrawBoneSelectionFeedback(AppState* app) {
             if (strcmp(bone->name, app->editor.selectedBoneName) == 0 && bone->position.valid) {
                 Vector2 screenPos = GetWorldToScreen(bone->position.position, camera);
                 
-                // Dibujar esfera destacada en 3D
                 BeginMode3D(camera);
                 Color highlightColor = app->editor.isDraggingBone ? RED : ORANGE;
                 DrawSphere(bone->position.position, 0.04f, highlightColor);
                 DrawSphereWires(bone->position.position, 0.042f, 8, 8, WHITE);
                 EndMode3D();
                 
-                // Dibujar nombre con fondo destacado
                 int textWidth = MeasureText(bone->name, 12);
                 DrawRectangle((int)screenPos.x - 2, (int)screenPos.y - 25, 
                             textWidth + 4, 16, highlightColor);
@@ -445,8 +399,6 @@ static void DrawBoneSelectionFeedback(AppState* app) {
     }
 }
 
-
-// Función para verificar si un frame número existe
 static bool FrameExists(AppState* app, int frameNumber) {
     for (int i = 0; i < app->character->animation.frameCount; i++) {
         if (app->character->animation.frames[i].frameNumber == frameNumber) {
@@ -455,10 +407,6 @@ static bool FrameExists(AppState* app, int frameNumber) {
     }
     return false;
 }
-
-
-
-
 
 static bool Button(Rectangle bounds, const char* text, Color color) {
     bool isHovered = CheckCollisionPointRec(GetMousePosition(), bounds);
@@ -524,8 +472,6 @@ static void DrawTextField(Rectangle bounds, const char* text, bool active) {
     DrawText(text, (int)(bounds.x + 5), (int)(bounds.y + 8), 16, BLACK);
 }
 
-
-
 static void DrawTimeline(AppState* app) {
     if (!app->editor.showTimeline || !app->character->animation.isLoaded) return;
     
@@ -569,21 +515,19 @@ static void DrawTimeline(AppState* app) {
                     !frameExists ? DARKGRAY : LIGHTGRAY);
         }
         
-if (frameExists) {
-    // Verificar si el frame es interpolado
-    int frameIndex = FindFrameIndexByNumber(app, i);
-    bool isInterpolated = false;
-    
-    if (frameIndex != -1 && frameIndex < app->character->animation.frameCount) {
-        isInterpolated = !app->character->animation.frames[frameIndex].isOriginalKeyframe;
-    }
-    
-    // Color diferente según si es keyframe original o interpolado
-    Color indicatorColor = isInterpolated ? BLUE : GREEN;
-    
-    DrawRectangle((int)(x + 2), (int)(timeline.y + timeline.height - 8), 
-                 (int)(frameWidth - 4), 4, indicatorColor);
-}
+        if (frameExists) {
+            int frameIndex = FindFrameIndexByNumber(app, i);
+            bool isInterpolated = false;
+            
+            if (frameIndex != -1 && frameIndex < app->character->animation.frameCount) {
+                isInterpolated = !app->character->animation.frames[frameIndex].isOriginalKeyframe;
+            }
+            
+            Color indicatorColor = isInterpolated ? BLUE : GREEN;
+            
+            DrawRectangle((int)(x + 2), (int)(timeline.y + timeline.height - 8), 
+                         (int)(frameWidth - 4), 4, indicatorColor);
+        }
     }
     
     float markerX = timeline.x + currentFrameNumber * frameWidth + frameWidth / 2;
@@ -656,7 +600,6 @@ static void DrawControlPanel(AppState* app) {
     int maxFrameNumber = FindMaxFrameNumber(app);
     int currentFrameNumber = GetCurrentFrameNumber(app);
     
-    // Botones de reproducción
     if (IconButton((Rectangle){(float)buttonX, (float)panelY, BUTTON_SIZE, BUTTON_SIZE}, 
                    "|<", DARKBLUE)) {
         for (int i = 0; i <= maxFrameNumber; i++) {
@@ -721,53 +664,48 @@ static void DrawControlPanel(AppState* app) {
     }
     buttonX += BUTTON_SIZE + 15;
     
-    // Herramientas de edición
-if (Button((Rectangle){(float)buttonX, (float)panelY, 80, BUTTON_SIZE}, 
-           "DELETE", RED)) {
-    if (app->editor.selectionStart != -1 && FrameExists(app, app->editor.selectionStart)) {
-        int frameIndex = FindFrameIndexByNumber(app, app->editor.selectionStart);
-        if (frameIndex != -1) {
-            int deletedFrameNumber = app->editor.selectionStart;
-            
-            BonesDeleteFrame(&app->character->animation, frameIndex);
-            app->character->maxFrames = app->character->animation.frameCount;
-            app->editor.needsSave = true;
-            
-            // Buscar el siguiente frame válido desde el frame eliminado
-            int nextValidFrame = -1;
-            for (int i = deletedFrameNumber; i <= maxFrameNumber; i++) {
-                if (FrameExists(app, i)) {
-                    nextValidFrame = i;
-                    break;
-                }
-            }
-            
-            // Si no hay siguiente, buscar el anterior
-            if (nextValidFrame == -1) {
-                for (int i = deletedFrameNumber - 1; i >= 0; i--) {
+    if (Button((Rectangle){(float)buttonX, (float)panelY, 80, BUTTON_SIZE}, 
+               "DELETE", RED)) {
+        if (app->editor.selectionStart != -1 && FrameExists(app, app->editor.selectionStart)) {
+            int frameIndex = FindFrameIndexByNumber(app, app->editor.selectionStart);
+            if (frameIndex != -1) {
+                int deletedFrameNumber = app->editor.selectionStart;
+                
+                BonesDeleteFrame(&app->character->animation, frameIndex);
+                app->character->maxFrames = app->character->animation.frameCount;
+                app->editor.needsSave = true;
+                
+                int nextValidFrame = -1;
+                for (int i = deletedFrameNumber; i <= maxFrameNumber; i++) {
                     if (FrameExists(app, i)) {
                         nextValidFrame = i;
                         break;
                     }
                 }
-            }
-            
-            // Mover a ese frame y mantener la selección
-            if (nextValidFrame != -1) {
-                int newIndex = FindFrameIndexByNumber(app, nextValidFrame);
-                if (newIndex != -1) {
-                    SetCharacterFrame(app->character, newIndex);
-                    app->editor.selectionStart = nextValidFrame;
-                    app->editor.selectionEnd = nextValidFrame;
+                
+                if (nextValidFrame == -1) {
+                    for (int i = deletedFrameNumber - 1; i >= 0; i--) {
+                        if (FrameExists(app, i)) {
+                            nextValidFrame = i;
+                            break;
+                        }
+                    }
                 }
-            } else {
-                // No quedan frames
-                app->editor.selectionStart = -1;
-                app->editor.selectionEnd = -1;
+                
+                if (nextValidFrame != -1) {
+                    int newIndex = FindFrameIndexByNumber(app, nextValidFrame);
+                    if (newIndex != -1) {
+                        SetCharacterFrame(app->character, newIndex);
+                        app->editor.selectionStart = nextValidFrame;
+                        app->editor.selectionEnd = nextValidFrame;
+                    }
+                } else {
+                    app->editor.selectionStart = -1;
+                    app->editor.selectionEnd = -1;
+                }
             }
         }
     }
-}
     buttonX += 85;
     
     if (Button((Rectangle){(float)buttonX, (float)panelY, 80, BUTTON_SIZE}, 
@@ -782,8 +720,7 @@ if (Button((Rectangle){(float)buttonX, (float)panelY, 80, BUTTON_SIZE},
         }
     }
     buttonX += 85;
-    
-    if (Button((Rectangle){(float)buttonX, (float)panelY, 100, BUTTON_SIZE}, 
+if (Button((Rectangle){(float)buttonX, (float)panelY, 100, BUTTON_SIZE}, 
                "INTERPOLATE", PURPLE)) {
         if (app->editor.selectionStart != -1 && app->editor.selectionEnd != -1 &&
             app->editor.selectionEnd > app->editor.selectionStart) {
@@ -835,37 +772,27 @@ if (Button((Rectangle){(float)buttonX, (float)panelY, 80, BUTTON_SIZE},
     DrawText(infoText, buttonX + 10, panelY + 10, 16, WHITE);
 }
 
-// Helpers usados por la exportación
 static const Person* GetPrimaryPerson(const AnimationFrame* frame) {
-	if (!frame) return NULL;
-	for (int p = 0; p < frame->personCount; p++) {
-		if (frame->persons[p].active) return &frame->persons[p];
-	}
-	return NULL;
+    if (!frame) return NULL;
+    for (int p = 0; p < frame->personCount; p++) {
+        if (frame->persons[p].active) return &frame->persons[p];
+    }
+    return NULL;
 }
-
-
 
 bool BonesExportToJSON(BonesAnimation* animation, const char* filepath, int startIdx, int endIdx) {
     if (!animation || !filepath || startIdx < 0 || endIdx < 0 || startIdx >= animation->frameCount) {
-        TraceLog(LOG_ERROR, "BONES: Invalid export parameters - startIdx: %d, endIdx: %d, frameCount: %d", 
-                 startIdx, endIdx, animation->frameCount);
         return false;
     }
     if (endIdx >= animation->frameCount) endIdx = animation->frameCount - 1;
     if (startIdx > endIdx) {
-        TraceLog(LOG_ERROR, "BONES: startIdx > endIdx (%d > %d)", startIdx, endIdx);
         return false;
     }
 
     FILE* file = fopen(filepath, "w");
     if (!file) {
-        TraceLog(LOG_ERROR, "BONES: Failed to open file for export: %s", filepath);
         return false;
     }
-
-    TraceLog(LOG_INFO, "BONES: Starting export with %d frames (indices %d to %d)", 
-             animation->frameCount, startIdx, endIdx);
 
     fprintf(file, "{\n");
     bool firstPrinted = true;
@@ -875,7 +802,6 @@ bool BonesExportToJSON(BonesAnimation* animation, const char* filepath, int star
         AnimationFrame* frame = &animation->frames[idx];
         if (!frame->valid) continue;
 
-        // Solo exportar keyframes originales
         if (!frame->isOriginalKeyframe) continue;
 
         const Person* person = GetPrimaryPerson(frame);
@@ -896,23 +822,13 @@ bool BonesExportToJSON(BonesAnimation* animation, const char* filepath, int star
             if (!firstBone) fprintf(file, ",\n");
             firstBone = false;
 
-            // REVERTIR LA TRANSFORMACIÓN PARA OBTENER COORDENADAS ORIGINALES
             float x_transformed = bone->position.position.x;
             float y_transformed = bone->position.position.y;
             float z_transformed = bone->position.position.z;
 
-            // Aplicar transformación inversa
             float x_original = (x_transformed + 1.0f) * 0.5f;
             float y_original = 1.0f - y_transformed;
             float z_original = (z_transformed + 1.0f) * 0.5f;
-
-            // DEBUG: Para verificar la transformación
-            if (exportedCount == 0 && boneCount == 0 && strcmp(bone->name, "Nose") == 0) {
-                TraceLog(LOG_INFO, "BONES: Transformation debug for Nose:");
-                TraceLog(LOG_INFO, "  Transformed: (%.6f, %.6f, %.6f)", x_transformed, y_transformed, z_transformed);
-                TraceLog(LOG_INFO, "  Original:    (%.6f, %.6f, %.6f)", x_original, y_original, z_original);
-                TraceLog(LOG_INFO, "  Expected:    (%.6f, %.6f, %.6f)", 0.8440054059f, 0.2510614097f, 0.0346111879f);
-            }
 
             fprintf(file, "      \"%s\": {\"x\": %.10f, \"y\": %.10f, \"z\": %.10f}",
                     bone->name, x_original, y_original, z_original);
@@ -922,153 +838,123 @@ bool BonesExportToJSON(BonesAnimation* animation, const char* filepath, int star
 
         fprintf(file, "\n    }\n  }");
         exportedCount++;
-        
-        TraceLog(LOG_DEBUG, "BONES: Exported frame %d with %d bones", frame->frameNumber, boneCount);
     }
 
     fprintf(file, "\n}\n");
     fclose(file);
 
-    TraceLog(LOG_INFO, "BONES: Export completed - %d frames exported", exportedCount);
-
     if (exportedCount == 0) {
-        TraceLog(LOG_WARNING, "BONES: No frames were exported!");
         return false;
     }
 
     return true;
 }
 
-
 static void DrawExportDialog(AppState* app) {
-	if (!app->editor.showExportDialog) return;
+    if (!app->editor.showExportDialog) return;
 
-	int dialogW = 500;
-	int dialogH = 200;
-	int dialogX = (app->screenWidth - dialogW) / 2;
-	int dialogY = (app->screenHeight - dialogH) / 2;
+    int dialogW = 500;
+    int dialogH = 200;
+    int dialogX = (app->screenWidth - dialogW) / 2;
+    int dialogY = (app->screenHeight - dialogH) / 2;
 
-	DrawRectangle(0, 0, app->screenWidth, app->screenHeight, (Color){0, 0, 0, 150});
-	DrawRectangle(dialogX, dialogY, dialogW, dialogH, RAYWHITE);
-	DrawRectangleLinesEx((Rectangle){(float)dialogX, (float)dialogY, (float)dialogW, (float)dialogH}, 3, BLACK);
-	DrawText("Export Animation", dialogX + 20, dialogY + 20, 20, BLACK);
-	DrawText("Export Path:", dialogX + 20, dialogY + 60, 16, DARKGRAY);
-	DrawTextField((Rectangle){(float)(dialogX + 20), (float)(dialogY + 80), (float)(dialogW - 40), 30},
-		app->editor.exportPath, true);
+    DrawRectangle(0, 0, app->screenWidth, app->screenHeight, (Color){0, 0, 0, 150});
+    DrawRectangle(dialogX, dialogY, dialogW, dialogH, RAYWHITE);
+    DrawRectangleLinesEx((Rectangle){(float)dialogX, (float)dialogY, (float)dialogW, (float)dialogH}, 3, BLACK);
+    DrawText("Export Animation", dialogX + 20, dialogY + 20, 20, BLACK);
+    DrawText("Export Path:", dialogX + 20, dialogY + 60, 16, DARKGRAY);
+    DrawTextField((Rectangle){(float)(dialogX + 20), (float)(dialogY + 80), (float)(dialogW - 40), 30},
+        app->editor.exportPath, true);
 
-	/* BOTÓN EXPORT */
-	if (Button((Rectangle){(float)(dialogX + 20), (float)(dialogY + 140), 100, 40}, "EXPORT", GREEN)) {
-		if (strlen(app->editor.exportPath) > 0) {
-			/* Si la selección existe y start != end la usamos; en caso contrario exportamos todo */
-			bool hasSelection = (app->editor.selectionStart != -1 && app->editor.selectionEnd != -1 && app->editor.selectionStart != app->editor.selectionEnd);
-			int startFrame = hasSelection ? app->editor.selectionStart : 0;
-			int endFrame = hasSelection ? app->editor.selectionEnd :
-				(app->character && app->character->animation.frameCount > 0 ? app->character->animation.frameCount - 1 : 0);
+    if (Button((Rectangle){(float)(dialogX + 20), (float)(dialogY + 140), 100, 40}, "EXPORT", GREEN)) {
+        if (strlen(app->editor.exportPath) > 0) {
+            bool hasSelection = (app->editor.selectionStart != -1 && app->editor.selectionEnd != -1 && app->editor.selectionStart != app->editor.selectionEnd);
+            int startFrame = hasSelection ? app->editor.selectionStart : 0;
+            int endFrame = hasSelection ? app->editor.selectionEnd :
+                (app->character && app->character->animation.frameCount > 0 ? app->character->animation.frameCount - 1 : 0);
 
-			/* Clamp de seguridad */
-			if (startFrame < 0) startFrame = 0;
-			if (endFrame < 0) endFrame = 0;
-			if (app->character && app->character->animation.frameCount > 0) {
-				if (startFrame >= app->character->animation.frameCount) startFrame = app->character->animation.frameCount - 1;
-				if (endFrame >= app->character->animation.frameCount) endFrame = app->character->animation.frameCount - 1;
-			}
+            if (startFrame < 0) startFrame = 0;
+            if (endFrame < 0) endFrame = 0;
+            if (app->character && app->character->animation.frameCount > 0) {
+                if (startFrame >= app->character->animation.frameCount) startFrame = app->character->animation.frameCount - 1;
+                if (endFrame >= app->character->animation.frameCount) endFrame = app->character->animation.frameCount - 1;
+            }
 
-			/* DEBUG: mostrar lo que realmente vamos a pasar al exportador */
-			TraceLog(LOG_DEBUG, "DEBUG: Export request: selectionStart=%d selectionEnd=%d hasSelection=%d -> start=%d end=%d currentFrame=%d framesTotal=%d",
-				app->editor.selectionStart, app->editor.selectionEnd, hasSelection ? 1 : 0,
-				startFrame, endFrame,
-				app->character ? app->character->currentFrame : -1,
-				app->character ? app->character->animation.frameCount : 0);
+            if (BonesExportToJSON(&app->character->animation,
+                                  app->editor.exportPath,
+                                  startFrame,
+                                  endFrame)) {
+                app->editor.needsSave = false;
+            }
 
-			if (BonesExportToJSON(&app->character->animation,
-			                      app->editor.exportPath,
-			                      startFrame,
-			                      endFrame)) {
-				TraceLog(LOG_INFO, "Animation exported successfully!");
-				app->editor.needsSave = false;
-			} else {
-				TraceLog(LOG_ERROR, "Failed to export animation");
-			}
+            app->editor.showExportDialog = false;
+        }
+    }
 
-			app->editor.showExportDialog = false;
-		}
-	}
+    if (Button((Rectangle){(float)(dialogX + 140), (float)(dialogY + 140), 100, 40}, "CANCEL", RED)) {
+        app->editor.showExportDialog = false;
+    }
 
-	/* BOTÓN CANCEL */
-	if (Button((Rectangle){(float)(dialogX + 140), (float)(dialogY + 140), 100, 40}, "CANCEL", RED)) {
-		app->editor.showExportDialog = false;
-	}
-
-	/* BOTÓN BROWSE (rellena ejemplo de path) */
-	if (Button((Rectangle){(float)(dialogX + dialogW - 120), (float)(dialogY + 140), 100, 40}, "BROWSE", BLUE)) {
-		strcpy(app->editor.exportPath, "data/poses/exported.json");
-	}
+    if (Button((Rectangle){(float)(dialogX + dialogW - 120), (float)(dialogY + 140), 100, 40}, "BROWSE", BLUE)) {
+        strcpy(app->editor.exportPath, "data/poses/exported.json");
+    }
 }
-
-// ============================================================================
-// FUNCIÓN PARA DIBUJAR ORIENTACIÓN DE LOS BONES
-// ============================================================================
 
 static void DrawBoneOrientation(AppState* app) {
-	if (!app->debug.showOrientation || !app->character->animation.isLoaded) return;
+    if (!app->debug.showOrientation || !app->character->animation.isLoaded) return;
 
-	int currentFrame = app->character->currentFrame;
-	if (currentFrame < 0 || currentFrame >= app->character->animation.frameCount) return;
+    int currentFrame = app->character->currentFrame;
+    if (currentFrame < 0 || currentFrame >= app->character->animation.frameCount) return;
 
-	const AnimationFrame* frame = &app->character->animation.frames[currentFrame];
+    const AnimationFrame* frame = &app->character->animation.frames[currentFrame];
 
-	typedef struct {
-		char name[MAX_BONE_NAME_LENGTH];
-		Vector3 position;
-		BoneOrientation orientation;
-	} UniqueBone;
+    typedef struct {
+        char name[MAX_BONE_NAME_LENGTH];
+        Vector3 position;
+        BoneOrientation orientation;
+    } UniqueBone;
 
-	UniqueBone uniqueBones[MAX_BONES_PER_PERSON * MAX_PERSONS];
-	int uniqueCount = 0;
+    UniqueBone uniqueBones[MAX_BONES_PER_PERSON * MAX_PERSONS];
+    int uniqueCount = 0;
 
-	for (int p = 0; p < frame->personCount; p++) {
-		const Person* person = &frame->persons[p];
-		if (!person->active) continue;
-		for (int b = 0; b < person->boneCount; b++) {
-			const Bone* bone = &person->bones[b];
-			if (!bone->position.valid) continue;
-			bool exists = false;
-			for (int u = 0; u < uniqueCount; u++) {
-				if (strncmp(uniqueBones[u].name, bone->name, MAX_BONE_NAME_LENGTH) == 0) { exists = true; break; }
-			}
-			if (!exists && uniqueCount < (MAX_BONES_PER_PERSON * MAX_PERSONS)) {
-				strncpy(uniqueBones[uniqueCount].name, bone->name, MAX_BONE_NAME_LENGTH - 1);
-				uniqueBones[uniqueCount].name[MAX_BONE_NAME_LENGTH - 1] = '\0';
-				uniqueBones[uniqueCount].position = bone->position.position;
-				uniqueBones[uniqueCount].orientation = CalculateBoneOrientation(bone->name, person, bone->position.position);
-				uniqueCount++;
-			}
-		}
-	}
+    for (int p = 0; p < frame->personCount; p++) {
+        const Person* person = &frame->persons[p];
+        if (!person->active) continue;
+        for (int b = 0; b < person->boneCount; b++) {
+            const Bone* bone = &person->bones[b];
+            if (!bone->position.valid) continue;
+            bool exists = false;
+            for (int u = 0; u < uniqueCount; u++) {
+                if (strncmp(uniqueBones[u].name, bone->name, MAX_BONE_NAME_LENGTH) == 0) { exists = true; break; }
+            }
+            if (!exists && uniqueCount < (MAX_BONES_PER_PERSON * MAX_PERSONS)) {
+                strncpy(uniqueBones[uniqueCount].name, bone->name, MAX_BONE_NAME_LENGTH - 1);
+                uniqueBones[uniqueCount].name[MAX_BONE_NAME_LENGTH - 1] = '\0';
+                uniqueBones[uniqueCount].position = bone->position.position;
+                uniqueBones[uniqueCount].orientation = CalculateBoneOrientation(bone->name, person, bone->position.position);
+                uniqueCount++;
+            }
+        }
+    }
 
-	BeginMode3D(app->character->renderer->camera);
+    BeginMode3D(app->character->renderer->camera);
 
-	for (int i = 0; i < uniqueCount; i++) {
-		if (!uniqueBones[i].orientation.valid) continue;
-		Vector3 pos = uniqueBones[i].position;
-		BoneOrientation orient = uniqueBones[i].orientation;
-		Vector3 forward = Vector3Scale(orient.forward, AXIS_LENGTH);
-		Vector3 right = Vector3Scale(orient.right, AXIS_LENGTH);
-		Vector3 up = Vector3Scale(orient.up, AXIS_LENGTH);
+    for (int i = 0; i < uniqueCount; i++) {
+        if (!uniqueBones[i].orientation.valid) continue;
+        Vector3 pos = uniqueBones[i].position;
+        BoneOrientation orient = uniqueBones[i].orientation;
+        Vector3 forward = Vector3Scale(orient.forward, AXIS_LENGTH);
+        Vector3 right = Vector3Scale(orient.right, AXIS_LENGTH);
+        Vector3 up = Vector3Scale(orient.up, AXIS_LENGTH);
 
-		DrawLine3D(pos, Vector3Add(pos, right), RED); DrawSphere(Vector3Add(pos, right), 0.0035f, RED);
-		DrawLine3D(pos, Vector3Add(pos, up), GREEN); DrawSphere(Vector3Add(pos, up), 0.0035f, GREEN);
-		DrawLine3D(pos, Vector3Add(pos, forward), BLUE); DrawSphere(Vector3Add(pos, forward), 0.0035f, BLUE);
-		DrawSphere(pos, 0.005f, YELLOW);
-	}
+        DrawLine3D(pos, Vector3Add(pos, right), RED); DrawSphere(Vector3Add(pos, right), 0.0035f, RED);
+        DrawLine3D(pos, Vector3Add(pos, up), GREEN); DrawSphere(Vector3Add(pos, up), 0.0035f, GREEN);
+        DrawLine3D(pos, Vector3Add(pos, forward), BLUE); DrawSphere(Vector3Add(pos, forward), 0.0035f, BLUE);
+        DrawSphere(pos, 0.005f, YELLOW);
+    }
 
-	EndMode3D();
+    EndMode3D();
 }
-
-
-// ============================================================================
-// FUNCIÓN PARA DIBUJAR NOMBRES, BONES Y CONEXIONES SIN DUPLICADOS
-// ============================================================================
 
 static void DrawDebugVisuals(AppState* app) {
     if (!app->character->animation.isLoaded) return;
@@ -1087,7 +973,6 @@ static void DrawDebugVisuals(AppState* app) {
     static DrawnBone drawnBones[MAX_BONES_PER_PERSON * MAX_PERSONS];
     int drawnCount = 0;
     
-    // Recolectar bones únicos
     for (int p = 0; p < frame->personCount; p++) {
         const Person* person = &frame->persons[p];
         if (!person->active) continue;
@@ -1121,7 +1006,6 @@ static void DrawDebugVisuals(AppState* app) {
         }
     }
     
-    // Dibujar debug spheres en 3D (si está activado)
     if (app->debug.showDebugSpheres && drawnCount > 0) {
         BeginMode3D(app->character->renderer->camera);
         for (int i = 0; i < drawnCount; i++) {
@@ -1131,7 +1015,6 @@ static void DrawDebugVisuals(AppState* app) {
         EndMode3D();
     }
     
-    // Dibujar conexiones en 3D (si está activado)
     if (app->debug.showConnections && drawnCount > 0) {
         const char* connections[][2] = {
             {"Neck", "LShoulder"}, {"Neck", "RShoulder"},
@@ -1169,7 +1052,6 @@ static void DrawDebugVisuals(AppState* app) {
         EndMode3D();
     }
     
-    // Dibujar nombres en 2D (si está activado)
     if (app->debug.showBoneNames && drawnCount > 0) {
         for (int i = 0; i < drawnCount; i++) {
             int textWidth = MeasureText(drawnBones[i].name, 10);
@@ -1197,34 +1079,29 @@ static void DrawDebugPanel(AppState* app) {
     int buttonWidth = 190;
     int buttonY = panelY + 40;
     
-    // Panel de fondo
     DrawRectangle(panelX, panelY, panelWidth, panelHeight, (Color){40, 40, 40, 220});
     DrawRectangleLinesEx((Rectangle){(float)panelX, (float)panelY, (float)panelWidth, (float)panelHeight}, 2, BLACK);
     
     DrawText("DEBUG OPTIONS", panelX + 10, panelY + 10, 16, YELLOW);
     
-    // Toggle Bone Names
     if (ToggleButton((Rectangle){(float)(panelX + 10), (float)buttonY, (float)buttonWidth, 30}, 
                      "Bone Names", app->debug.showBoneNames, GREEN, DARKGRAY)) {
         app->debug.showBoneNames = !app->debug.showBoneNames;
     }
     buttonY += 35;
     
-    // Toggle Debug Spheres
     if (ToggleButton((Rectangle){(float)(panelX + 10), (float)buttonY, (float)buttonWidth, 30}, 
                      "Debug Spheres", app->debug.showDebugSpheres, GREEN, DARKGRAY)) {
         app->debug.showDebugSpheres = !app->debug.showDebugSpheres;
     }
     buttonY += 35;
     
-    // Toggle Connections
     if (ToggleButton((Rectangle){(float)(panelX + 10), (float)buttonY, (float)buttonWidth, 30}, 
                      "Connections", app->debug.showConnections, GREEN, DARKGRAY)) {
         app->debug.showConnections = !app->debug.showConnections;
     }
     buttonY += 35;
     
-    // Toggle Orientation
     if (ToggleButton((Rectangle){(float)(panelX + 10), (float)buttonY, (float)buttonWidth, 30}, 
                      "Orientation", app->debug.showOrientation, GREEN, DARKGRAY)) {
         app->debug.showOrientation = !app->debug.showOrientation;
@@ -1249,14 +1126,12 @@ static bool App_Init(AppState* app) {
     app->character = CreateAnimatedCharacter("data/textures/bone_textures.txt", 
                                            "data/textures/texture_sets.txt");
     if (!app->character) {
-        TraceLog(LOG_ERROR, "Failed to create animated character");
         CloseWindow();
         return false;
     }
 
     if (LoadAnimation(app->character, "data/poses/idle.json", "data/animations/idle.anim")) {
         strcpy(app->currentAnimation, "idle");
-        TraceLog(LOG_INFO, "Successfully loaded default idle animation");
     }
 
     app->camMode = 1;
@@ -1281,7 +1156,6 @@ static bool App_Init(AppState* app) {
     app->screenWidth = GetScreenWidth();
     app->screenHeight = GetScreenHeight();
 
-    TraceLog(LOG_INFO, "Animation Editor initialized successfully");
     return true;
 }
 
@@ -1409,50 +1283,46 @@ static void App_HandleInput(AppState* app) {
         app->editor.showExportDialog = true;
     }
     
-if (IsKeyPressed(KEY_DELETE) && app->editor.selectionStart != -1 && FrameExists(app, app->editor.selectionStart)) {
-    int frameIndex = FindFrameIndexByNumber(app, app->editor.selectionStart);
-    if (frameIndex != -1) {
-        int deletedFrameNumber = app->editor.selectionStart;
-        int maxFrameNumber = FindMaxFrameNumber(app);
-        
-        BonesDeleteFrame(&app->character->animation, frameIndex);
-        app->character->maxFrames = app->character->animation.frameCount;
-        app->editor.needsSave = true;
-        
-        // Buscar el siguiente frame válido desde el frame eliminado
-        int nextValidFrame = -1;
-        for (int i = deletedFrameNumber; i <= maxFrameNumber; i++) {
-            if (FrameExists(app, i)) {
-                nextValidFrame = i;
-                break;
-            }
-        }
-        
-        // Si no hay siguiente, buscar el anterior
-        if (nextValidFrame == -1) {
-            for (int i = deletedFrameNumber - 1; i >= 0; i--) {
+    if (IsKeyPressed(KEY_DELETE) && app->editor.selectionStart != -1 && FrameExists(app, app->editor.selectionStart)) {
+        int frameIndex = FindFrameIndexByNumber(app, app->editor.selectionStart);
+        if (frameIndex != -1) {
+            int deletedFrameNumber = app->editor.selectionStart;
+            int maxFrameNumber = FindMaxFrameNumber(app);
+            
+            BonesDeleteFrame(&app->character->animation, frameIndex);
+            app->character->maxFrames = app->character->animation.frameCount;
+            app->editor.needsSave = true;
+            
+            int nextValidFrame = -1;
+            for (int i = deletedFrameNumber; i <= maxFrameNumber; i++) {
                 if (FrameExists(app, i)) {
                     nextValidFrame = i;
                     break;
                 }
             }
-        }
-        
-        // Mover a ese frame y mantener la selección
-        if (nextValidFrame != -1) {
-            int newIndex = FindFrameIndexByNumber(app, nextValidFrame);
-            if (newIndex != -1) {
-                SetCharacterFrame(app->character, newIndex);
-                app->editor.selectionStart = nextValidFrame;
-                app->editor.selectionEnd = nextValidFrame;
+            
+            if (nextValidFrame == -1) {
+                for (int i = deletedFrameNumber - 1; i >= 0; i--) {
+                    if (FrameExists(app, i)) {
+                        nextValidFrame = i;
+                        break;
+                    }
+                }
             }
-        } else {
-            // No quedan frames
-            app->editor.selectionStart = -1;
-            app->editor.selectionEnd = -1;
+            
+            if (nextValidFrame != -1) {
+                int newIndex = FindFrameIndexByNumber(app, nextValidFrame);
+                if (newIndex != -1) {
+                    SetCharacterFrame(app->character, newIndex);
+                    app->editor.selectionStart = nextValidFrame;
+                    app->editor.selectionEnd = nextValidFrame;
+                }
+            } else {
+                app->editor.selectionStart = -1;
+                app->editor.selectionEnd = -1;
+            }
         }
     }
-}
 }
 
 static void App_UpdateCamera(AppState* app, float dt) {
@@ -1521,7 +1391,7 @@ static void App_UpdateCamera(AppState* app, float dt) {
         app->character->renderer->camera.target = 
             Vector3Add(app->character->renderer->camera.position, forward);
     }
-    UpdateBoneSelection(app);
+UpdateBoneSelection(app);
 }
 
 static void App_DrawUI(AppState* app) {
@@ -1546,7 +1416,7 @@ static void App_DrawUI(AppState* app) {
              app->editor.needsSave ? "[*]" : "");
     DrawText(frameText, 10, 89, 16, app->editor.needsSave ? ORANGE : DARKGRAY);
 
-   if (app->editor.hasBoneSelected) {
+    if (app->editor.hasBoneSelected) {
         bool isKeyframe = IsCurrentFrameKeyframe(app);
         char selectionText[128];
         
@@ -1574,12 +1444,9 @@ static void App_Draw(AppState* app) {
 
     DrawAnimatedCharacter(app->character, app->character->renderer->camera);
     
-    // Dibujar orientación de bones (3D) - independiente
     DrawBoneOrientation(app);
-    
-    // Dibujar todos los elementos de debug (nombres, esferas, conexiones)
     DrawDebugVisuals(app);
-        DrawBoneSelectionFeedback(app);
+    DrawBoneSelectionFeedback(app);
     App_DrawUI(app);
     DrawDebugPanel(app);
     DrawTimeline(app);
@@ -1593,17 +1460,6 @@ int main(void) {
     AppState app;
     if (!App_Init(&app)) return -1;
     
-    TraceLog(LOG_INFO, "=== BONES3D ANIMATION EDITOR ===");
-    TraceLog(LOG_INFO, "Press SPACE to play/pause");
-    TraceLog(LOG_INFO, "Use LEFT/RIGHT arrows to navigate frames");
-    TraceLog(LOG_INFO, "Select frames with mouse + SHIFT for range");
-    TraceLog(LOG_INFO, "Press CTRL+S to export animation");
-    TraceLog(LOG_INFO, "Press F2 to toggle debug spheres");
-    TraceLog(LOG_INFO, "Press F3 to toggle bone names");
-    TraceLog(LOG_INFO, "Press F4 to toggle skeleton connections");
-    TraceLog(LOG_INFO, "Press F5 to toggle bone orientation axes");
-    TraceLog(LOG_INFO, "Use DEBUG OPTIONS panel (top-right) for visual toggles");
-    
     while (!WindowShouldClose()) {
         float dt = GetFrameTime();
         
@@ -1614,10 +1470,6 @@ int main(void) {
         App_UpdateCamera(&app, dt);
         UpdateAnimatedCharacter(app.character, dt);
         App_Draw(&app);
-    }
-    
-    if (app.editor.needsSave) {
-        TraceLog(LOG_WARNING, "Closing with unsaved changes!");
     }
     
     App_Shutdown(&app);

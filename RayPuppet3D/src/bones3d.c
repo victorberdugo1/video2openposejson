@@ -1,1161 +1,14 @@
 #include "bones_core.h"
-
 #include "raylib.h"
-
-
-
-// ============================================================================
-// VARIABLE GLOBAL TEXTURE SETS
-// ============================================================================
 
 TextureSetCollection* g_textureSets = NULL;
 
-static AnimationFrame g_transitionFromFrame;      // Frame guardado de la animación anterior
-static AnimationFrame g_transitionToFrame;        // Frame actual de la nueva animación
+static AnimationFrame g_transitionFromFrame;
+static AnimationFrame g_transitionToFrame;
 static bool g_isTransitioning = false;
 static float g_transitionTime = 0.0f;
-static float g_transitionDuration = 0.85f;        // Duración ajustable
-static bool g_hasValidFromFrame = false;          // Indica si tenemos un frame válido guardado
-
-// ============================================================================
-// AGREGAR ESTAS FUNCIONES ANTES DE LoadAnimation
-// ============================================================================
-
-// Función para copiar un frame completo (copia profunda)
-static void CopyAnimationFrame(AnimationFrame* dest, const AnimationFrame* src) {
-    if (!dest || !src) return;
-    
-    // Copiar estructura básica
-    dest->frameNumber = src->frameNumber;
-    dest->valid = src->valid;
-    dest->personCount = src->personCount;
-    
-    // Copiar cada persona y sus huesos
-    for (int p = 0; p < src->personCount && p < MAX_PERSONS; p++) {
-        Person* destPerson = &dest->persons[p];
-        const Person* srcPerson = &src->persons[p];
-        
-        // Copiar ID de persona
-        strncpy(destPerson->personId, srcPerson->personId, 15);
-        destPerson->personId[15] = '\0';
-        
-        // Copiar propiedades
-        destPerson->active = srcPerson->active;
-        destPerson->boneCount = srcPerson->boneCount;
-        
-        // Copiar cada hueso
-        for (int b = 0; b < srcPerson->boneCount && b < MAX_BONES_PER_PERSON; b++) {
-            Bone* destBone = &destPerson->bones[b];
-            const Bone* srcBone = &srcPerson->bones[b];
-            
-            // Copiar nombre
-            strncpy(destBone->name, srcBone->name, MAX_BONE_NAME_LENGTH - 1);
-            destBone->name[MAX_BONE_NAME_LENGTH - 1] = '\0';
-            
-            // Copiar posición
-            destBone->position.position = srcBone->position.position;
-            destBone->position.valid = srcBone->position.valid;
-            destBone->position.confidence = srcBone->position.confidence;
-            
-            // Copiar propiedades visuales
-            destBone->size = srcBone->size;
-            destBone->rotation = srcBone->rotation;
-            destBone->visible = srcBone->visible;
-            destBone->textureIndex = srcBone->textureIndex;
-            destBone->mirrored = srcBone->mirrored;
-        }
-    }
-    
-    TraceLog(LOG_DEBUG, "TRANSITION: Copied frame with %d persons", dest->personCount);
-}
-
-// Función para interpolar entre dos frames durante la transición
-static void InterpolateTransitionFrames(const AnimationFrame* fromFrame, 
-                                       const AnimationFrame* toFrame,
-                                       AnimationFrame* result, 
-                                       float t) {
-    if (!fromFrame || !toFrame || !result) return;
-    
-    // Aplicar curva ease-out para suavizar la transición
-    // t = 1 - (1-t)^3  (cubic ease-out)
-    float easedT = 1.0f - powf(1.0f - t, 3.0f);
-    
-    result->frameNumber = toFrame->frameNumber;
-    result->valid = true;
-    result->personCount = fromFrame->personCount > toFrame->personCount ? 
-                          fromFrame->personCount : toFrame->personCount;
-    
-    for (int p = 0; p < result->personCount; p++) {
-        Person* destPerson = &result->persons[p];
-        const Person* fromPerson = p < fromFrame->personCount ? &fromFrame->persons[p] : NULL;
-        const Person* toPerson = p < toFrame->personCount ? &toFrame->persons[p] : NULL;
-        
-        // Si no hay persona de origen, usar la de destino
-        if (!fromPerson && toPerson) {
-            strncpy(destPerson->personId, toPerson->personId, 15);
-            destPerson->personId[15] = '\0';
-            destPerson->active = toPerson->active;
-            destPerson->boneCount = toPerson->boneCount;
-            for (int b = 0; b < toPerson->boneCount; b++) {
-                destPerson->bones[b] = toPerson->bones[b];
-            }
-            continue;
-        }
-        
-        // Si no hay persona de destino, usar la de origen
-        if (fromPerson && !toPerson) {
-            strncpy(destPerson->personId, fromPerson->personId, 15);
-            destPerson->personId[15] = '\0';
-            destPerson->active = fromPerson->active;
-            destPerson->boneCount = fromPerson->boneCount;
-            for (int b = 0; b < fromPerson->boneCount; b++) {
-                destPerson->bones[b] = fromPerson->bones[b];
-            }
-            continue;
-        }
-        
-        // Si no hay ninguna, continuar
-        if (!fromPerson && !toPerson) continue;
-        
-        // Interpolar entre ambas personas
-        strncpy(destPerson->personId, fromPerson->personId, 15);
-        destPerson->personId[15] = '\0';
-        destPerson->active = fromPerson->active || toPerson->active;
-        destPerson->boneCount = fromPerson->boneCount > toPerson->boneCount ? 
-                               fromPerson->boneCount : toPerson->boneCount;
-        
-        // Interpolar cada hueso
-        for (int b = 0; b < destPerson->boneCount; b++) {
-            Bone* destBone = &destPerson->bones[b];
-            const Bone* fromBone = b < fromPerson->boneCount ? &fromPerson->bones[b] : NULL;
-            const Bone* toBone = b < toPerson->boneCount ? &toPerson->bones[b] : NULL;
-            
-            // Si solo hay hueso de destino, usarlo
-            if (!fromBone && toBone) {
-                *destBone = *toBone;
-                continue;
-            }
-            
-            // Si solo hay hueso de origen, usarlo
-            if (fromBone && !toBone) {
-                *destBone = *fromBone;
-                continue;
-            }
-            
-            // Si no hay ninguno, continuar
-            if (!fromBone && !toBone) continue;
-            
-            // Interpolar hueso
-            strncpy(destBone->name, fromBone->name, MAX_BONE_NAME_LENGTH - 1);
-            destBone->name[MAX_BONE_NAME_LENGTH - 1] = '\0';
-            
-            // Interpolación de posición con easing
-            if (fromBone->position.valid && toBone->position.valid) {
-                destBone->position.position.x = fromBone->position.position.x * (1.0f - easedT) + 
-                                               toBone->position.position.x * easedT;
-                destBone->position.position.y = fromBone->position.position.y * (1.0f - easedT) + 
-                                               toBone->position.position.y * easedT;
-                destBone->position.position.z = fromBone->position.position.z * (1.0f - easedT) + 
-                                               toBone->position.position.z * easedT;
-                destBone->position.valid = true;
-            } else if (fromBone->position.valid) {
-                destBone->position = fromBone->position;
-                // Aplicar fade-out a la visibilidad
-                destBone->position.confidence = fromBone->position.confidence * (1.0f - easedT);
-            } else if (toBone->position.valid) {
-                destBone->position = toBone->position;
-                // Aplicar fade-in a la visibilidad
-                destBone->position.confidence = toBone->position.confidence * easedT;
-            } else {
-                destBone->position.valid = false;
-            }
-            
-            destBone->position.confidence = (fromBone->position.confidence * (1.0f - easedT) + 
-                                            toBone->position.confidence * easedT);
-            
-            // Interpolación de tamaño
-            destBone->size.x = fromBone->size.x * (1.0f - easedT) + toBone->size.x * easedT;
-            destBone->size.y = fromBone->size.y * (1.0f - easedT) + toBone->size.y * easedT;
-            
-            // Interpolación de rotación (manejar wrapping)
-            float rotDiff = toBone->rotation - fromBone->rotation;
-            if (rotDiff > 180.0f) rotDiff -= 360.0f;
-            if (rotDiff < -180.0f) rotDiff += 360.0f;
-            destBone->rotation = fromBone->rotation + rotDiff * easedT;
-            
-            // Propiedades booleanas
-            destBone->visible = fromBone->visible || toBone->visible;
-            destBone->textureIndex = toBone->textureIndex;  // Usar textura de destino
-            destBone->mirrored = toBone->mirrored;          // Usar mirroring de destino
-        }
-    }
-}
-
-// Función para capturar el frame actual ANTES de cambiar de animación
-static void CaptureCurrentFrame(AnimatedCharacter* character) {
-    if (!character || !character->animation.isLoaded) {
-        g_hasValidFromFrame = false;
-        return;
-    }
-    
-    if (character->currentFrame < 0 || character->currentFrame >= character->animation.frameCount) {
-        g_hasValidFromFrame = false;
-        return;
-    }
-    
-    // Hacer copia profunda del frame actual
-    const AnimationFrame* currentFrame = &character->animation.frames[character->currentFrame];
-    CopyAnimationFrame(&g_transitionFromFrame, currentFrame);
-    g_hasValidFromFrame = true;
-    
-    TraceLog(LOG_INFO, "TRANSITION: Captured current frame %d as transition origin", 
-             character->currentFrame);
-}
-
-// Función para iniciar una transición entre animaciones
-static void StartAnimationTransition(void) {
-    if (!g_hasValidFromFrame) {
-        TraceLog(LOG_WARNING, "TRANSITION: No valid 'from' frame captured, skipping transition");
-        return;
-    }
-    
-    g_isTransitioning = true;
-    g_transitionTime = 0.0f;
-    
-    TraceLog(LOG_INFO, "TRANSITION: Started animation transition (duration: %.2fs)", 
-             g_transitionDuration);
-}
-
-void SetAnimationTransitionDuration(float duration) {
-    if (duration > 0.0f && duration < 1.0f) {
-        g_transitionDuration = duration;
-        TraceLog(LOG_INFO, "TRANSITION: Duration set to %.2f seconds", duration);
-    }
-}
-
-bool BonesDeleteFrame(BonesAnimation* animation, int frameIndex) {
-    if (!animation || frameIndex < 0 || frameIndex >= animation->frameCount) {
-        return false;
-    }
-    
-    AnimationFrame* frameToDelete = &animation->frames[frameIndex];
-    
-    // Si es un frame interpolado, simplemente borrarlo
-    if (!frameToDelete->isOriginalKeyframe) {
-        for (int i = frameIndex; i < animation->frameCount - 1; i++) {
-            animation->frames[i] = animation->frames[i + 1];
-        }
-        animation->frameCount--;
-        
-        TraceLog(LOG_INFO, "BONES: Deleted interpolated frame %d", frameIndex);
-        return true;
-    }
-    
-    // Es un keyframe original - necesitamos re-interpolar
-    TraceLog(LOG_INFO, "BONES: Deleting keyframe %d, re-interpolating region...", frameIndex);
-    
-    // Encontrar keyframes vecinos
-    int prevKeyframeIdx = -1;
-    int nextKeyframeIdx = -1;
-    
-    for (int i = frameIndex - 1; i >= 0; i--) {
-        if (animation->frames[i].isOriginalKeyframe) {
-            prevKeyframeIdx = i;
-            break;
-        }
-    }
-    
-    for (int i = frameIndex + 1; i < animation->frameCount; i++) {
-        if (animation->frames[i].isOriginalKeyframe) {
-            nextKeyframeIdx = i;
-            break;
-        }
-    }
-    
-    // Guardar keyframes vecinos
-    AnimationFrame prevKeyframe, nextKeyframe;
-    bool hasPrev = (prevKeyframeIdx >= 0);
-    bool hasNext = (nextKeyframeIdx >= 0);
-    
-    if (hasPrev) prevKeyframe = animation->frames[prevKeyframeIdx];
-    if (hasNext) nextKeyframe = animation->frames[nextKeyframeIdx];
-    
-    // Calcular cuántos frames eliminar (el keyframe + frames interpolados hasta el siguiente)
-    int framesToDelete = hasNext ? (nextKeyframeIdx - frameIndex) : 1;
-    
-    // Mover frames posteriores
-    for (int i = frameIndex; i < animation->frameCount - framesToDelete; i++) {
-        animation->frames[i] = animation->frames[i + framesToDelete];
-    }
-    animation->frameCount -= framesToDelete;
-    
-    // Re-interpolar si tenemos ambos keyframes vecinos
-    if (hasPrev && hasNext) {
-        // Encontrar nuevas posiciones
-        int newPrevIdx = prevKeyframeIdx;
-        int newNextIdx = -1;
-        
-        for (int i = newPrevIdx + 1; i < animation->frameCount; i++) {
-            if (animation->frames[i].isOriginalKeyframe && 
-                animation->frames[i].frameNumber == nextKeyframe.frameNumber) {
-                newNextIdx = i;
-                break;
-            }
-        }
-        
-        if (newNextIdx > newPrevIdx + 1) {
-            int framesToInterpolate = newNextIdx - newPrevIdx - 1;
-            
-            TraceLog(LOG_INFO, "BONES: Re-interpolating %d frames between indices %d and %d",
-                     framesToInterpolate, newPrevIdx, newNextIdx);
-            
-            // Interpolar frames
-            for (int i = 0; i < framesToInterpolate; i++) {
-                int destIdx = newPrevIdx + i + 1;
-                float t = (float)(i + 1) / (float)(framesToInterpolate + 1);
-                t = t * t * (3.0f - 2.0f * t); // smoothstep
-                
-                AnimationFrame* dest = &animation->frames[destIdx];
-                dest->valid = true;
-                dest->isOriginalKeyframe = false;  // ✓ Marcar como interpolado
-                dest->personCount = prevKeyframe.personCount > nextKeyframe.personCount ? 
-                                   prevKeyframe.personCount : nextKeyframe.personCount;
-                
-                // Interpolar personas y huesos
-                for (int p = 0; p < dest->personCount; p++) {
-                    Person* destPerson = &dest->persons[p];
-                    Person* personA = p < prevKeyframe.personCount ? &prevKeyframe.persons[p] : NULL;
-                    Person* personB = p < nextKeyframe.personCount ? &nextKeyframe.persons[p] : NULL;
-                    
-                    if (personA && personB) {
-                        strncpy(destPerson->personId, personA->personId, 15);
-                        destPerson->personId[15] = '\0';
-                        destPerson->active = personA->active || personB->active;
-                        destPerson->boneCount = personA->boneCount > personB->boneCount ? 
-                                               personA->boneCount : personB->boneCount;
-                        
-                        for (int b = 0; b < destPerson->boneCount; b++) {
-                            Bone* destBone = &destPerson->bones[b];
-                            Bone* boneA = b < personA->boneCount ? &personA->bones[b] : NULL;
-                            Bone* boneB = b < personB->boneCount ? &personB->bones[b] : NULL;
-                            
-                            if (boneA && boneB) {
-                                strncpy(destBone->name, boneA->name, MAX_BONE_NAME_LENGTH - 1);
-                                destBone->name[MAX_BONE_NAME_LENGTH - 1] = '\0';
-                                
-                                destBone->position.position.x = boneA->position.position.x * (1.0f - t) + 
-                                                               boneB->position.position.x * t;
-                                destBone->position.position.y = boneA->position.position.y * (1.0f - t) + 
-                                                               boneB->position.position.y * t;
-                                destBone->position.position.z = boneA->position.position.z * (1.0f - t) + 
-                                                               boneB->position.position.z * t;
-                                
-                                destBone->position.valid = boneA->position.valid && boneB->position.valid;
-                                destBone->position.confidence = (boneA->position.confidence + boneB->position.confidence) * 0.5f;
-                                
-                                destBone->size.x = boneA->size.x * (1.0f - t) + boneB->size.x * t;
-                                destBone->size.y = boneA->size.y * (1.0f - t) + boneB->size.y * t;
-                                
-                                float rotDiff = boneB->rotation - boneA->rotation;
-                                if (rotDiff > 180.0f) rotDiff -= 360.0f;
-                                if (rotDiff < -180.0f) rotDiff += 360.0f;
-                                destBone->rotation = boneA->rotation + rotDiff * t;
-                                
-                                destBone->visible = boneA->visible || boneB->visible;
-                                destBone->textureIndex = boneA->textureIndex;
-                                destBone->mirrored = boneA->mirrored;
-                            } else if (boneA) {
-                                *destBone = *boneA;
-                            } else if (boneB) {
-                                *destBone = *boneB;
-                            }
-                        }
-                    } else if (personA) {
-                        *destPerson = *personA;
-                    } else if (personB) {
-                        *destPerson = *personB;
-                    }
-                }
-            }
-        }
-    }
-    
-    TraceLog(LOG_INFO, "BONES: Keyframe deleted, new frame count: %d", animation->frameCount);
-    return true;
-}
-
-// Modificar BonesDuplicateFrame
-bool BonesDuplicateFrame(BonesAnimation* animation, int frameIndex) {
-    if (!animation || frameIndex < 0 || frameIndex >= animation->frameCount ||
-        animation->frameCount >= animation->maxFrames) {
-        return false;
-    }
-    
-    // Mover frames posteriores
-    for (int i = animation->frameCount; i > frameIndex; i--) {
-        animation->frames[i] = animation->frames[i - 1];
-        animation->frames[i].frameNumber = i;
-    }
-    
-    // Duplicar el frame
-    animation->frames[frameIndex + 1] = animation->frames[frameIndex];
-    animation->frames[frameIndex + 1].frameNumber = frameIndex + 1;
-    animation->frames[frameIndex + 1].isOriginalKeyframe = true;  // ✓ El duplicado es keyframe
-    animation->frameCount++;
-    
-    TraceLog(LOG_INFO, "BONES: Duplicated frame %d as keyframe, new count: %d", 
-             frameIndex, animation->frameCount);
-    return true;
-}
-static void InterpolateBone(const Bone* boneA, const Bone* boneB, Bone* result, float t) {
-    strncpy(result->name, boneA->name, MAX_BONE_NAME_LENGTH - 1);
-    result->name[MAX_BONE_NAME_LENGTH - 1] = '\0';
-    
-    result->position.position.x = boneA->position.position.x * (1.0f - t) + boneB->position.position.x * t;
-    result->position.position.y = boneA->position.position.y * (1.0f - t) + boneB->position.position.y * t;
-    result->position.position.z = boneA->position.position.z * (1.0f - t) + boneB->position.position.z * t;
-    
-    result->position.valid = boneA->position.valid && boneB->position.valid;
-    result->position.confidence = (boneA->position.confidence + boneB->position.confidence) * 0.5f;
-    
-    result->size.x = boneA->size.x * (1.0f - t) + boneB->size.x * t;
-    result->size.y = boneA->size.y * (1.0f - t) + boneB->size.y * t;
-    
-    result->visible = boneA->visible || boneB->visible;
-    result->textureIndex = boneA->textureIndex;
-    result->rotation = boneA->rotation * (1.0f - t) + boneB->rotation * t;
-    result->mirrored = boneA->mirrored;
-}
-
-static void InterpolatePerson(const Person* personA, const Person* personB, Person* result, float t) {
-    strncpy(result->personId, personA->personId, 15);
-    result->personId[15] = '\0';
-    
-    result->active = personA->active || personB->active;
-    result->boneCount = personA->boneCount > personB->boneCount ? personA->boneCount : personB->boneCount;
-    
-    for (int i = 0; i < result->boneCount; i++) {
-        if (i < personA->boneCount && i < personB->boneCount) {
-            InterpolateBone(&personA->bones[i], &personB->bones[i], &result->bones[i], t);
-        } else if (i < personA->boneCount) {
-            result->bones[i] = personA->bones[i];
-        } else {
-            result->bones[i] = personB->bones[i];
-        }
-    }
-}
-
-bool BonesInterpolateFrames(BonesAnimation* animation, int frameA, int frameB, int framesToAdd) {
-    if (!animation || frameA < 0 || frameB <= frameA || frameB >= animation->frameCount ||
-        framesToAdd <= 0 || animation->frameCount + framesToAdd > animation->maxFrames) {
-        return false;
-    }
-    
-    // Mover frames posteriores
-    for (int i = animation->frameCount - 1; i >= frameB; i--) {
-        animation->frames[i + framesToAdd] = animation->frames[i];
-        animation->frames[i + framesToAdd].frameNumber = i + framesToAdd;
-    }
-    
-    // Crear frames interpolados
-    AnimationFrame* srcA = &animation->frames[frameA];
-    AnimationFrame* srcB = &animation->frames[frameB + framesToAdd];
-    
-    for (int i = 0; i < framesToAdd; i++) {
-        int newFrameIndex = frameA + i + 1;
-        float t = (float)(i + 1) / (float)(framesToAdd + 1);
-        
-        AnimationFrame* dest = &animation->frames[newFrameIndex];
-        dest->frameNumber = newFrameIndex;
-        dest->personCount = srcA->personCount > srcB->personCount ? srcA->personCount : srcB->personCount;
-        dest->valid = true;
-        
-        for (int p = 0; p < dest->personCount; p++) {
-            if (p < srcA->personCount && p < srcB->personCount) {
-                InterpolatePerson(&srcA->persons[p], &srcB->persons[p], &dest->persons[p], t);
-            } else if (p < srcA->personCount) {
-                dest->persons[p] = srcA->persons[p];
-            } else {
-                dest->persons[p] = srcB->persons[p];
-            }
-        }
-    }
-    
-    animation->frameCount += framesToAdd;
-    
-    TraceLog(LOG_INFO, "BONES: Interpolated %d frames between %d and %d", 
-             framesToAdd, frameA, frameB);
-    return true;
-}
-
-bool BonesInsertEmptyFrame(BonesAnimation* animation, int position) {
-    if (!animation || position < 0 || position > animation->frameCount ||
-        animation->frameCount >= animation->maxFrames) {
-        return false;
-    }
-    
-    // Mover frames posteriores
-    for (int i = animation->frameCount; i > position; i--) {
-        animation->frames[i] = animation->frames[i - 1];
-        animation->frames[i].frameNumber = i;
-    }
-    
-    // Crear frame vacío
-    AnimationFrame* newFrame = &animation->frames[position];
-    memset(newFrame, 0, sizeof(AnimationFrame));
-    newFrame->frameNumber = position;
-    newFrame->valid = true;
-    
-    animation->frameCount++;
-    
-    TraceLog(LOG_INFO, "BONES: Inserted empty frame at position %d", position);
-    return true;
-}
-
-bool BonesCopyFrame(BonesAnimation* animation, int sourceFrame, int targetFrame) {
-    if (!animation || sourceFrame < 0 || sourceFrame >= animation->frameCount ||
-        targetFrame < 0 || targetFrame >= animation->maxFrames) {
-        return false;
-    }
-    
-    animation->frames[targetFrame] = animation->frames[sourceFrame];
-    animation->frames[targetFrame].frameNumber = targetFrame;
-    
-    if (targetFrame >= animation->frameCount) {
-        animation->frameCount = targetFrame + 1;
-    }
-    
-    TraceLog(LOG_INFO, "BONES: Copied frame %d to %d", sourceFrame, targetFrame);
-    return true;
-}
-
-AnimatedCharacter* CreateAnimatedCharacter(const char* textureConfigPath, const char* textureSetsPath) {
-    AnimatedCharacter* character = (AnimatedCharacter*)calloc(1, sizeof(AnimatedCharacter));
-    if (!character) return NULL;
-
-    // Inicializar renderizador
-    character->renderer = BonesRenderer_Create();
-    if (!character->renderer || !BonesRenderer_Init(character->renderer)) {
-        free(character);
-        return NULL;
-    }
-
-    // Inicializar sistemas de texturas
-    character->textureSets = BonesTextureSets_Create();
-    if (textureSetsPath && !BonesTextureSets_LoadFromFile(character->textureSets, textureSetsPath)) {
-        TraceLog(LOG_WARNING, "TEXTURE_SETS: No texture sets loaded, using defaults");
-    }
-
-    // Asignar también a la variable global
-    g_textureSets = character->textureSets;
-
-    // Cargar configuraciones de texturas
-    if (textureConfigPath) {
-        LoadSimpleTextureConfig(&character->textureSystem, textureConfigPath);
-        LoadBoneConfigurations(&character->textureSystem, &character->boneConfigs, &character->boneConfigCount);
-    }
-
-    // Inicializar sistema de animación
-    if (BonesInit(&character->animation, 1000) != BONES_SUCCESS) {
-        BonesRenderer_Free(character->renderer);
-        BonesTextureSets_Free(character->textureSets);
-        free(character);
-        return NULL;
-    }
-
-    // Configuración por defecto
-    character->renderHeadBillboards = true;
-    character->renderTorsoBillboards = true;
-    character->autoPlay = true;
-    character->autoPlaySpeed = 0.1f;
-    character->lastProcessedFrame = -1;
-
-    // Configuración de renderizado
-    character->renderConfig = BonesGetDefaultRenderConfig();
-    character->renderConfig.drawDebugSpheres = true;
-    character->renderConfig.debugColor = GREEN;
-    character->renderConfig.debugSphereRadius = 0.035f;
-    character->renderConfig.enableDepthSorting = true;
-    BonesSetRenderConfig(&character->renderConfig);
-
-    return character;
-}
-
-void DestroyAnimatedCharacter(AnimatedCharacter* character) {
-    if (!character) return;
-
-    AnimController_Free(character->animController);
-    BonesTextureSets_Free(character->textureSets);
-    BonesRenderer_Free(character->renderer);
-    free(character->renderBones);
-    free(character->renderHeads);
-    free(character->renderTorsos);
-    CleanupTextureSystem(&character->textureSystem, &character->boneConfigs, &character->boneConfigCount);
-    BonesFree(&character->animation);
-    
-    // Limpiar la variable global
-    g_textureSets = NULL;
-    
-    free(character);
-}
-
-// Función para crear todos los frames intermedios faltantes en la animación
-bool BonesCreateMissingFrames(BonesAnimation* animation) {
-    if (!animation || !animation->isLoaded || animation->frameCount < 2) {
-        TraceLog(LOG_WARNING, "BONES: Cannot create missing frames - invalid animation");
-        return false;
-    }
-
-    // Encontrar el rango completo de frames
-    int minFrame = animation->frames[0].frameNumber;
-    int maxFrame = animation->frames[0].frameNumber;
-    
-    for (int i = 0; i < animation->frameCount; i++) {
-        if (animation->frames[i].frameNumber < minFrame) minFrame = animation->frames[i].frameNumber;
-        if (animation->frames[i].frameNumber > maxFrame) maxFrame = animation->frames[i].frameNumber;
-    }
-    
-    int totalFramesNeeded = maxFrame - minFrame + 1;
-    
-    TraceLog(LOG_INFO, "BONES: Creating missing frames from %d to %d (total: %d frames)", 
-             minFrame, maxFrame, totalFramesNeeded);
-    
-    // Verificar si necesitamos más capacidad
-    if (totalFramesNeeded > animation->maxFrames) {
-        TraceLog(LOG_WARNING, "BONES: Need to expand capacity from %d to %d", 
-                 animation->maxFrames, totalFramesNeeded);
-        
-        AnimationFrame* expandedFrames = (AnimationFrame*)realloc(animation->frames, 
-                                                                   totalFramesNeeded * sizeof(AnimationFrame));
-        if (!expandedFrames) {
-            TraceLog(LOG_ERROR, "BONES: Failed to expand frame array");
-            return false;
-        }
-        
-        animation->frames = expandedFrames;
-        animation->maxFrames = totalFramesNeeded;
-        
-        for (int i = animation->frameCount; i < totalFramesNeeded; i++) {
-            memset(&animation->frames[i], 0, sizeof(AnimationFrame));
-        }
-    }
-    
-    // Crear un array temporal para los frames ordenados
-    AnimationFrame* tempFrames = (AnimationFrame*)calloc(totalFramesNeeded, sizeof(AnimationFrame));
-    if (!tempFrames) {
-        TraceLog(LOG_ERROR, "BONES: Failed to allocate temporary frame array");
-        return false;
-    }
-    
-    int framesCreated = 0;
-    
-    // Para cada frame en el rango completo
-    for (int frameNum = minFrame; frameNum <= maxFrame; frameNum++) {
-        int targetIndex = frameNum - minFrame;
-        
-        // Buscar si este frame existe en la animación original
-        int existingIndex = -1;
-        for (int i = 0; i < animation->frameCount; i++) {
-            if (animation->frames[i].frameNumber == frameNum) {
-                existingIndex = i;
-                break;
-            }
-        }
-        
-        if (existingIndex >= 0) {
-            // El frame existe, copiarlo directamente
-            tempFrames[targetIndex] = animation->frames[existingIndex];
-            // ✓ MANTENER su flag de keyframe original
-            tempFrames[targetIndex].isOriginalKeyframe = animation->frames[existingIndex].isOriginalKeyframe;
-        } else {
-            // El frame no existe, necesitamos interpolarlo
-            int prevFrameIdx = -1;
-            int prevFrameNum = -1;
-            for (int i = 0; i < animation->frameCount; i++) {
-                if (animation->frames[i].frameNumber < frameNum) {
-                    if (prevFrameNum < 0 || animation->frames[i].frameNumber > prevFrameNum) {
-                        prevFrameIdx = i;
-                        prevFrameNum = animation->frames[i].frameNumber;
-                    }
-                }
-            }
-            
-            int nextFrameIdx = -1;
-            int nextFrameNum = -1;
-            for (int i = 0; i < animation->frameCount; i++) {
-                if (animation->frames[i].frameNumber > frameNum) {
-                    if (nextFrameNum < 0 || animation->frames[i].frameNumber < nextFrameNum) {
-                        nextFrameIdx = i;
-                        nextFrameNum = animation->frames[i].frameNumber;
-                    }
-                }
-            }
-            
-            if (prevFrameIdx >= 0 && nextFrameIdx >= 0) {
-                // Interpolar entre los dos frames
-                AnimationFrame* frameA = &animation->frames[prevFrameIdx];
-                AnimationFrame* frameB = &animation->frames[nextFrameIdx];
-                
-                float t = (float)(frameNum - prevFrameNum) / (float)(nextFrameNum - prevFrameNum);
-                t = t * t * (3.0f - 2.0f * t);
-                
-                AnimationFrame* destFrame = &tempFrames[targetIndex];
-                memset(destFrame, 0, sizeof(AnimationFrame));
-                
-                destFrame->frameNumber = frameNum;
-                destFrame->valid = true;
-                destFrame->isOriginalKeyframe = false;  // ✓ CORREGIDO: marcar como interpolado
-                destFrame->personCount = frameA->personCount > frameB->personCount ? 
-                                        frameA->personCount : frameB->personCount;
-                
-                // Interpolar cada persona
-                for (int p = 0; p < destFrame->personCount; p++) {
-                    Person* destPerson = &destFrame->persons[p];
-                    
-                    if (p < frameA->personCount && p < frameB->personCount) {
-                        Person* personA = &frameA->persons[p];
-                        Person* personB = &frameB->persons[p];
-                        
-                        strncpy(destPerson->personId, personA->personId, 15);
-                        destPerson->personId[15] = '\0';
-                        destPerson->active = personA->active || personB->active;
-                        destPerson->boneCount = personA->boneCount > personB->boneCount ? 
-                                               personA->boneCount : personB->boneCount;
-                        
-                        // Interpolar cada hueso
-                        for (int b = 0; b < destPerson->boneCount; b++) {
-                            Bone* destBone = &destPerson->bones[b];
-                            
-                            if (b < personA->boneCount && b < personB->boneCount) {
-                                Bone* boneA = &personA->bones[b];
-                                Bone* boneB = &personB->bones[b];
-                                
-                                strncpy(destBone->name, boneA->name, MAX_BONE_NAME_LENGTH - 1);
-                                destBone->name[MAX_BONE_NAME_LENGTH - 1] = '\0';
-                                
-                                // Interpolación de posición
-                                destBone->position.position.x = boneA->position.position.x * (1.0f - t) + 
-                                                               boneB->position.position.x * t;
-                                destBone->position.position.y = boneA->position.position.y * (1.0f - t) + 
-                                                               boneB->position.position.y * t;
-                                destBone->position.position.z = boneA->position.position.z * (1.0f - t) + 
-                                                               boneB->position.position.z * t;
-                                
-                                destBone->position.valid = boneA->position.valid && boneB->position.valid;
-                                destBone->position.confidence = (boneA->position.confidence + boneB->position.confidence) * 0.5f;
-                                
-                                // Interpolación de tamaño
-                                destBone->size.x = boneA->size.x * (1.0f - t) + boneB->size.x * t;
-                                destBone->size.y = boneA->size.y * (1.0f - t) + boneB->size.y * t;
-                                
-                                // Interpolación de rotación
-                                float rotDiff = boneB->rotation - boneA->rotation;
-                                if (rotDiff > 180.0f) rotDiff -= 360.0f;
-                                if (rotDiff < -180.0f) rotDiff += 360.0f;
-                                destBone->rotation = boneA->rotation + rotDiff * t;
-                                
-                                destBone->visible = boneA->visible || boneB->visible;
-                                destBone->textureIndex = boneA->textureIndex;
-                                destBone->mirrored = boneA->mirrored;
-                            } else if (b < personA->boneCount) {
-                                *destBone = personA->bones[b];
-                            } else {
-                                *destBone = personB->bones[b];
-                            }
-                        }
-                    } else if (p < frameA->personCount) {
-                        *destPerson = frameA->persons[p];
-                    } else {
-                        *destPerson = frameB->persons[p];
-                    }
-                }
-                
-                framesCreated++;
-            } else if (prevFrameIdx >= 0) {
-                tempFrames[targetIndex] = animation->frames[prevFrameIdx];
-                tempFrames[targetIndex].frameNumber = frameNum;
-                tempFrames[targetIndex].isOriginalKeyframe = false;  // ✓ Marcar como interpolado
-            } else if (nextFrameIdx >= 0) {
-                tempFrames[targetIndex] = animation->frames[nextFrameIdx];
-                tempFrames[targetIndex].frameNumber = frameNum;
-                tempFrames[targetIndex].isOriginalKeyframe = false;  // ✓ Marcar como interpolado
-            }
-        }
-    }
-    
-    // Copiar los frames temporales al array original
-    memcpy(animation->frames, tempFrames, totalFramesNeeded * sizeof(AnimationFrame));
-    animation->frameCount = totalFramesNeeded;
-    
-    free(tempFrames);
-    
-    TraceLog(LOG_INFO, "BONES: Successfully created %d interpolated frames (total: %d frames)", 
-             framesCreated, totalFramesNeeded);
-    
-    return true;
-}
-
-bool LoadAnimation(AnimatedCharacter* character, const char* animationPath, const char* metadataPath) {
-    if (!character) return false;
-
-    // *** CAPTURAR EL FRAME ACTUAL ANTES DE DESTRUIR LA ANIMACIÓN ***
-    // Esto es CRÍTICO: debemos copiar el frame ANTES de que se libere la memoria
-    CaptureCurrentFrame(character);
-
-    // Liberar animación anterior si existe
-    if (character->animController) {
-        AnimController_Free(character->animController);
-        character->animController = NULL;
-    }
-
-    // Cargar nueva animación
-    if (BonesLoadFromJSON(&character->animation, animationPath) != BONES_SUCCESS) {
-        TraceLog(LOG_ERROR, "Failed to load animation from: %s", animationPath);
-        g_hasValidFromFrame = false;  // Invalidar frame capturado
-        return false;
-    }
-
-    // Crear frames intermedios interpolados
-    if (!BonesCreateMissingFrames(&character->animation)) {
-        TraceLog(LOG_WARNING, "Failed to create interpolated frames, continuing with keyframes only");
-    }
-
-    character->maxFrames = BonesGetFrameCount(&character->animation);
-    character->currentFrame = 0;
-    BonesSetFrame(&character->animation, 0);
-
-    // *** INICIAR TRANSICIÓN SI TENEMOS UN FRAME VÁLIDO GUARDADO ***
-    StartAnimationTransition();
-
-    // Configurar controlador de animación
-    character->animController = AnimController_Create(&character->animation, character->textureSets);
-    if (!character->animController) {
-        TraceLog(LOG_ERROR, "Failed to create animation controller");
-        return false;
-    }
-
-    // Cargar metadata si está disponible
-    if (metadataPath) {
-        if (AnimController_LoadClipMetadata(character->animController, metadataPath)) {
-            const char* clipName = "default";
-            if (character->animController->clipCount > 0) {
-                clipName = character->animController->clips[0].name;
-            }
-            
-            if (AnimController_PlayClip(character->animController, clipName)) {
-                TraceLog(LOG_INFO, "Playing animation clip: %s", clipName);
-            } else {
-                TraceLog(LOG_WARNING, "Failed to play clip: %s", clipName);
-            }
-        } else {
-            TraceLog(LOG_WARNING, "No metadata found or failed to load: %s", metadataPath);
-        }
-    }
-
-    // Forzar actualización de datos de renderizado
-    character->forceUpdate = true;
-    character->lastProcessedFrame = -1;
-
-    TraceLog(LOG_INFO, "Animation loaded successfully: %s (%d frames)", animationPath, character->maxFrames);
-    return true;
-}
-
-// ============================================================================
-// MODIFICAR LA FUNCIÓN UpdateAnimatedCharacter EXISTENTE
-// Buscar la sección donde se determina qué frame usar
-// ============================================================================
-
-void UpdateAnimatedCharacter(AnimatedCharacter* character, float deltaTime) {
-    if (!character) return;
-
-    // Actualizar animación si está en auto-play y tiene controlador
-    if (character->animController && character->autoPlay) {
-        AnimController_Update(character->animController, deltaTime);
-        
-        int frameFromController = AnimController_GetCurrentFrame(character->animController);
-        if (frameFromController != character->currentFrame) {
-            BonesSetFrame(&character->animation, frameFromController);
-            character->currentFrame = frameFromController;
-            character->forceUpdate = true;
-        }
-    }
-
-    // *** NUEVO: Actualizar transición entre animaciones ***
-    static AnimationFrame transitionFrame;
-    bool usingTransition = false;
-    
-    if (g_isTransitioning) {
-        g_transitionTime += deltaTime;
-        float t = g_transitionTime / g_transitionDuration;
-        
-        if (t >= 1.0f) {
-            // Transición completada
-            g_isTransitioning = false;
-            TraceLog(LOG_INFO, "TRANSITION: Animation transition completed");
-        } else {
-            // En medio de la transición - interpolar
-            if (character->animation.isLoaded && 
-                character->currentFrame >= 0 && 
-                character->currentFrame < character->animation.frameCount) {
-                
-                // Copiar frame de destino (primer frame o frame actual de nueva animación)
-                CopyAnimationFrame(&g_transitionToFrame, &character->animation.frames[character->currentFrame]);
-                
-                // Interpolar entre frames
-                InterpolateTransitionFrames(&g_transitionFromFrame, &g_transitionToFrame, 
-                                          &transitionFrame, t);
-                usingTransition = true;
-                
-                TraceLog(LOG_DEBUG, "TRANSITION: Blending animations (t=%.2f)", t);
-            } else {
-                g_isTransitioning = false;
-            }
-        }
-    }
-
-    // ====== INTERPOLACIÓN SUAVE ENTRE FRAMES ======
-    static AnimationFrame interpolatedFrame;
-    bool usingInterpolation = false;
-    
-    // Solo interpolar frames si NO estamos en transición de animación
-    if (!usingTransition && character->animation.isLoaded && character->autoPlay && 
-        character->currentFrame >= 0 && character->currentFrame < character->animation.frameCount - 1) {
-        
-        AnimationFrame* currentFrame = &character->animation.frames[character->currentFrame];
-        AnimationFrame* nextFrame = &character->animation.frames[character->currentFrame + 1];
-        
-        // Calcular factor de interpolación (0.0 a 1.0 dentro del frame actual)
-        float t = 0.0f;
-        if (character->animController && character->animController->currentClipIndex >= 0) {
-            AnimationClipMetadata* clip = &character->animController->clips[character->animController->currentClipIndex];
-            if (clip->fps > 0.0f) {
-                float frameDuration = 1.0f / clip->fps;
-                float timeInFrame = fmodf(character->animController->localTime, frameDuration);
-                t = timeInFrame / frameDuration;
-                
-                // Aplicar curva de suavizado (smoothstep)
-                t = t * t * (3.0f - 2.0f * t);
-                
-                // Solo interpolar si estamos significativamente entre frames
-                if (t > 0.05f && t < 0.95f && currentFrame->valid && nextFrame->valid) {
-                    // Crear frame interpolado
-                    memset(&interpolatedFrame, 0, sizeof(AnimationFrame));
-                    interpolatedFrame.frameNumber = currentFrame->frameNumber;
-                    interpolatedFrame.valid = true;
-                    interpolatedFrame.personCount = currentFrame->personCount;
-                    
-                    // Interpolar cada persona
-                    for (int p = 0; p < interpolatedFrame.personCount; p++) {
-                        Person* destPerson = &interpolatedFrame.persons[p];
-                        Person* personA = &currentFrame->persons[p];
-                        Person* personB = p < nextFrame->personCount ? &nextFrame->persons[p] : personA;
-                        
-                        strncpy(destPerson->personId, personA->personId, 15);
-                        destPerson->personId[15] = '\0';
-                        destPerson->active = personA->active;
-                        destPerson->boneCount = personA->boneCount;
-                        
-                        // Interpolar cada hueso
-                        for (int b = 0; b < destPerson->boneCount; b++) {
-                            Bone* destBone = &destPerson->bones[b];
-                            Bone* boneA = &personA->bones[b];
-                            Bone* boneB = b < personB->boneCount ? &personB->bones[b] : boneA;
-                            
-                            strncpy(destBone->name, boneA->name, MAX_BONE_NAME_LENGTH - 1);
-                            destBone->name[MAX_BONE_NAME_LENGTH - 1] = '\0';
-                            
-                            // Interpolación de posición
-                            if (boneA->position.valid && boneB->position.valid) {
-                                destBone->position.position.x = boneA->position.position.x * (1.0f - t) + 
-                                                               boneB->position.position.x * t;
-                                destBone->position.position.y = boneA->position.position.y * (1.0f - t) + 
-                                                               boneB->position.position.y * t;
-                                destBone->position.position.z = boneA->position.position.z * (1.0f - t) + 
-                                                               boneB->position.position.z * t;
-                                destBone->position.valid = true;
-                            } else {
-                                destBone->position = boneA->position;
-                            }
-                            
-                            destBone->position.confidence = (boneA->position.confidence + boneB->position.confidence) * 0.5f;
-                            
-                            // Interpolación de tamaño
-                            destBone->size.x = boneA->size.x * (1.0f - t) + boneB->size.x * t;
-                            destBone->size.y = boneA->size.y * (1.0f - t) + boneB->size.y * t;
-                            
-                            // Interpolación de rotación (manejar wrapping)
-                            float rotDiff = boneB->rotation - boneA->rotation;
-                            if (rotDiff > 180.0f) rotDiff -= 360.0f;
-                            if (rotDiff < -180.0f) rotDiff += 360.0f;
-                            destBone->rotation = boneA->rotation + rotDiff * t;
-                            
-                            destBone->visible = boneA->visible;
-                            destBone->textureIndex = boneA->textureIndex;
-                            destBone->mirrored = boneA->mirrored;
-                        }
-                    }
-                    
-                    usingInterpolation = true;
-                }
-            }
-        }
-    }
-    
-    // Determinar qué frame usar para cálculos
-    const AnimationFrame* frameToUse = NULL;
-    
-    if (usingTransition) {
-        // Prioridad 1: Transición entre animaciones
-        frameToUse = &transitionFrame;
-    } else if (usingInterpolation) {
-        // Prioridad 2: Interpolación suave dentro de la misma animación
-        frameToUse = &interpolatedFrame;
-    } else if (character->animation.isLoaded && BonesIsValidFrame(&character->animation, character->currentFrame)) {
-        // Prioridad 3: Frame normal sin interpolación
-        frameToUse = &character->animation.frames[character->currentFrame];
-    }
-
-    // Actualizar centro automático
-    if (frameToUse && frameToUse->valid) {
-        Vector3 totalPos = {0, 0, 0};
-        int validBoneCount = 0;
-
-        for (int p = 0; p < frameToUse->personCount; p++) {
-            const Person* person = &frameToUse->persons[p];
-            if (!person->active) continue;
-
-            // Calcular posiciones clave
-            Vector3 headPos = CalculateHeadPosition(person);
-            Vector3 chestPos = CalculateChestPosition(person);
-            Vector3 hipPos = CalculateHipPosition(person);
-
-            // Usar posiciones válidas
-            if (Vector3Length(headPos) > 0.01f) { totalPos = Vector3Add(totalPos, headPos); validBoneCount++; }
-            if (Vector3Length(chestPos) > 0.01f) { totalPos = Vector3Add(totalPos, chestPos); validBoneCount++; }
-            if (Vector3Length(hipPos) > 0.01f) { totalPos = Vector3Add(totalPos, hipPos); validBoneCount++; }
-        }
-
-        if (validBoneCount > 0) {
-            Vector3 newCenter = Vector3Scale(totalPos, 1.0f / validBoneCount);
-            
-            if (!character->autoCenterCalculated) {
-                character->autoCenter = newCenter;
-            } else {
-                // Suavizar el movimiento del centro
-                character->autoCenter = Vector3Lerp(character->autoCenter, newCenter, 0.3f);
-            }
-            
-            character->autoCenterCalculated = true;
-        }
-    }
-
-    // Preparar datos de renderizado (siempre actualizar durante transición o interpolación)
-    if (character->forceUpdate || 
-        character->currentFrame != character->lastProcessedFrame || 
-        usingInterpolation || 
-        usingTransition) {
-        
-        // Limpiar datos anteriores
-        character->renderBonesCount = 0;
-        character->renderHeadsCount = 0;
-        character->renderTorsosCount = 0;
-
-        // Si usamos interpolación o transición, reemplazar temporalmente el frame actual
-        AnimationFrame backupFrame;
-        bool needsRestore = false;
-        
-        if (usingTransition || usingInterpolation) {
-            backupFrame = character->animation.frames[character->currentFrame];
-            character->animation.frames[character->currentFrame] = usingTransition ? transitionFrame : interpolatedFrame;
-            needsRestore = true;
-        }
-
-        // Recolectar nuevos datos
-        CollectBonesForRendering(&character->animation, character->renderer->camera, 
-                                &character->renderBones, &character->renderBonesCount,
-                                &character->renderBonesCapacity, 
-                                character->boneConfigs, character->boneConfigCount);
-        
-        if (character->renderHeadBillboards) {
-            CollectHeadsForRendering(&character->animation, &character->renderHeads, 
-                                   &character->renderHeadsCount, &character->renderHeadsCapacity,
-                                   character->boneConfigs, character->boneConfigCount);
-        }
-
-        if (character->renderTorsoBillboards) {
-            CollectTorsosForRendering(&character->animation, &character->renderTorsos,
-                                    &character->renderTorsosCount, &character->renderTorsosCapacity,
-                                    character->boneConfigs, character->boneConfigCount);
-        }
-
-        // Restaurar el frame original
-        if (needsRestore) {
-            character->animation.frames[character->currentFrame] = backupFrame;
-        }
-
-        character->lastProcessedFrame = character->currentFrame;
-        character->forceUpdate = false;
-        
-        const char* modeStr = usingTransition ? " [TRANSITION]" : 
-                             usingInterpolation ? " [SMOOTH]" : "";
-        TraceLog(LOG_DEBUG, "Render data updated - Bones: %d, Heads: %d, Torsos: %d%s", 
-                character->renderBonesCount, character->renderHeadsCount, character->renderTorsosCount,
-                modeStr);
-    }
-}
-
-
-void DrawAnimatedCharacter(AnimatedCharacter* character, Camera camera) {
-    if (!character || !character->animation.isLoaded) return;
-
-    // Actualizar cámara del renderizador
-    character->renderer->camera = camera;
-
-    // Renderizar frame
-    BonesRenderer_RenderFrame(character->renderer,
-                             character->renderBones, character->renderBonesCount,
-                             character->renderHeads, character->renderHeadsCount,
-                             character->renderTorsos, character->renderTorsosCount,
-                             character->autoCenter, character->autoCenterCalculated);
-}
-
-void SetCharacterFrame(AnimatedCharacter* character, int frame) {
-    if (!character) return;
-    
-    if (frame >= 0 && frame < character->maxFrames) {
-        character->currentFrame = frame;
-        BonesSetFrame(&character->animation, frame);
-        character->forceUpdate = true;
-        
-        // Si hay controlador de animación, sincronizarlo
-        if (character->animController) {
-            // Esta función necesitaría ser implementada en el controlador
-            // Por ahora, simplemente forzamos la actualización
-            character->animController->currentFrameInJSON = frame;
-        }
-    }
-}
-
-void SetCharacterAutoPlay(AnimatedCharacter* character, bool autoPlay) {
-    if (character) {
-        character->autoPlay = autoPlay;
-        TraceLog(LOG_INFO, "AutoPlay: %s", autoPlay ? "ON" : "OFF");
-    }
-}
-
-void SetCharacterBillboards(AnimatedCharacter* character, bool heads, bool torsos) {
-    if (character) {
-        character->renderHeadBillboards = heads;
-        character->renderTorsoBillboards = torsos;
-        character->forceUpdate = true;
-        TraceLog(LOG_INFO, "Billboards - Heads: %s, Torsos: %s", 
-                heads ? "ON" : "OFF", torsos ? "ON" : "OFF");
-    }
-}
-
-// ============================================================================
-// CONFIGURACIONES Y ESTRUCTURAS GLOBALES
-// ============================================================================
+static float g_transitionDuration = 0.85f;
+static bool g_hasValidFromFrame = false;
 
 static BonesRenderConfig g_renderConfig = {
     .defaultBoneSize = 0.35f,
@@ -1239,9 +92,962 @@ static const float CHEST_OFFSET_Z = -0.005f;
 static const float CHEST_FALLBACK_Y = -0.08f;
 static const float HIP_OFFSET_Y = -0.02f;
 
-// ============================================================================
-// GESTIÓN DE ERRORES
-// ============================================================================
+static void CopyAnimationFrame(AnimationFrame* dest, const AnimationFrame* src) {
+    if (!dest || !src) return;
+    
+    dest->frameNumber = src->frameNumber;
+    dest->valid = src->valid;
+    dest->personCount = src->personCount;
+    
+    for (int p = 0; p < src->personCount && p < MAX_PERSONS; p++) {
+        Person* destPerson = &dest->persons[p];
+        const Person* srcPerson = &src->persons[p];
+        
+        strncpy(destPerson->personId, srcPerson->personId, 15);
+        destPerson->personId[15] = '\0';
+        
+        destPerson->active = srcPerson->active;
+        destPerson->boneCount = srcPerson->boneCount;
+        
+        for (int b = 0; b < srcPerson->boneCount && b < MAX_BONES_PER_PERSON; b++) {
+            Bone* destBone = &destPerson->bones[b];
+            const Bone* srcBone = &srcPerson->bones[b];
+            
+            strncpy(destBone->name, srcBone->name, MAX_BONE_NAME_LENGTH - 1);
+            destBone->name[MAX_BONE_NAME_LENGTH - 1] = '\0';
+            
+            destBone->position.position = srcBone->position.position;
+            destBone->position.valid = srcBone->position.valid;
+            destBone->position.confidence = srcBone->position.confidence;
+            
+            destBone->size = srcBone->size;
+            destBone->rotation = srcBone->rotation;
+            destBone->visible = srcBone->visible;
+            destBone->textureIndex = srcBone->textureIndex;
+            destBone->mirrored = srcBone->mirrored;
+        }
+    }
+}
+
+static void InterpolateTransitionFrames(const AnimationFrame* fromFrame, 
+                                       const AnimationFrame* toFrame,
+                                       AnimationFrame* result, 
+                                       float t) {
+    if (!fromFrame || !toFrame || !result) return;
+    
+    float easedT = 1.0f - powf(1.0f - t, 3.0f);
+    
+    result->frameNumber = toFrame->frameNumber;
+    result->valid = true;
+    result->personCount = fromFrame->personCount > toFrame->personCount ? 
+                          fromFrame->personCount : toFrame->personCount;
+    
+    for (int p = 0; p < result->personCount; p++) {
+        Person* destPerson = &result->persons[p];
+        const Person* fromPerson = p < fromFrame->personCount ? &fromFrame->persons[p] : NULL;
+        const Person* toPerson = p < toFrame->personCount ? &toFrame->persons[p] : NULL;
+        
+        if (!fromPerson && toPerson) {
+            strncpy(destPerson->personId, toPerson->personId, 15);
+            destPerson->personId[15] = '\0';
+            destPerson->active = toPerson->active;
+            destPerson->boneCount = toPerson->boneCount;
+            for (int b = 0; b < toPerson->boneCount; b++) {
+                destPerson->bones[b] = toPerson->bones[b];
+            }
+            continue;
+        }
+        
+        if (fromPerson && !toPerson) {
+            strncpy(destPerson->personId, fromPerson->personId, 15);
+            destPerson->personId[15] = '\0';
+            destPerson->active = fromPerson->active;
+            destPerson->boneCount = fromPerson->boneCount;
+            for (int b = 0; b < fromPerson->boneCount; b++) {
+                destPerson->bones[b] = fromPerson->bones[b];
+            }
+            continue;
+        }
+        
+        if (!fromPerson && !toPerson) continue;
+        
+        strncpy(destPerson->personId, fromPerson->personId, 15);
+        destPerson->personId[15] = '\0';
+        destPerson->active = fromPerson->active || toPerson->active;
+        destPerson->boneCount = fromPerson->boneCount > toPerson->boneCount ? 
+                               fromPerson->boneCount : toPerson->boneCount;
+        
+        for (int b = 0; b < destPerson->boneCount; b++) {
+            Bone* destBone = &destPerson->bones[b];
+            const Bone* fromBone = b < fromPerson->boneCount ? &fromPerson->bones[b] : NULL;
+            const Bone* toBone = b < toPerson->boneCount ? &toPerson->bones[b] : NULL;
+            
+            if (!fromBone && toBone) {
+                *destBone = *toBone;
+                continue;
+            }
+            
+            if (fromBone && !toBone) {
+                *destBone = *fromBone;
+                continue;
+            }
+            
+            if (!fromBone && !toBone) continue;
+            
+            strncpy(destBone->name, fromBone->name, MAX_BONE_NAME_LENGTH - 1);
+            destBone->name[MAX_BONE_NAME_LENGTH - 1] = '\0';
+            
+            if (fromBone->position.valid && toBone->position.valid) {
+                destBone->position.position.x = fromBone->position.position.x * (1.0f - easedT) + 
+                                               toBone->position.position.x * easedT;
+                destBone->position.position.y = fromBone->position.position.y * (1.0f - easedT) + 
+                                               toBone->position.position.y * easedT;
+                destBone->position.position.z = fromBone->position.position.z * (1.0f - easedT) + 
+                                               toBone->position.position.z * easedT;
+                destBone->position.valid = true;
+            } else if (fromBone->position.valid) {
+                destBone->position = fromBone->position;
+                destBone->position.confidence = fromBone->position.confidence * (1.0f - easedT);
+            } else if (toBone->position.valid) {
+                destBone->position = toBone->position;
+                destBone->position.confidence = toBone->position.confidence * easedT;
+            } else {
+                destBone->position.valid = false;
+            }
+            
+            destBone->position.confidence = (fromBone->position.confidence * (1.0f - easedT) + 
+                                            toBone->position.confidence * easedT);
+            
+            destBone->size.x = fromBone->size.x * (1.0f - easedT) + toBone->size.x * easedT;
+            destBone->size.y = fromBone->size.y * (1.0f - easedT) + toBone->size.y * easedT;
+            
+            float rotDiff = toBone->rotation - fromBone->rotation;
+            if (rotDiff > 180.0f) rotDiff -= 360.0f;
+            if (rotDiff < -180.0f) rotDiff += 360.0f;
+            destBone->rotation = fromBone->rotation + rotDiff * easedT;
+            
+            destBone->visible = fromBone->visible || toBone->visible;
+            destBone->textureIndex = toBone->textureIndex;
+            destBone->mirrored = toBone->mirrored;
+        }
+    }
+}
+
+
+static void CaptureCurrentFrame(AnimatedCharacter* character) {
+    if (!character || !character->animation.isLoaded) {
+        g_hasValidFromFrame = false;
+        return;
+    }
+    
+    if (character->currentFrame < 0 || character->currentFrame >= character->animation.frameCount) {
+        g_hasValidFromFrame = false;
+        return;
+    }
+    
+    const AnimationFrame* currentFrame = &character->animation.frames[character->currentFrame];
+    CopyAnimationFrame(&g_transitionFromFrame, currentFrame);
+    g_hasValidFromFrame = true;
+}
+
+static void StartAnimationTransition(void) {
+    if (!g_hasValidFromFrame) {
+        return;
+    }
+    
+    g_isTransitioning = true;
+    g_transitionTime = 0.0f;
+}
+
+void SetAnimationTransitionDuration(float duration) {
+    if (duration > 0.0f && duration < 1.0f) {
+        g_transitionDuration = duration;
+    }
+}
+
+bool BonesDeleteFrame(BonesAnimation* animation, int frameIndex) {
+    if (!animation || frameIndex < 0 || frameIndex >= animation->frameCount) {
+        return false;
+    }
+    
+    AnimationFrame* frameToDelete = &animation->frames[frameIndex];
+    
+    if (!frameToDelete->isOriginalKeyframe) {
+        for (int i = frameIndex; i < animation->frameCount - 1; i++) {
+            animation->frames[i] = animation->frames[i + 1];
+        }
+        animation->frameCount--;
+        return true;
+    }
+    
+    int prevKeyframeIdx = -1;
+    int nextKeyframeIdx = -1;
+    
+    for (int i = frameIndex - 1; i >= 0; i--) {
+        if (animation->frames[i].isOriginalKeyframe) {
+            prevKeyframeIdx = i;
+            break;
+        }
+    }
+    
+    for (int i = frameIndex + 1; i < animation->frameCount; i++) {
+        if (animation->frames[i].isOriginalKeyframe) {
+            nextKeyframeIdx = i;
+            break;
+        }
+    }
+    
+    AnimationFrame prevKeyframe, nextKeyframe;
+    bool hasPrev = (prevKeyframeIdx >= 0);
+    bool hasNext = (nextKeyframeIdx >= 0);
+    
+    if (hasPrev) prevKeyframe = animation->frames[prevKeyframeIdx];
+    if (hasNext) nextKeyframe = animation->frames[nextKeyframeIdx];
+    
+    int framesToDelete = hasNext ? (nextKeyframeIdx - frameIndex) : 1;
+    
+    for (int i = frameIndex; i < animation->frameCount - framesToDelete; i++) {
+        animation->frames[i] = animation->frames[i + framesToDelete];
+    }
+    animation->frameCount -= framesToDelete;
+    
+    if (hasPrev && hasNext) {
+        int newPrevIdx = prevKeyframeIdx;
+        int newNextIdx = -1;
+        
+        for (int i = newPrevIdx + 1; i < animation->frameCount; i++) {
+            if (animation->frames[i].isOriginalKeyframe && 
+                animation->frames[i].frameNumber == nextKeyframe.frameNumber) {
+                newNextIdx = i;
+                break;
+            }
+        }
+        
+        if (newNextIdx > newPrevIdx + 1) {
+            int framesToInterpolate = newNextIdx - newPrevIdx - 1;
+            
+            for (int i = 0; i < framesToInterpolate; i++) {
+                int destIdx = newPrevIdx + i + 1;
+                float t = (float)(i + 1) / (float)(framesToInterpolate + 1);
+                t = t * t * (3.0f - 2.0f * t);
+                
+                AnimationFrame* dest = &animation->frames[destIdx];
+                dest->valid = true;
+                dest->isOriginalKeyframe = false;
+                dest->personCount = prevKeyframe.personCount > nextKeyframe.personCount ? 
+                                   prevKeyframe.personCount : nextKeyframe.personCount;
+                
+                for (int p = 0; p < dest->personCount; p++) {
+                    Person* destPerson = &dest->persons[p];
+                    Person* personA = p < prevKeyframe.personCount ? &prevKeyframe.persons[p] : NULL;
+                    Person* personB = p < nextKeyframe.personCount ? &nextKeyframe.persons[p] : NULL;
+                    
+                    if (personA && personB) {
+                        strncpy(destPerson->personId, personA->personId, 15);
+                        destPerson->personId[15] = '\0';
+                        destPerson->active = personA->active || personB->active;
+                        destPerson->boneCount = personA->boneCount > personB->boneCount ? 
+                                               personA->boneCount : personB->boneCount;
+                        
+                        for (int b = 0; b < destPerson->boneCount; b++) {
+                            Bone* destBone = &destPerson->bones[b];
+                            Bone* boneA = b < personA->boneCount ? &personA->bones[b] : NULL;
+                            Bone* boneB = b < personB->boneCount ? &personB->bones[b] : NULL;
+                            
+                            if (boneA && boneB) {
+                                strncpy(destBone->name, boneA->name, MAX_BONE_NAME_LENGTH - 1);
+                                destBone->name[MAX_BONE_NAME_LENGTH - 1] = '\0';
+                                
+                                destBone->position.position.x = boneA->position.position.x * (1.0f - t) + 
+                                                               boneB->position.position.x * t;
+                                destBone->position.position.y = boneA->position.position.y * (1.0f - t) + 
+                                                               boneB->position.position.y * t;
+                                destBone->position.position.z = boneA->position.position.z * (1.0f - t) + 
+                                                               boneB->position.position.z * t;
+                                
+                                destBone->position.valid = boneA->position.valid && boneB->position.valid;
+                                destBone->position.confidence = (boneA->position.confidence + boneB->position.confidence) * 0.5f;
+                                
+                                destBone->size.x = boneA->size.x * (1.0f - t) + boneB->size.x * t;
+                                destBone->size.y = boneA->size.y * (1.0f - t) + boneB->size.y * t;
+                                
+                                float rotDiff = boneB->rotation - boneA->rotation;
+                                if (rotDiff > 180.0f) rotDiff -= 360.0f;
+                                if (rotDiff < -180.0f) rotDiff += 360.0f;
+                                destBone->rotation = boneA->rotation + rotDiff * t;
+                                
+                                destBone->visible = boneA->visible || boneB->visible;
+                                destBone->textureIndex = boneA->textureIndex;
+                                destBone->mirrored = boneA->mirrored;
+                            } else if (boneA) {
+                                *destBone = *boneA;
+                            } else if (boneB) {
+                                *destBone = *boneB;
+                            }
+                        }
+                    } else if (personA) {
+                        *destPerson = *personA;
+                    } else if (personB) {
+                        *destPerson = *personB;
+                    }
+                }
+            }
+        }
+    }
+    return true;
+}
+
+bool BonesDuplicateFrame(BonesAnimation* animation, int frameIndex) {
+    if (!animation || frameIndex < 0 || frameIndex >= animation->frameCount ||
+        animation->frameCount >= animation->maxFrames) {
+        return false;
+    }
+    
+    for (int i = animation->frameCount; i > frameIndex; i--) {
+        animation->frames[i] = animation->frames[i - 1];
+        animation->frames[i].frameNumber = i;
+    }
+    
+    animation->frames[frameIndex + 1] = animation->frames[frameIndex];
+    animation->frames[frameIndex + 1].frameNumber = frameIndex + 1;
+    animation->frames[frameIndex + 1].isOriginalKeyframe = true;
+    animation->frameCount++;
+    
+    return true;
+}
+
+static void InterpolateBone(const Bone* boneA, const Bone* boneB, Bone* result, float t) {
+    strncpy(result->name, boneA->name, MAX_BONE_NAME_LENGTH - 1);
+    result->name[MAX_BONE_NAME_LENGTH - 1] = '\0';
+    
+    result->position.position.x = boneA->position.position.x * (1.0f - t) + boneB->position.position.x * t;
+    result->position.position.y = boneA->position.position.y * (1.0f - t) + boneB->position.position.y * t;
+    result->position.position.z = boneA->position.position.z * (1.0f - t) + boneB->position.position.z * t;
+    
+    result->position.valid = boneA->position.valid && boneB->position.valid;
+    result->position.confidence = (boneA->position.confidence + boneB->position.confidence) * 0.5f;
+    
+    result->size.x = boneA->size.x * (1.0f - t) + boneB->size.x * t;
+    result->size.y = boneA->size.y * (1.0f - t) + boneB->size.y * t;
+    
+    result->visible = boneA->visible || boneB->visible;
+    result->textureIndex = boneA->textureIndex;
+    result->rotation = boneA->rotation * (1.0f - t) + boneB->rotation * t;
+    result->mirrored = boneA->mirrored;
+}
+
+static void InterpolatePerson(const Person* personA, const Person* personB, Person* result, float t) {
+    strncpy(result->personId, personA->personId, 15);
+    result->personId[15] = '\0';
+    
+    result->active = personA->active || personB->active;
+    result->boneCount = personA->boneCount > personB->boneCount ? personA->boneCount : personB->boneCount;
+    
+    for (int i = 0; i < result->boneCount; i++) {
+        if (i < personA->boneCount && i < personB->boneCount) {
+            InterpolateBone(&personA->bones[i], &personB->bones[i], &result->bones[i], t);
+        } else if (i < personA->boneCount) {
+            result->bones[i] = personA->bones[i];
+        } else {
+            result->bones[i] = personB->bones[i];
+        }
+    }
+}
+
+bool BonesInterpolateFrames(BonesAnimation* animation, int frameA, int frameB, int framesToAdd) {
+    if (!animation || frameA < 0 || frameB <= frameA || frameB >= animation->frameCount ||
+        framesToAdd <= 0 || animation->frameCount + framesToAdd > animation->maxFrames) {
+        return false;
+    }
+    
+    for (int i = animation->frameCount - 1; i >= frameB; i--) {
+        animation->frames[i + framesToAdd] = animation->frames[i];
+        animation->frames[i + framesToAdd].frameNumber = i + framesToAdd;
+    }
+    
+    AnimationFrame* srcA = &animation->frames[frameA];
+    AnimationFrame* srcB = &animation->frames[frameB + framesToAdd];
+    
+    for (int i = 0; i < framesToAdd; i++) {
+        int newFrameIndex = frameA + i + 1;
+        float t = (float)(i + 1) / (float)(framesToAdd + 1);
+        
+        AnimationFrame* dest = &animation->frames[newFrameIndex];
+        dest->frameNumber = newFrameIndex;
+        dest->personCount = srcA->personCount > srcB->personCount ? srcA->personCount : srcB->personCount;
+        dest->valid = true;
+        
+        for (int p = 0; p < dest->personCount; p++) {
+            if (p < srcA->personCount && p < srcB->personCount) {
+                InterpolatePerson(&srcA->persons[p], &srcB->persons[p], &dest->persons[p], t);
+            } else if (p < srcA->personCount) {
+                dest->persons[p] = srcA->persons[p];
+            } else {
+                dest->persons[p] = srcB->persons[p];
+            }
+        }
+    }
+    
+    animation->frameCount += framesToAdd;
+    
+    return true;
+}
+
+bool BonesInsertEmptyFrame(BonesAnimation* animation, int position) {
+    if (!animation || position < 0 || position > animation->frameCount ||
+        animation->frameCount >= animation->maxFrames) {
+        return false;
+    }
+    
+    for (int i = animation->frameCount; i > position; i--) {
+        animation->frames[i] = animation->frames[i - 1];
+        animation->frames[i].frameNumber = i;
+    }
+    
+    AnimationFrame* newFrame = &animation->frames[position];
+    memset(newFrame, 0, sizeof(AnimationFrame));
+    newFrame->frameNumber = position;
+    newFrame->valid = true;
+    
+    animation->frameCount++;
+    
+    return true;
+}
+
+bool BonesCopyFrame(BonesAnimation* animation, int sourceFrame, int targetFrame) {
+    if (!animation || sourceFrame < 0 || sourceFrame >= animation->frameCount ||
+        targetFrame < 0 || targetFrame >= animation->maxFrames) {
+        return false;
+    }
+    
+    animation->frames[targetFrame] = animation->frames[sourceFrame];
+    animation->frames[targetFrame].frameNumber = targetFrame;
+    
+    if (targetFrame >= animation->frameCount) {
+        animation->frameCount = targetFrame + 1;
+    }
+    
+    return true;
+}
+
+AnimatedCharacter* CreateAnimatedCharacter(const char* textureConfigPath, const char* textureSetsPath) {
+    AnimatedCharacter* character = (AnimatedCharacter*)calloc(1, sizeof(AnimatedCharacter));
+    if (!character) return NULL;
+
+    character->renderer = BonesRenderer_Create();
+    if (!character->renderer || !BonesRenderer_Init(character->renderer)) {
+        free(character);
+        return NULL;
+    }
+
+    character->textureSets = BonesTextureSets_Create();
+    if (textureSetsPath && !BonesTextureSets_LoadFromFile(character->textureSets, textureSetsPath)) {
+    }
+
+    g_textureSets = character->textureSets;
+
+    if (textureConfigPath) {
+        LoadSimpleTextureConfig(&character->textureSystem, textureConfigPath);
+        LoadBoneConfigurations(&character->textureSystem, &character->boneConfigs, &character->boneConfigCount);
+    }
+
+    if (BonesInit(&character->animation, 1000) != BONES_SUCCESS) {
+        BonesRenderer_Free(character->renderer);
+        BonesTextureSets_Free(character->textureSets);
+        free(character);
+        return NULL;
+    }
+
+    character->renderHeadBillboards = true;
+    character->renderTorsoBillboards = true;
+    character->autoPlay = true;
+    character->autoPlaySpeed = 0.1f;
+    character->lastProcessedFrame = -1;
+
+    character->renderConfig = BonesGetDefaultRenderConfig();
+    character->renderConfig.drawDebugSpheres = true;
+    character->renderConfig.debugColor = GREEN;
+    character->renderConfig.debugSphereRadius = 0.035f;
+    character->renderConfig.enableDepthSorting = true;
+    BonesSetRenderConfig(&character->renderConfig);
+
+    return character;
+}
+
+void DestroyAnimatedCharacter(AnimatedCharacter* character) {
+    if (!character) return;
+
+    AnimController_Free(character->animController);
+    BonesTextureSets_Free(character->textureSets);
+    BonesRenderer_Free(character->renderer);
+    free(character->renderBones);
+    free(character->renderHeads);
+    free(character->renderTorsos);
+    CleanupTextureSystem(&character->textureSystem, &character->boneConfigs, &character->boneConfigCount);
+    BonesFree(&character->animation);
+    
+    g_textureSets = NULL;
+    
+    free(character);
+}
+
+bool BonesCreateMissingFrames(BonesAnimation* animation) {
+    if (!animation || !animation->isLoaded || animation->frameCount < 2) {
+        return false;
+    }
+
+    int minFrame = animation->frames[0].frameNumber;
+    int maxFrame = animation->frames[0].frameNumber;
+    
+    for (int i = 0; i < animation->frameCount; i++) {
+        if (animation->frames[i].frameNumber < minFrame) minFrame = animation->frames[i].frameNumber;
+        if (animation->frames[i].frameNumber > maxFrame) maxFrame = animation->frames[i].frameNumber;
+    }
+    
+    int totalFramesNeeded = maxFrame - minFrame + 1;
+    
+    if (totalFramesNeeded > animation->maxFrames) {
+        AnimationFrame* expandedFrames = (AnimationFrame*)realloc(animation->frames, 
+                                                                   totalFramesNeeded * sizeof(AnimationFrame));
+        if (!expandedFrames) {
+            return false;
+        }
+        
+        animation->frames = expandedFrames;
+        animation->maxFrames = totalFramesNeeded;
+        
+        for (int i = animation->frameCount; i < totalFramesNeeded; i++) {
+            memset(&animation->frames[i], 0, sizeof(AnimationFrame));
+        }
+    }
+    
+    AnimationFrame* tempFrames = (AnimationFrame*)calloc(totalFramesNeeded, sizeof(AnimationFrame));
+    if (!tempFrames) {
+        return false;
+    }
+    
+    int framesCreated = 0;
+    
+    for (int frameNum = minFrame; frameNum <= maxFrame; frameNum++) {
+        int targetIndex = frameNum - minFrame;
+        
+        int existingIndex = -1;
+        for (int i = 0; i < animation->frameCount; i++) {
+            if (animation->frames[i].frameNumber == frameNum) {
+                existingIndex = i;
+                break;
+            }
+        }
+        
+        if (existingIndex >= 0) {
+            tempFrames[targetIndex] = animation->frames[existingIndex];
+            tempFrames[targetIndex].isOriginalKeyframe = animation->frames[existingIndex].isOriginalKeyframe;
+        } else {
+            int prevFrameIdx = -1;
+            int prevFrameNum = -1;
+            for (int i = 0; i < animation->frameCount; i++) {
+                if (animation->frames[i].frameNumber < frameNum) {
+                    if (prevFrameNum < 0 || animation->frames[i].frameNumber > prevFrameNum) {
+                        prevFrameIdx = i;
+                        prevFrameNum = animation->frames[i].frameNumber;
+                    }
+                }
+            }
+            
+            int nextFrameIdx = -1;
+            int nextFrameNum = -1;
+            for (int i = 0; i < animation->frameCount; i++) {
+                if (animation->frames[i].frameNumber > frameNum) {
+                    if (nextFrameNum < 0 || animation->frames[i].frameNumber < nextFrameNum) {
+                        nextFrameIdx = i;
+                        nextFrameNum = animation->frames[i].frameNumber;
+                    }
+                }
+            }
+            
+            if (prevFrameIdx >= 0 && nextFrameIdx >= 0) {
+                AnimationFrame* frameA = &animation->frames[prevFrameIdx];
+                AnimationFrame* frameB = &animation->frames[nextFrameIdx];
+                
+                float t = (float)(frameNum - prevFrameNum) / (float)(nextFrameNum - prevFrameNum);
+                t = t * t * (3.0f - 2.0f * t);
+                
+                AnimationFrame* destFrame = &tempFrames[targetIndex];
+                memset(destFrame, 0, sizeof(AnimationFrame));
+                
+                destFrame->frameNumber = frameNum;
+                destFrame->valid = true;
+                destFrame->isOriginalKeyframe = false;
+                destFrame->personCount = frameA->personCount > frameB->personCount ? 
+                                        frameA->personCount : frameB->personCount;
+                
+                for (int p = 0; p < destFrame->personCount; p++) {
+                    Person* destPerson = &destFrame->persons[p];
+                    
+                    if (p < frameA->personCount && p < frameB->personCount) {
+                        Person* personA = &frameA->persons[p];
+                        Person* personB = &frameB->persons[p];
+                        
+                        strncpy(destPerson->personId, personA->personId, 15);
+                        destPerson->personId[15] = '\0';
+                        destPerson->active = personA->active || personB->active;
+                        destPerson->boneCount = personA->boneCount > personB->boneCount ? 
+                                               personA->boneCount : personB->boneCount;
+                        
+                        for (int b = 0; b < destPerson->boneCount; b++) {
+                            Bone* destBone = &destPerson->bones[b];
+                            
+                            if (b < personA->boneCount && b < personB->boneCount) {
+                                Bone* boneA = &personA->bones[b];
+                                Bone* boneB = &personB->bones[b];
+                                
+                                strncpy(destBone->name, boneA->name, MAX_BONE_NAME_LENGTH - 1);
+                                destBone->name[MAX_BONE_NAME_LENGTH - 1] = '\0';
+                                
+                                destBone->position.position.x = boneA->position.position.x * (1.0f - t) + 
+                                                               boneB->position.position.x * t;
+                                destBone->position.position.y = boneA->position.position.y * (1.0f - t) + 
+                                                               boneB->position.position.y * t;
+                                destBone->position.position.z = boneA->position.position.z * (1.0f - t) + 
+                                                               boneB->position.position.z * t;
+                                
+                                destBone->position.valid = boneA->position.valid && boneB->position.valid;
+                                destBone->position.confidence = (boneA->position.confidence + boneB->position.confidence) * 0.5f;
+                                
+                                destBone->size.x = boneA->size.x * (1.0f - t) + boneB->size.x * t;
+                                destBone->size.y = boneA->size.y * (1.0f - t) + boneB->size.y * t;
+                                
+                                float rotDiff = boneB->rotation - boneA->rotation;
+                                if (rotDiff > 180.0f) rotDiff -= 360.0f;
+                                if (rotDiff < -180.0f) rotDiff += 360.0f;
+                                destBone->rotation = boneA->rotation + rotDiff * t;
+                                
+                                destBone->visible = boneA->visible || boneB->visible;
+                                destBone->textureIndex = boneA->textureIndex;
+                                destBone->mirrored = boneA->mirrored;
+                            } else if (b < personA->boneCount) {
+                                *destBone = personA->bones[b];
+                            } else {
+                                *destBone = personB->bones[b];
+                            }
+                        }
+                    } else if (p < frameA->personCount) {
+                        *destPerson = frameA->persons[p];
+                    } else {
+                        *destPerson = frameB->persons[p];
+                    }
+                }
+                
+                framesCreated++;
+            } else if (prevFrameIdx >= 0) {
+                tempFrames[targetIndex] = animation->frames[prevFrameIdx];
+                tempFrames[targetIndex].frameNumber = frameNum;
+                tempFrames[targetIndex].isOriginalKeyframe = false;
+            } else if (nextFrameIdx >= 0) {
+                tempFrames[targetIndex] = animation->frames[nextFrameIdx];
+                tempFrames[targetIndex].frameNumber = frameNum;
+                tempFrames[targetIndex].isOriginalKeyframe = false;
+            }
+        }
+    }
+    
+    memcpy(animation->frames, tempFrames, totalFramesNeeded * sizeof(AnimationFrame));
+    animation->frameCount = totalFramesNeeded;
+    
+    free(tempFrames);
+    
+    return true;
+}
+
+bool LoadAnimation(AnimatedCharacter* character, const char* animationPath, const char* metadataPath) {
+    if (!character) return false;
+
+    CaptureCurrentFrame(character);
+
+    if (character->animController) {
+        AnimController_Free(character->animController);
+        character->animController = NULL;
+    }
+
+    if (BonesLoadFromJSON(&character->animation, animationPath) != BONES_SUCCESS) {
+        g_hasValidFromFrame = false;
+        return false;
+    }
+
+    if (!BonesCreateMissingFrames(&character->animation)) {
+    }
+
+    character->maxFrames = BonesGetFrameCount(&character->animation);
+    character->currentFrame = 0;
+    BonesSetFrame(&character->animation, 0);
+
+    StartAnimationTransition();
+
+    character->animController = AnimController_Create(&character->animation, character->textureSets);
+    if (!character->animController) {
+        return false;
+    }
+
+    if (metadataPath) {
+        if (AnimController_LoadClipMetadata(character->animController, metadataPath)) {
+            const char* clipName = "default";
+            if (character->animController->clipCount > 0) {
+                clipName = character->animController->clips[0].name;
+            }
+            
+            if (AnimController_PlayClip(character->animController, clipName)) {
+            } else {
+            }
+        } else {
+        }
+    }
+
+    character->forceUpdate = true;
+    character->lastProcessedFrame = -1;
+
+    return true;
+}
+
+void UpdateAnimatedCharacter(AnimatedCharacter* character, float deltaTime) {
+    if (!character) return;
+
+    if (character->animController && character->autoPlay) {
+        AnimController_Update(character->animController, deltaTime);
+        
+        int frameFromController = AnimController_GetCurrentFrame(character->animController);
+        if (frameFromController != character->currentFrame) {
+            BonesSetFrame(&character->animation, frameFromController);
+            character->currentFrame = frameFromController;
+            character->forceUpdate = true;
+        }
+    }
+
+    static AnimationFrame transitionFrame;
+    bool usingTransition = false;
+    
+    if (g_isTransitioning) {
+        g_transitionTime += deltaTime;
+        float t = g_transitionTime / g_transitionDuration;
+        
+        if (t >= 1.0f) {
+            g_isTransitioning = false;
+        } else {
+            if (character->animation.isLoaded && 
+                character->currentFrame >= 0 && 
+                character->currentFrame < character->animation.frameCount) {
+                
+                CopyAnimationFrame(&g_transitionToFrame, &character->animation.frames[character->currentFrame]);
+                
+                InterpolateTransitionFrames(&g_transitionFromFrame, &g_transitionToFrame, 
+                                          &transitionFrame, t);
+                usingTransition = true;
+            } else {
+                g_isTransitioning = false;
+            }
+        }
+    }
+
+    static AnimationFrame interpolatedFrame;
+    bool usingInterpolation = false;
+    
+    if (!usingTransition && character->animation.isLoaded && character->autoPlay && 
+        character->currentFrame >= 0 && character->currentFrame < character->animation.frameCount - 1) {
+        
+        AnimationFrame* currentFrame = &character->animation.frames[character->currentFrame];
+        AnimationFrame* nextFrame = &character->animation.frames[character->currentFrame + 1];
+        
+        float t = 0.0f;
+        if (character->animController && character->animController->currentClipIndex >= 0) {
+            AnimationClipMetadata* clip = &character->animController->clips[character->animController->currentClipIndex];
+            if (clip->fps > 0.0f) {
+                float frameDuration = 1.0f / clip->fps;
+                float timeInFrame = fmodf(character->animController->localTime, frameDuration);
+                t = timeInFrame / frameDuration;
+                
+                t = t * t * (3.0f - 2.0f * t);
+                
+                if (t > 0.05f && t < 0.95f && currentFrame->valid && nextFrame->valid) {
+                    memset(&interpolatedFrame, 0, sizeof(AnimationFrame));
+                    interpolatedFrame.frameNumber = currentFrame->frameNumber;
+                    interpolatedFrame.valid = true;
+                    interpolatedFrame.personCount = currentFrame->personCount;
+                    
+                    for (int p = 0; p < interpolatedFrame.personCount; p++) {
+                        Person* destPerson = &interpolatedFrame.persons[p];
+                        Person* personA = &currentFrame->persons[p];
+                        Person* personB = p < nextFrame->personCount ? &nextFrame->persons[p] : personA;
+                        
+                        strncpy(destPerson->personId, personA->personId, 15);
+                        destPerson->personId[15] = '\0';
+                        destPerson->active = personA->active;
+                        destPerson->boneCount = personA->boneCount;
+                        
+                        for (int b = 0; b < destPerson->boneCount; b++) {
+                            Bone* destBone = &destPerson->bones[b];
+                            Bone* boneA = &personA->bones[b];
+                            Bone* boneB = b < personB->boneCount ? &personB->bones[b] : boneA;
+                            
+                            strncpy(destBone->name, boneA->name, MAX_BONE_NAME_LENGTH - 1);
+                            destBone->name[MAX_BONE_NAME_LENGTH - 1] = '\0';
+                            
+                            if (boneA->position.valid && boneB->position.valid) {
+                                destBone->position.position.x = boneA->position.position.x * (1.0f - t) + 
+                                                               boneB->position.position.x * t;
+                                destBone->position.position.y = boneA->position.position.y * (1.0f - t) + 
+                                                               boneB->position.position.y * t;
+                                destBone->position.position.z = boneA->position.position.z * (1.0f - t) + 
+                                                               boneB->position.position.z * t;
+                                destBone->position.valid = true;
+                            } else {
+                                destBone->position = boneA->position;
+                            }
+                            
+                            destBone->position.confidence = (boneA->position.confidence + boneB->position.confidence) * 0.5f;
+                            
+                            destBone->size.x = boneA->size.x * (1.0f - t) + boneB->size.x * t;
+                            destBone->size.y = boneA->size.y * (1.0f - t) + boneB->size.y * t;
+                            
+                            float rotDiff = boneB->rotation - boneA->rotation;
+                            if (rotDiff > 180.0f) rotDiff -= 360.0f;
+                            if (rotDiff < -180.0f) rotDiff += 360.0f;
+                            destBone->rotation = boneA->rotation + rotDiff * t;
+                            
+                            destBone->visible = boneA->visible;
+                            destBone->textureIndex = boneA->textureIndex;
+                            destBone->mirrored = boneA->mirrored;
+                        }
+                    }
+                    
+                    usingInterpolation = true;
+                }
+            }
+        }
+    }
+    
+    const AnimationFrame* frameToUse = NULL;
+    
+    if (usingTransition) {
+        frameToUse = &transitionFrame;
+    } else if (usingInterpolation) {
+        frameToUse = &interpolatedFrame;
+    } else if (character->animation.isLoaded && BonesIsValidFrame(&character->animation, character->currentFrame)) {
+        frameToUse = &character->animation.frames[character->currentFrame];
+    }
+
+    if (frameToUse && frameToUse->valid) {
+        Vector3 totalPos = {0, 0, 0};
+        int validBoneCount = 0;
+
+        for (int p = 0; p < frameToUse->personCount; p++) {
+            const Person* person = &frameToUse->persons[p];
+            if (!person->active) continue;
+
+            Vector3 headPos = CalculateHeadPosition(person);
+            Vector3 chestPos = CalculateChestPosition(person);
+            Vector3 hipPos = CalculateHipPosition(person);
+
+            if (Vector3Length(headPos) > 0.01f) { totalPos = Vector3Add(totalPos, headPos); validBoneCount++; }
+            if (Vector3Length(chestPos) > 0.01f) { totalPos = Vector3Add(totalPos, chestPos); validBoneCount++; }
+            if (Vector3Length(hipPos) > 0.01f) { totalPos = Vector3Add(totalPos, hipPos); validBoneCount++; }
+        }
+
+        if (validBoneCount > 0) {
+            Vector3 newCenter = Vector3Scale(totalPos, 1.0f / validBoneCount);
+            
+            if (!character->autoCenterCalculated) {
+                character->autoCenter = newCenter;
+            } else {
+                character->autoCenter = Vector3Lerp(character->autoCenter, newCenter, 0.3f);
+            }
+            
+            character->autoCenterCalculated = true;
+        }
+    }
+
+    if (character->forceUpdate || 
+        character->currentFrame != character->lastProcessedFrame || 
+        usingInterpolation || 
+        usingTransition) {
+        
+        character->renderBonesCount = 0;
+        character->renderHeadsCount = 0;
+        character->renderTorsosCount = 0;
+
+        AnimationFrame backupFrame;
+        bool needsRestore = false;
+        
+        if (usingTransition || usingInterpolation) {
+            backupFrame = character->animation.frames[character->currentFrame];
+            character->animation.frames[character->currentFrame] = usingTransition ? transitionFrame : interpolatedFrame;
+            needsRestore = true;
+        }
+
+        CollectBonesForRendering(&character->animation, character->renderer->camera, 
+                                &character->renderBones, &character->renderBonesCount,
+                                &character->renderBonesCapacity, 
+                                character->boneConfigs, character->boneConfigCount);
+        
+        if (character->renderHeadBillboards) {
+            CollectHeadsForRendering(&character->animation, &character->renderHeads, 
+                                   &character->renderHeadsCount, &character->renderHeadsCapacity,
+                                   character->boneConfigs, character->boneConfigCount);
+        }
+
+        if (character->renderTorsoBillboards) {
+            CollectTorsosForRendering(&character->animation, &character->renderTorsos,
+                                    &character->renderTorsosCount, &character->renderTorsosCapacity,
+                                    character->boneConfigs, character->boneConfigCount);
+        }
+
+        if (needsRestore) {
+            character->animation.frames[character->currentFrame] = backupFrame;
+        }
+
+        character->lastProcessedFrame = character->currentFrame;
+        character->forceUpdate = false;
+    }
+}
+
+
+void DrawAnimatedCharacter(AnimatedCharacter* character, Camera camera) {
+    if (!character || !character->animation.isLoaded) return;
+
+    character->renderer->camera = camera;
+
+    BonesRenderer_RenderFrame(character->renderer,
+                             character->renderBones, character->renderBonesCount,
+                             character->renderHeads, character->renderHeadsCount,
+                             character->renderTorsos, character->renderTorsosCount,
+                             character->autoCenter, character->autoCenterCalculated);
+}
+
+void SetCharacterFrame(AnimatedCharacter* character, int frame) {
+    if (!character) return;
+    
+    if (frame >= 0 && frame < character->maxFrames) {
+        character->currentFrame = frame;
+        BonesSetFrame(&character->animation, frame);
+        character->forceUpdate = true;
+        
+        if (character->animController) {
+            character->animController->currentFrameInJSON = frame;
+        }
+    }
+}
+
+void SetCharacterAutoPlay(AnimatedCharacter* character, bool autoPlay) {
+    if (character) {
+        character->autoPlay = autoPlay;
+    }
+}
+
+void SetCharacterBillboards(AnimatedCharacter* character, bool heads, bool torsos) {
+    if (character) {
+        character->renderHeadBillboards = heads;
+        character->renderTorsoBillboards = torsos;
+        character->forceUpdate = true;
+    }
+}
 
 const char* BonesGetErrorString(BonesError error) {
     static const char* errorStrings[] = {
@@ -1260,10 +1066,6 @@ const char* BonesGetErrorString(BonesError error) {
     return (error < sizeof(errorStrings) / sizeof(errorStrings[0]) && errorStrings[error])
         ? errorStrings[error] : "Unknown error";
 }
-
-// ============================================================================
-// INICIALIZACIÓN Y CONFIGURACIÓN
-// ============================================================================
 
 BonesError BonesInit(BonesAnimation* animation, int maxFrames) {
     if (!animation) return BONES_ERROR_NULL_POINTER;
@@ -1295,10 +1097,6 @@ void BonesFree(BonesAnimation* animation) {
         animation->currentFrame = -1;
     }
 }
-
-// ============================================================================
-// PROCESAMIENTO JSON
-// ============================================================================
 
 static BonesError ParseJSONFrame(const char* jsonData, int* outFrameNum, Person* outPersons, int* outPersonCount) {
     if (!jsonData || !outFrameNum || !outPersons || !outPersonCount) return BONES_ERROR_NULL_POINTER;
@@ -1369,7 +1167,6 @@ BonesError BonesLoadFromJSON(BonesAnimation* animation, const char* jsonFilePath
 
     char* jsonData = LoadFileText(jsonFilePath);
     if (!jsonData) {
-        TraceLog(LOG_ERROR, "BONES ERROR: File not found: %s", jsonFilePath);
         return BONES_ERROR_FILE_NOT_FOUND;
     }
 
@@ -1403,7 +1200,7 @@ BonesError BonesLoadFromString(BonesAnimation* animation, const char* jsonString
 
         if (parseResult == BONES_SUCCESS) {
             frame->valid = true;
-            frame->isOriginalKeyframe = true;  // ✓ CORREGIDO: marcar como keyframe original
+            frame->isOriginalKeyframe = true;
             animation->frameCount++;
         }
 
@@ -1418,10 +1215,6 @@ BonesError BonesLoadFromString(BonesAnimation* animation, const char* jsonString
 
     return BONES_ERROR_EMPTY_DATA;
 }
-
-// ============================================================================
-// GESTIÓN DE FRAMES Y ANIMACIONES
-// ============================================================================
 
 BonesError BonesSetFrame(BonesAnimation* animation, int frameNumber) {
     if (!animation) return BONES_ERROR_NULL_POINTER;
@@ -1449,10 +1242,6 @@ bool BonesIsPositionValid(Vector3 position) {
     return !isnan(position.x) && !isnan(position.y) && !isnan(position.z) &&
         isfinite(position.x) && isfinite(position.y) && isfinite(position.z);
 }
-
-// ============================================================================
-// CÁLCULOS DE POSICIONES Y ORIENTACIONES
-// ============================================================================
 
 Vector3 GetBonePositionByName(const Person* person, const char* boneName) {
     if (!person || !boneName) return (Vector3) { 0, 0, 0 };
@@ -2166,10 +1955,6 @@ static Vector3 CalculateBoneMidpoint(const char* boneName, const Person* person)
     };
 }
 
-// ============================================================================
-// GESTIÓN DE TEXTURAS Y CONFIGURACIONES
-// ============================================================================
-
 void CleanupTextureSystem(SimpleTextureSystem* textureSystem, BoneConfig** boneConfigs, int*boneConfigCount) {
     if (textureSystem->configs) {
         free(textureSystem->configs);
@@ -2305,10 +2090,6 @@ float GetBoneSize(BoneConfig* boneConfigs, int boneConfigCount, const char* bone
     return config ? config->size : 0.35f;
 }
 
-// ============================================================================
-// GESTIÓN DE TEXTURE SETS
-// ============================================================================
-
 TextureSetCollection* BonesTextureSets_Create(void) {
     TextureSetCollection* collection;
     collection = (TextureSetCollection*)calloc(1, sizeof(TextureSetCollection));
@@ -2347,7 +2128,6 @@ bool BonesTextureSets_LoadFromFile(TextureSetCollection* collection, const char*
     
     file = fopen(filePath, "r");
     if (!file) {
-        printf("TEXTURE_SETS: Failed to open %s\n", filePath);
         return false;
     }
     
@@ -2360,7 +2140,6 @@ bool BonesTextureSets_LoadFromFile(TextureSetCollection* collection, const char*
         if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') continue;
         
         if (sscanf(line, "%63s %63s %255s", boneName, variantName, texturePath) != 3) {
-            printf("TEXTURE_SETS: Invalid line %d\n", lineNum);
             continue;
         }
         
@@ -2387,15 +2166,12 @@ bool BonesTextureSets_LoadFromFile(TextureSetCollection* collection, const char*
         variant->texturePath[BONES_AE_MAX_PATH - 1] = '\0';
         variant->valid = true;
         set->variantCount++;
-        
-        printf("TEXTURE_SETS: %s.%s -> %s\n", boneName, variantName, texturePath);
     }
     
     fclose(file);
     
     if (collection->setCount > 0) {
         collection->loaded = true;
-        printf("TEXTURE_SETS: Loaded %d sets\n", collection->setCount);
         return true;
     }
     return false;
@@ -2425,7 +2201,6 @@ bool BonesTextureSets_SetVariant(TextureSetCollection* collection, const char* b
     for (i = 0; i < set->variantCount; i++) {
         if (strcmp(set->variants[i].variantName, variantName) == 0) {
             set->activeVariantIndex = i;
-            printf("TEXTURE_SETS: %s -> %s (%s)\n", boneName, variantName, set->variants[i].texturePath);
             return true;
         }
     }
@@ -2455,9 +2230,6 @@ void BonesTextureSets_ResetAll(TextureSetCollection* collection) {
     }
 }
 
-// ============================================================================
-// RECOLECCIÓN DE DATOS PARA RENDERIZADO
-// ============================================================================
 static bool DetectZFighting(RenderItem* items, int itemCount) {
     bool hasZFighting = false;
     for (int i = 0; i < itemCount; i++) {
@@ -2544,10 +2316,6 @@ static void RenderBoneInternal(BonesRenderer* renderer, const BoneRenderData* bo
         finalMirror, haveNeighbor, neighborPos, bone, bonePerson);
 }
 
-// ============================================================================
-// IMPLEMENTACIÓN DE FUNCIONES PÚBLICAS
-// ============================================================================
-
 BonesRenderer* BonesRenderer_Create(void) {
     BonesRenderer* renderer = (BonesRenderer*)calloc(1, sizeof(BonesRenderer));
     if (!renderer) return NULL;
@@ -2572,7 +2340,6 @@ void BonesRenderer_Free(BonesRenderer* renderer) {
 bool BonesRenderer_Init(BonesRenderer* renderer) {
     if (!renderer) return false;
     
-    // Configuración inicial por defecto
     renderer->camera = (Camera){
         .position = {0.0f, 0.6f, 2.5f},
         .target = {0.0f, 0.6f, 0.0f},
@@ -2635,7 +2402,6 @@ void BonesRenderer_RenderFrame(BonesRenderer* renderer,
         int itemCount = 0;
         Vector3 camPos = renderer->camera.position;
 
-        // Recolectar torsos
         for (int i = 0; i < torsoCount && itemCount < MAX_RENDER_ITEMS; i++) {
             const TorsoRenderData* torso = &torsos[i];
             if (!torso->valid || !torso->visible) continue;
@@ -2646,7 +2412,6 @@ void BonesRenderer_RenderFrame(BonesRenderer* renderer,
             };
         }
 
-        // Recolectar huesos
         for (int i = 0; i < boneCount && itemCount < MAX_RENDER_ITEMS; i++) {
             const BoneRenderData* bone = &bones[i];
             if (!bone->valid || !bone->visible) continue;
@@ -2657,7 +2422,6 @@ void BonesRenderer_RenderFrame(BonesRenderer* renderer,
             };
         }
 
-        // Recolectar cabezas
         for (int i = 0; i < headCount && itemCount < MAX_RENDER_ITEMS; i++) {
             const HeadRenderData* head = &heads[i];
             if (!head->valid || !head->visible) continue;
@@ -2674,12 +2438,11 @@ void BonesRenderer_RenderFrame(BonesRenderer* renderer,
         BeginBlendMode(BLEND_ALPHA);
         rlDisableDepthTest();
 
-        const AnimationFrame* frame = NULL; // Esto debería pasarse como parámetro si es necesario
+        const AnimationFrame* frame = NULL;
 
         for (int i = 0; i < itemCount; i++) {
             RenderItem* item = &renderItems[i];
 
-            // Lógica especial para el cuello cuando hay cabeza
             if (item->type == 2) {
                 const HeadRenderData* currentHead = &heads[item->index];
 
@@ -2703,7 +2466,6 @@ void BonesRenderer_RenderFrame(BonesRenderer* renderer,
                 }
             }
 
-            // Calcular offset para evitar z-fighting
             Vector3 itemPos;
             switch (item->type) {
                 case 0: itemPos = torsos[item->index].position; break;
@@ -2720,7 +2482,6 @@ void BonesRenderer_RenderFrame(BonesRenderer* renderer,
                 renderOffset = Vector3Scale(toCamNorm, item->depthBias);
             }
 
-            // Renderizar el item
             switch (item->type) {
                 case 0: {
                     const TorsoRenderData* torso = &torsos[item->index];
@@ -3237,10 +2998,9 @@ void EnrichBoneRenderDataWithOrientation(BoneRenderData* renderBone, const Perso
     }
 }
 
-BoneRenderData* FindRenderBoneByName(BoneRenderData* bones, int count, const char* name) {
-    if (!bones || !name) return NULL;
-    for (int i = 0; i < count; i++) {
-        if (bones[i].valid && bones[i].visible && strcmp(bones[i].boneName, name) == 0) {
+BoneRenderData* FindRenderBoneByName(BoneRenderData* bones, int boneCount, const char* boneName) {
+    for (int i = 0; i < boneCount; i++) {
+        if (strcmp(bones[i].boneName, boneName) == 0) {
             return &bones[i];
         }
     }
@@ -4277,6 +4037,28 @@ bool AnimController_PlayClip(AnimationController* controller, const char* clipNa
             controller->currentClipIndex = i;
             controller->localTime = 0.0f;
             controller->playing = true;
+            
+            if (controller->bonesAnimation) {
+                BonesAnimation* anim = (BonesAnimation*)controller->bonesAnimation;
+                if (anim->isLoaded && anim->frameCount > 0) {
+                    int minFrame = anim->frames[0].frameNumber;
+                    int maxFrame = anim->frames[0].frameNumber;
+                    
+                    for (int f = 1; f < anim->frameCount; f++) {
+                        if (anim->frames[f].frameNumber < minFrame) {
+                            minFrame = anim->frames[f].frameNumber;
+                        }
+                        if (anim->frames[f].frameNumber > maxFrame) {
+                            maxFrame = anim->frames[f].frameNumber;
+                        }
+                    }
+                    
+                    // Actualizar el clip con los valores reales del JSON
+                    controller->clips[i].startFrame = minFrame;
+                    controller->clips[i].endFrame = maxFrame;
+                }
+            }
+            
             controller->currentFrameInJSON = controller->clips[i].startFrame;
             
             {
@@ -4286,7 +4068,6 @@ bool AnimController_PlayClip(AnimationController* controller, const char* clipNa
                 }
             }
             
-            printf("ANIM_CONTROLLER: Playing '%s'\n", clipName);
             return true;
         }
     }
@@ -4330,14 +4111,16 @@ void AnimController_Update(AnimationController* controller, float deltaTime) {
                 clip->events[i].processed = false;
             }
         } else {
-            controller->localTime = clipDuration;
+            controller->localTime = clipDuration - 0.001f;
             controller->playing = false;
         }
     }
     
+    // CAMBIO AQUÍ: usar round en lugar de cast directo
     controller->currentFrameInJSON = clip->startFrame + 
-        (int)(controller->localTime * clip->fps);
+        (int)roundf(controller->localTime * clip->fps);
     
+    // Asegurar que llegue exactamente al último frame
     if (controller->currentFrameInJSON > clip->endFrame) {
         controller->currentFrameInJSON = clip->endFrame;
     }
@@ -4357,5 +4140,4 @@ void AnimController_Update(AnimationController* controller, float deltaTime) {
         }
     }
 }
-
 
