@@ -413,7 +413,6 @@ const char* BonesGetErrorString(BonesError error);
 bool BonesDeleteFrame(BonesAnimation* animation, int frameIndex);
 bool BonesDuplicateFrame(BonesAnimation* animation, int frameIndex);
 bool BonesInterpolateFrames(BonesAnimation* animation, int frameA, int frameB, int framesToAdd);
-bool BonesExportToJSON(BonesAnimation* animation, const char* filepath, int startFrame, int endFrame);
 bool BonesInsertEmptyFrame(BonesAnimation* animation, int position);
 bool BonesCopyFrame(BonesAnimation* animation, int sourceFrame, int targetFrame);
 bool BonesCreateMissingFrames(BonesAnimation* animation);
