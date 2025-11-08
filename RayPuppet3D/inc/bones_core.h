@@ -75,11 +75,10 @@ typedef enum {
 // ============================================================================
 // ESTRUCTURAS BÁSICAS
 // ============================================================================
-
 typedef struct {
     Vector3 position;
-    bool valid;
     float confidence;
+    bool valid;
 } BonePosition;
 
 typedef struct {
