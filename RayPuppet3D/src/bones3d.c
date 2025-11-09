@@ -86,6 +86,22 @@ static const struct {
     {"", 0.0f, 0.0f, 0.0f}
 };
 
+static const struct {
+    const char* boneName;
+    float scaleFactorUp;      // Extensión hacia arriba desde el joint
+    float scaleFactorDown;    // Extensión hacia abajo desde el joint
+} BONE_SCALE_FACTORS[] = {
+    {"LShoulder", 0.3f, 1.2f},  // 30% arriba, 120% abajo
+    {"RShoulder", 0.3f, 1.2f},
+    {"LElbow", -0.09f, 0.9f},     // 50% arriba, 100% abajo
+    {"RElbow", -0.09f, 0.9f},
+    {"LHip", 0.1f, 1.0f},
+    {"RHip", 0.1f, 1.0f},
+    {"LKnee", 0.1f, 1.0f},
+    {"RKnee", 0.1f, 1.0f},
+    {"", 0.5f, 0.5f}            // Default: centrado
+};
+
 static const float HEAD_DEPTH_OFFSET = 0.04f;
 static const float CHEST_OFFSET_Y = -0.06f;
 static const float CHEST_OFFSET_Z = -0.005f;
@@ -1874,8 +1890,28 @@ BoneOrientation CalculateBoneOrientation(const char* boneName, const Person* per
     return orientation;
 }
 
+static bool ShouldUseVariableHeight(const char* boneName) {
+    if (!boneName) return false;
+
+    static const char* variableHeightBones[] = {
+        "LShoulder", "LElbow", "RShoulder", "RElbow",
+        "LHip", "LKnee", "RHip", "RKnee"
+    };
+
+    for (int i = 0; i < 8; i++) {
+        if (strcmp(boneName, variableHeightBones[i]) == 0) return true;
+    }
+    return false;
+}
+
 static Vector3 CalculateBoneMidpoint(const char* boneName, const Person* person) {
     if (!person || !boneName) return (Vector3) { 0, 0, 0 };
+
+    // Para huesos que usan altura variable, NO calcular punto medio
+    // Queremos que el sprite comience exactamente en la posición del hueso
+    if (ShouldUseVariableHeight(boneName)) {
+        return GetBonePositionByName(person, boneName);
+    }
 
     if (strcmp(boneName, "Neck") == 0) {
         Vector3 originalNeck = GetBonePositionByName(person, "Neck");
@@ -1898,8 +1934,8 @@ static Vector3 CalculateBoneMidpoint(const char* boneName, const Person* person)
 
         return (Vector3) {
             (shoulderCenter.x + calculatedHead.x) * 0.5f,
-                (shoulderCenter.y + calculatedHead.y) * 0.5f,
-                (shoulderCenter.z + calculatedHead.z) * 0.5f
+            (shoulderCenter.y + calculatedHead.y) * 0.5f,
+            (shoulderCenter.z + calculatedHead.z) * 0.5f
         };
     }
 
@@ -1928,8 +1964,8 @@ static Vector3 CalculateBoneMidpoint(const char* boneName, const Person* person)
             };
             return (Vector3) {
                 connectedPos.x + forearmVector.x * projectionFactor,
-                    connectedPos.y + forearmVector.y * projectionFactor,
-                    connectedPos.z + forearmVector.z * projectionFactor
+                connectedPos.y + forearmVector.y * projectionFactor,
+                connectedPos.z + forearmVector.z * projectionFactor
             };
         }
         return bonePos;
@@ -1950,8 +1986,8 @@ static Vector3 CalculateBoneMidpoint(const char* boneName, const Person* person)
 
     return (Vector3) {
         (bonePos.x + connectedPos.x) * 0.5f,
-            (bonePos.y + connectedPos.y) * 0.5f,
-            (bonePos.z + connectedPos.z) * 0.5f
+        (bonePos.y + connectedPos.y) * 0.5f,
+        (bonePos.z + connectedPos.z) * 0.5f
     };
 }
 
@@ -3643,19 +3679,7 @@ static bool ShouldFlipBoneTexture(const char* boneName) {
     return false;
 }
 
-static bool ShouldUseVariableHeight(const char* boneName) {
-    if (!boneName) return false;
 
-    static const char* variableHeightBones[] = {
-        "LShoulder", "LElbow", "RShoulder", "RElbow",
-        "LHip", "LKnee", "RHip", "RKnee"
-    };
-
-    for (int i = 0; i < 8; i++) {
-        if (strcmp(boneName, variableHeightBones[i]) == 0) return true;
-    }
-    return false;
-}
 
 void DrawBonetileCustom(Texture2D tex, Camera camera, Rectangle src, Vector3 pos, Vector2 size,
     float rotationDeg, bool mirrored, const char* boneName) {
@@ -3690,6 +3714,7 @@ void DrawBonetileCustom(Texture2D tex, Camera camera, Rectangle src, Vector3 pos
 
     DrawQuadTextured3D(tex, p0, p1, p2, p3, u_left, v0t, u_right, v1t);
 }
+
 
 void DrawBonetileCustomWithRoll(Texture2D tex, Camera camera, Rectangle src, Vector3 pos, Vector2 size,
     float rotationDeg, bool mirrored, bool neighborValid, Vector3 neighborPos, const BoneRenderData* boneData,
@@ -3739,10 +3764,37 @@ void DrawBonetileCustomWithRoll(Texture2D tex, Camera camera, Rectangle src, Vec
     Vector2 actualSize = size;
     Vector3 actualPos = pos;
 
+    // Buscar factores de escala para este hueso
+    float scaleUp = 0.5f;    // Default: centrado
+    float scaleDown = 0.5f;
+    
+    for (int i = 0; BONE_SCALE_FACTORS[i].boneName[0] != '\0'; i++) {
+        if (strcmp(BONE_SCALE_FACTORS[i].boneName, boneData->boneName) == 0) {
+            scaleUp = BONE_SCALE_FACTORS[i].scaleFactorUp;
+            scaleDown = BONE_SCALE_FACTORS[i].scaleFactorDown;
+            break;
+        }
+    }
+
+    // Ajustar tamaño y posición para huesos con altura variable
     if (ShouldUseVariableHeight(boneData->boneName) && neighborValid) {
         float neighborDistance = Vector3Distance(pos, neighborPos);
-        float extensionFactor = 1.5f;
-        actualSize.y = neighborDistance * extensionFactor;
+        
+        // La altura total del sprite será la distancia + extensiones
+        float totalExtension = scaleUp + scaleDown;
+        actualSize.y = neighborDistance * totalExtension;
+        
+        // Calcular el offset desde el joint
+        // Si scaleDown = 1.2 y scaleUp = 0.3, el joint estará al 30% desde arriba (70% desde abajo)
+        float offsetFactor = scaleDown - scaleUp;
+        
+        // Desplazar el sprite en la dirección al vecino
+        Vector3 toNeighbor = Vector3Subtract(neighborPos, pos);
+        if (Vector3Length(toNeighbor) > 0.0001f) {
+            toNeighbor = Vector3Normalize(toNeighbor);
+            // Offset para que el joint esté en la posición correcta dentro del sprite
+            actualPos = Vector3Add(pos, Vector3Scale(toNeighbor, neighborDistance * offsetFactor * 0.5f));
+        }
     }
 
     Vector3 halfX = Vector3Scale(newRight, actualSize.x * 0.5f);
@@ -3769,7 +3821,6 @@ void DrawBonetileCustomWithRoll(Texture2D tex, Camera camera, Rectangle src, Vec
     Vector2 uv0 = { u_left, v0t }, uv1 = { u_right, v0t }, uv2 = { u_right, v1t }, uv3 = { u_left, v1t };
     DrawQuadTextured3D_UVs(tex, p0, p1, p2, p3, uv0, uv1, uv2, uv3);
 }
-
 void DrawTorsoBillboard(Texture2D texture, Camera camera, const TorsoRenderData* torsoData, int physCols, int physRows) {
     if (!torsoData || !torsoData->valid || !torsoData->visible) return;
     int chosenIndex;
