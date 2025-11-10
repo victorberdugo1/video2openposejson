@@ -1,6 +1,16 @@
 PROJECT video2openpose json
 ===========
 
+
+<p align="center">
+  <video src="https://github.com/user-attachments/assets/20879ed8-2fce-4060-957a-5d7e2de1ff65"
+         width="480"
+         autoplay
+         loop
+         muted
+         playsinline></video>
+</p>
+
 This project uses Python to process videos and extract keypoints.
 
 REQUIREMENTS
