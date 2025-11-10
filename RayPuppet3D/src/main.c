@@ -1573,7 +1573,7 @@ bool BonesExportToJSON(BonesAnimation* animation, const char* filepath, int star
             float y_original = 1.0f - y_transformed;
             float z_original = (z_transformed + 1.0f) * 0.5f;
 
-            fprintf(file, "      \"%s\": {\"x\": %.16f, \"y\": %.16f, \"z\": %.16f}",
+            fprintf(file, "      \"%s\": {\"x\": %.17f, \"y\": %.17f, \"z\": %.17f}",
                     bone->name, x_original, y_original, z_original);
         }
 
