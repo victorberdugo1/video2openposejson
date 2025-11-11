@@ -1565,15 +1565,17 @@ bool BonesExportToJSON(BonesAnimation* animation, const char* filepath, int star
             if (!firstBone) fprintf(file, ",\n");
             firstBone = false;
 
-            float x_transformed = bone->position.position.x;
-            float y_transformed = bone->position.position.y;
-            float z_transformed = bone->position.position.z;
+            // CAMBIO: usar double para máxima precisión
+            double x_transformed = (double)bone->position.position.x;
+            double y_transformed = (double)bone->position.position.y;
+            double z_transformed = (double)bone->position.position.z;
 
-            float x_original = (x_transformed + 1.0f) * 0.5f;
-            float y_original = 1.0f - y_transformed;
-            float z_original = (z_transformed + 1.0f) * 0.5f;
+            double x_original = (x_transformed + 1.0) * 0.5;
+            double y_original = 1.0 - y_transformed;
+            double z_original = (z_transformed + 1.0) * 0.5;
 
-            fprintf(file, "      \"%s\": {\"x\": %.17f, \"y\": %.17f, \"z\": %.17f}",
+            // CAMBIO: usar %.17g para máxima precisión sin ceros innecesarios
+            fprintf(file, "      \"%s\": {\"x\": %.17g, \"y\": %.17g, \"z\": %.17g}",
                     bone->name, x_original, y_original, z_original);
         }
 

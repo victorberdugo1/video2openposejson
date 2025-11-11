@@ -1148,19 +1148,21 @@ static BonesError ParseJSONFrame(const char* jsonData, int* outFrameNum, Person*
             const char* bonePos = strstr(personStart, searchPattern);
             if (!bonePos || (nextPerson && bonePos > nextPerson)) continue;
 
-            float x, y, z;
-            if (sscanf(strstr(bonePos, "\"x\":"), "\"x\": %f", &x) == 1 &&
-                sscanf(strstr(bonePos, "\"y\":"), "\"y\": %f", &y) == 1 &&
-                sscanf(strstr(bonePos, "\"z\":"), "\"z\": %f", &z) == 1) {
+            // CAMBIO: usar double para leer con máxima precisión
+            double x, y, z;
+            if (sscanf(strstr(bonePos, "\"x\":"), "\"x\": %lf", &x) == 1 &&
+                sscanf(strstr(bonePos, "\"y\":"), "\"y\": %lf", &y) == 1 &&
+                sscanf(strstr(bonePos, "\"z\":"), "\"z\": %lf", &z) == 1) {
 
                 Bone* currentBone = &currentPerson->bones[currentPerson->boneCount];
                 strncpy(currentBone->name, expectedBones[b], MAX_BONE_NAME_LENGTH - 1);
                 currentBone->name[MAX_BONE_NAME_LENGTH - 1] = '\0';
 
+                // CAMBIO: conversión explícita de double a float con máxima precisión
                 currentBone->position.position = (Vector3){
-                    x * 2.0f - 1.0f,
-                    1.0f - y,
-                    z * 2.0f - 1.0f
+                    (float)(x * 2.0 - 1.0),
+                    (float)(1.0 - y),
+                    (float)(z * 2.0 - 1.0)
                 };
                 currentBone->position.valid = BonesIsPositionValid(currentBone->position.position);
                 currentBone->position.confidence = 1.0f;
@@ -1263,7 +1265,7 @@ Vector3 GetBonePositionByName(const Person* person, const char* boneName) {
     if (!person || !boneName) return (Vector3) { 0, 0, 0 };
 
 if (strcmp(boneName, "FRONT_CALCULATED") == 0) {
-    Vector3 head = GetBonePositionByName(person, "HEAD_CALCULATED");
+    Vector3 head = GetBonePositionByName(person, "Nose");
     Vector3 neck = GetBonePositionByName(person, "Neck");
 
     // Dirección cabeza → cuello (para estimar la orientación del cuerpo)
