@@ -24,6 +24,7 @@ static const float BASE_SPEED = 5.0f;
 static const float MOVEMENT_SPEED = 3.0f;
 static const float AXIS_LENGTH = 0.05f;
 
+
 // ============================================================================
 // TYPE DEFINITIONS
 // ============================================================================
@@ -117,6 +118,14 @@ typedef struct {
     float distance;
 } BoneCandidate;
 
+typedef struct {
+    CharacterProfile profiles[10];
+    int profileCount;
+    int currentProfileIndex;
+} CharacterManager;
+
+static CharacterManager g_characterManager = {0};
+
 static void RecalculateAffectedInterpolations(AppState* app, int movedKeyframe);
 static void MoveBoneInFrame(AppState* app, int frameNumber, const char* boneName, Vector3 newPosition);
 static void MoveKeyframeInTimeline(AppState* app, int fromFrameNumber, int toFrameNumber);
@@ -207,6 +216,122 @@ static bool PerformRedo(AppState* app) {
     }
     app->editor.needsSave = true;
     return true;
+}
+
+
+// ============================================================================
+// CHARACTER PROFILE MANAGEMENT
+// ============================================================================
+
+static bool LoadCharacterProfiles(CharacterManager* manager, const char* configPath) {
+    char* buffer = LoadFileText(configPath);
+    if (!buffer) {
+        TraceLog(LOG_WARNING, "Could not load character profiles from %s", configPath);
+        return false;
+    }
+
+    manager->profileCount = 0;
+    
+    char lineBuffer[512];
+    const char* lineStart = buffer;
+    
+    for (const char* ptr = buffer; *ptr && manager->profileCount < 10; ptr++) {
+        if (*ptr == '\n') {
+            int lineLen = ptr - lineStart;
+            if (lineLen > 5 && lineLen < 511 && *lineStart != '#' && *lineStart != '\n') {
+                memcpy(lineBuffer, lineStart, lineLen);
+                lineBuffer[lineLen] = '\0';
+                
+                CharacterProfile* profile = &manager->profiles[manager->profileCount];
+                
+                if (sscanf(lineBuffer, "%63s %255s %255s %255s", 
+                          profile->name,
+                          profile->texturesConfigPath,
+                          profile->textureSetsPath,
+                          profile->animationsPath) == 4) {
+                    manager->profileCount++;
+                    TraceLog(LOG_INFO, "Loaded character profile: %s", profile->name);
+                }
+            }
+            lineStart = ptr + 1;
+        }
+    }
+    
+    UnloadFileText(buffer);
+    
+    if (manager->profileCount > 0) {
+        manager->currentProfileIndex = 0;
+        return true;
+    }
+    return false;
+}
+
+static bool SwitchCharacterProfile(AppState* app, int profileIndex) {
+    if (profileIndex < 0 || profileIndex >= g_characterManager.profileCount) {
+        return false;
+    }
+    
+    CharacterProfile* profile = &g_characterManager.profiles[profileIndex];
+    
+    TraceLog(LOG_INFO, "Switching to character profile: %s", profile->name);
+    
+    // Destruir el personaje actual
+    if (app->character) {
+        DestroyAnimatedCharacter(app->character);
+        app->character = NULL;
+    }
+    
+    // Crear nuevo personaje con las texturas del perfil
+    app->character = CreateAnimatedCharacter(profile->texturesConfigPath, 
+                                            profile->textureSetsPath);
+    if (!app->character) {
+        TraceLog(LOG_ERROR, "Failed to create character with profile: %s", profile->name);
+        return false;
+    }
+    
+    // Cargar animación por defecto del nuevo perfil
+    char idleAnimPath[512];
+    char idleMetaPath[512];
+    snprintf(idleAnimPath, sizeof(idleAnimPath), "%sidle.json", profile->animationsPath);
+    snprintf(idleMetaPath, sizeof(idleMetaPath), "%sidle.anim", profile->animationsPath);
+    
+    if (LoadAnimation(app->character, idleAnimPath, idleMetaPath)) {
+        strcpy(app->currentAnimation, "idle");
+        TraceLog(LOG_INFO, "Loaded idle animation for %s", profile->name);
+    } else {
+        TraceLog(LOG_WARNING, "Could not load idle animation for %s", profile->name);
+    }
+    
+    // Reiniciar undo history
+    InitUndoHistory(&app->editor.undoHistory);
+    
+    app->editor.needsSave = false;
+    app->character->forceUpdate = true;
+    g_characterManager.currentProfileIndex = profileIndex;
+    
+    return true;
+}
+
+static void LoadAnimationForCurrentProfile(AppState* app, const char* animName) {
+    if (g_characterManager.currentProfileIndex < 0 || 
+        g_characterManager.currentProfileIndex >= g_characterManager.profileCount) {
+        return;
+    }
+    
+    CharacterProfile* profile = &g_characterManager.profiles[g_characterManager.currentProfileIndex];
+    
+    char animPath[512];
+    char metaPath[512];
+    snprintf(animPath, sizeof(animPath), "%s%s.json", profile->animationsPath, animName);
+    snprintf(metaPath, sizeof(metaPath), "%s%s.anim", profile->animationsPath, animName);
+    
+    if (LoadAnimation(app->character, animPath, metaPath)) {
+        strcpy(app->currentAnimation, animName);
+        InitUndoHistory(&app->editor.undoHistory);
+        TraceLog(LOG_INFO, "Loaded animation: %s", animName);
+    } else {
+        TraceLog(LOG_WARNING, "Could not load animation: %s", animName);
+    }
 }
 
 // ============================================================================
@@ -1610,9 +1735,18 @@ static void App_DrawUI(AppState* app) {
     int existingFrames = app->character->animation.frameCount;
     int currentFrameNumber = GetCurrentFrameNumber(app);
     DrawText("BONES3D ANIMATION EDITOR", 10, 10, 20, BLUE);
-    DrawText("SPACE: Play/Pause | LEFT/RIGHT: Frame | Ctrl+Z: Undo | Ctrl+Y: Redo", 10, 35, 14, DARKGRAY);
-    DrawText("1: Orbit | 2: FPS | 3-6: Load Anims | H/T: Billboards | F1: Toggle UI", 10, 52, 14, DARKGRAY);
+    // Mostrar personaje actual
+    if (g_characterManager.currentProfileIndex >= 0 && 
+        g_characterManager.currentProfileIndex < g_characterManager.profileCount) {
+        char profileText[128];
+        snprintf(profileText, sizeof(profileText), "Character: %s", 
+                g_characterManager.profiles[g_characterManager.currentProfileIndex].name);
+        DrawText(profileText, 10, 35, 14, ORANGE);
+    }
+    
+    DrawText("Ctrl+1/2/3/4: Switch Character | 3-6: Load Anims | H/T: Billboards", 10, 52, 14, DARKGRAY);
     DrawText("LEFT CLICK: Select | RIGHT CLICK: Move | CTRL+LEFT (timeline): Drag keyframe", 10, 69, 14, DARKGRAY);
+    
     char frameText[128];
     snprintf(frameText, sizeof(frameText), "Animation: %s | Frame: %d/%d (%d existing) %s %s", 
              app->currentAnimation, 
@@ -1666,18 +1800,50 @@ static void App_Draw(AppState* app) {
 
 static void App_HandleInput(AppState* app) {
     if (!app) return;
+    
     int maxFrameNumber = FindMaxFrameNumber(app);
     int currentFrameNumber = GetCurrentFrameNumber(app);
-    if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_Z)) {
-        PerformUndo(app);
+    
+    // Cambio de perfiles de personaje (Ctrl+1, Ctrl+2, etc.)
+    if (IsKeyDown(KEY_LEFT_CONTROL)) {
+        if (IsKeyPressed(KEY_Z)) {
+            PerformUndo(app);
+            return;
+        }
+        if (IsKeyPressed(KEY_Y)) {
+            PerformRedo(app);
+            return;
+        }
+        if (IsKeyPressed(KEY_S)) {
+            app->editor.showExportDialog = true;
+            return;
+        }
+        if (IsKeyPressed(KEY_ONE) && g_characterManager.profileCount > 0) {
+            SwitchCharacterProfile(app, 0);
+            return;
+        }
+        if (IsKeyPressed(KEY_TWO) && g_characterManager.profileCount > 1) {
+            SwitchCharacterProfile(app, 1);
+            return;
+        }
+        if (IsKeyPressed(KEY_THREE) && g_characterManager.profileCount > 2) {
+            SwitchCharacterProfile(app, 2);
+            return;
+        }
+        if (IsKeyPressed(KEY_FOUR) && g_characterManager.profileCount > 3) {
+            SwitchCharacterProfile(app, 3);
+            return;
+        }
+        return; // No procesar otras teclas cuando Ctrl está presionado
     }
-    if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_Y)) {
-        PerformRedo(app);
-    }
+    
+    // Undo/Redo sin Ctrl (removido, ya está arriba con Ctrl)
+    
     if (IsKeyPressed(KEY_SPACE)) {
         app->editor.isPlaying = !app->editor.isPlaying;
         SetCharacterAutoPlay(app->character, app->editor.isPlaying);
     }
+    
     if (IsKeyPressed(KEY_LEFT)) {
         for (int i = currentFrameNumber - 1; i >= 0; i--) {
             if (FrameExists(app, i)) {
@@ -1689,6 +1855,7 @@ static void App_HandleInput(AppState* app) {
             }
         }
     }
+    
     if (IsKeyPressed(KEY_RIGHT)) {
         for (int i = currentFrameNumber + 1; i <= maxFrameNumber; i++) {
             if (FrameExists(app, i)) {
@@ -1700,6 +1867,7 @@ static void App_HandleInput(AppState* app) {
             }
         }
     }
+    
     if (IsKeyPressed(KEY_HOME)) {
         for (int i = 0; i <= maxFrameNumber; i++) {
             if (FrameExists(app, i)) {
@@ -1711,6 +1879,7 @@ static void App_HandleInput(AppState* app) {
             }
         }
     }
+    
     if (IsKeyPressed(KEY_END)) {
         for (int i = maxFrameNumber; i >= 0; i--) {
             if (FrameExists(app, i)) {
@@ -1722,6 +1891,7 @@ static void App_HandleInput(AppState* app) {
             }
         }
     }
+    
     if (IsKeyPressed(KEY_ONE)) {
         app->camMode = 1;
         EnableCursor();
@@ -1730,26 +1900,21 @@ static void App_HandleInput(AppState* app) {
         app->camMode = 2;
         DisableCursor();
     }
+    
+    // Cargar animaciones del perfil actual (teclas 3-6)
     if (IsKeyPressed(KEY_THREE)) {
-        LoadAnimation(app->character, "data/poses/idle.json", "data/animations/idle.anim");
-        strcpy(app->currentAnimation, "idle");
-        InitUndoHistory(&app->editor.undoHistory);
+        LoadAnimationForCurrentProfile(app, "idle");
     }
     if (IsKeyPressed(KEY_FOUR)) {
-        LoadAnimation(app->character, "data/poses/talk.json", "data/animations/talk.anim");
-        strcpy(app->currentAnimation, "talk");
-        InitUndoHistory(&app->editor.undoHistory);
+        LoadAnimationForCurrentProfile(app, "talk");
     }
     if (IsKeyPressed(KEY_FIVE)) {
-        LoadAnimation(app->character, "data/poses/walk.json", "data/animations/walk.anim");
-        strcpy(app->currentAnimation, "walk");
-        InitUndoHistory(&app->editor.undoHistory);
+        LoadAnimationForCurrentProfile(app, "walk");
     }
     if (IsKeyPressed(KEY_SIX)) {
-        LoadAnimation(app->character, "data/poses/jump.json", "data/animations/jump.anim");
-        strcpy(app->currentAnimation, "jump");
-        InitUndoHistory(&app->editor.undoHistory);
+        LoadAnimationForCurrentProfile(app, "jump");
     }
+    
     if (IsKeyPressed(KEY_H)) {
         SetCharacterBillboards(app->character, 
                               !app->character->renderHeadBillboards, 
@@ -1760,6 +1925,7 @@ static void App_HandleInput(AppState* app) {
                               app->character->renderHeadBillboards,
                               !app->character->renderTorsoBillboards);
     }
+    
     if (IsKeyPressed(KEY_F1)) {
         app->showUI = !app->showUI;
         app->editor.showTimeline = app->showUI;
@@ -1776,9 +1942,7 @@ static void App_HandleInput(AppState* app) {
     if (IsKeyPressed(KEY_F5)) {
         app->debug.showOrientation = !app->debug.showOrientation;
     }
-    if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_S)) {
-        app->editor.showExportDialog = true;
-    }
+    
     if (IsKeyPressed(KEY_DELETE) && app->editor.selectionStart != -1 && FrameExists(app, app->editor.selectionStart)) {
         int frameIndex = FindFrameIndexByNumber(app, app->editor.selectionStart);
         if (frameIndex != -1) {
@@ -1815,6 +1979,7 @@ static void App_HandleInput(AppState* app) {
         }
     }
 }
+
 
 // ============================================================================
 // CAMERA UPDATE
@@ -1896,15 +2061,34 @@ static void App_UpdateCamera(AppState* app, float dt) {
 static bool App_Init(AppState* app) {
     if (!app) return false;
     memset(app, 0, sizeof(*app));
-    InitWindow(BASE_WIDTH, BASE_HEIGHT, "Bones3D - Animation Editor with Camera Gizmo");
+    InitWindow(BASE_WIDTH, BASE_HEIGHT, "Bones3D - Animation Editor");
     SetWindowState(FLAG_WINDOW_RESIZABLE);
     #if defined(__linux__)
     for (int i = 0; i < 5; i++) PollInputEvents();
     #endif
     MaximizeWindow();
     SetTargetFPS(120);
-    app->character = CreateAnimatedCharacter("data/textures/bone_textures.txt", 
-                                           "data/textures/texture_sets.txt");
+
+    if (!LoadCharacterProfiles(&g_characterManager, "data/characters.txt")) {
+        TraceLog(LOG_WARNING, "Could not load character profiles, using default");
+        // Crear perfil por defecto
+        CharacterProfile* defaultProfile = &g_characterManager.profiles[0];
+        strcpy(defaultProfile->name, "default");
+        strcpy(defaultProfile->texturesConfigPath, "data/textures/bone_textures.txt");
+        strcpy(defaultProfile->textureSetsPath, "data/textures/texture_sets.txt");
+        strcpy(defaultProfile->animationsPath, "data/animations/");
+        g_characterManager.profileCount = 1;
+        g_characterManager.currentProfileIndex = 0;
+    }
+    
+    // Crear personaje con el primer perfil
+    if (!SwitchCharacterProfile(app, 0)) {
+        CloseWindow();
+        return false;
+    }
+
+    //app->character = CreateAnimatedCharacter("data/textures/bone_textures.txt", 
+    //                                       "data/textures/texture_sets.txt");
     if (!app->character) {
         CloseWindow();
         return false;

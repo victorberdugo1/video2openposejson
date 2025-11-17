@@ -170,6 +170,13 @@ typedef struct {
     Vector3 pos1;
 } BoneConnectionPositions;
 
+typedef struct {
+    char name[64];
+    char texturesConfigPath[256];
+    char textureSetsPath[256];
+    char animationsPath[256];
+} CharacterProfile;
+
 // ============================================================================
 // RENDERIZADO
 // ============================================================================

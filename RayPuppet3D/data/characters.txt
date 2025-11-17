@@ -1,0 +1,6 @@
+# Character profiles configuration
+# Format: name texture_config texture_sets animations_path
+
+default data/textures/bone_textures.txt data/textures/texture_sets.txt data/animations/
+Zeta data/textures/zeta/bone_textures.txt data/textures/zeta/texture_sets.txt data/animations/
+Eldwin data/textures/eld/bone_textures.txt data/textures/eld/texture_sets.txt data/animations/

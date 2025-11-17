@@ -1,0 +1,27 @@
+# Configuración simple de texturas por bone
+# Formato: BoneName TextureIndex Visible Size
+# Path a la textura
+# Visible: 1=si, 0=no
+# Size: tamaño del billboard (0.1-1.0)
+
+Nose NULL 0 0.25
+Head data/textures/zeta/head.png 1 0.201
+LEye NULL 0 0.20
+REye NULL 0 0.20
+LEar NULLg 0 0.15
+REar NULLg 0 0.15
+Neck data/textures/zeta/neck.png 1 0.135
+LShoulder data/textures/zeta/arm.png 1 0.13
+RShoulder data/textures/zeta/arm.png 1 0.13
+Chest data/textures/zeta/chest.png 1 0.22
+LElbow data/textures/zeta/forearm.png 1 0.13
+RElbow data/textures/zeta/forearm.png 1 0.13
+LWrist data/textures/zeta/handR.png 1 0.07
+RWrist data/textures/zeta/handL.png 1 0.07
+Hip data/textures/zeta/hip.png 1 0.15
+LHip data/textures/zeta/leg.png 1 0.15
+RHip data/textures/zeta/leg.png 1 0.15
+LKnee data/textures/zeta/shin.png 1 0.13
+RKnee data/textures/zeta/shin.png 1 0.13
+LAnkle data/textures/zeta/foot.png 1 0.13
+RAnkle data/textures/zeta/foot.png 1 0.13
