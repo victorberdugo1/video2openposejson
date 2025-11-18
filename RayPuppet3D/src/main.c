@@ -275,6 +275,9 @@ static bool SwitchCharacterProfile(AppState* app, int profileIndex) {
     
     TraceLog(LOG_INFO, "Switching to character profile: %s", profile->name);
     
+    // Guardar estado de reproducción
+    bool wasPlaying = app->editor.isPlaying;
+    
     // Destruir el personaje actual
     if (app->character) {
         DestroyAnimatedCharacter(app->character);
@@ -307,6 +310,16 @@ static bool SwitchCharacterProfile(AppState* app, int profileIndex) {
     
     app->editor.needsSave = false;
     app->character->forceUpdate = true;
+    
+    // Restaurar estado de reproducción
+    app->editor.isPlaying = wasPlaying;
+    SetCharacterAutoPlay(app->character, wasPlaying);
+    
+    // Asegurarse de que el frame actual sea válido
+    if (app->character->animation.frameCount > 0) {
+        SetCharacterFrame(app->character, 0);
+    }
+    
     g_characterManager.currentProfileIndex = profileIndex;
     
     return true;
@@ -325,10 +338,23 @@ static void LoadAnimationForCurrentProfile(AppState* app, const char* animName) 
     snprintf(animPath, sizeof(animPath), "%s%s.json", profile->animationsPath, animName);
     snprintf(metaPath, sizeof(metaPath), "%s%s.anim", profile->animationsPath, animName);
     
+    // Guardar estado de reproducción
+    bool wasPlaying = app->editor.isPlaying;
+    
     if (LoadAnimation(app->character, animPath, metaPath)) {
         strcpy(app->currentAnimation, animName);
         InitUndoHistory(&app->editor.undoHistory);
-        TraceLog(LOG_INFO, "Loaded animation: %s", animName);
+        
+        // Restaurar y aplicar estado de reproducción
+        app->editor.isPlaying = wasPlaying;
+        SetCharacterAutoPlay(app->character, wasPlaying);
+        
+        // Asegurarse de que el frame actual sea válido
+        if (app->character->animation.frameCount > 0) {
+            SetCharacterFrame(app->character, 0);
+        }
+        
+        TraceLog(LOG_INFO, "Loaded animation: %s (playing: %d)", animName, wasPlaying);
     } else {
         TraceLog(LOG_WARNING, "Could not load animation: %s", animName);
     }
@@ -2061,14 +2087,16 @@ static void App_UpdateCamera(AppState* app, float dt) {
 static bool App_Init(AppState* app) {
     if (!app) return false;
     memset(app, 0, sizeof(*app));
-    InitWindow(BASE_WIDTH, BASE_HEIGHT, "Bones3D - Animation Editor");
+    
+    InitWindow(BASE_WIDTH, BASE_HEIGHT, "Bones3D - Animation Editor with Multiple Characters");
     SetWindowState(FLAG_WINDOW_RESIZABLE);
     #if defined(__linux__)
     for (int i = 0; i < 5; i++) PollInputEvents();
     #endif
     MaximizeWindow();
     SetTargetFPS(120);
-
+    
+    // Cargar perfiles de personajes
     if (!LoadCharacterProfiles(&g_characterManager, "data/characters.txt")) {
         TraceLog(LOG_WARNING, "Could not load character profiles, using default");
         // Crear perfil por defecto
@@ -2081,27 +2109,13 @@ static bool App_Init(AppState* app) {
         g_characterManager.currentProfileIndex = 0;
     }
     
-    // Crear personaje con el primer perfil
-    if (!SwitchCharacterProfile(app, 0)) {
-        CloseWindow();
-        return false;
-    }
-
-    //app->character = CreateAnimatedCharacter("data/textures/bone_textures.txt", 
-    //                                       "data/textures/texture_sets.txt");
-    if (!app->character) {
-        CloseWindow();
-        return false;
-    }
-    if (LoadAnimation(app->character, "data/poses/idle.json", "data/animations/idle.anim")) {
-        strcpy(app->currentAnimation, "idle");
-    }
+    // Configuración inicial del editor ANTES de crear el personaje
     app->camMode = 1;
     app->orbitRadius = 2.5f;
     app->orbitPitch = -0.2f;
     app->showUI = true;
     app->editor.showTimeline = true;
-    app->editor.isPlaying = true;
+    app->editor.isPlaying = true;  // IMPORTANTE: establecer ANTES de crear el personaje
     app->editor.selectedFrame = 0;
     app->editor.selectionStart = -1;
     app->editor.selectionEnd = -1;
@@ -2118,6 +2132,13 @@ static bool App_Init(AppState* app) {
     app->debug.showOrientation = false;
     app->screenWidth = GetScreenWidth();
     app->screenHeight = GetScreenHeight();
+    
+    // Crear personaje con el primer perfil
+    if (!SwitchCharacterProfile(app, 0)) {
+        CloseWindow();
+        return false;
+    }
+    
     return true;
 }
 
