@@ -416,8 +416,7 @@ const char* BonesGetErrorString(BonesError error);
 // FUNCIONES DE EDICIÓN DE ANIMACIONES
 // ============================================================================
 
-bool BonesDeleteFrame(BonesAnimation* animation, int frameIndex);
-bool BonesDuplicateFrame(BonesAnimation* animation, int frameIndex);
+
 bool BonesInterpolateFrames(BonesAnimation* animation, int frameA, int frameB, int framesToAdd);
 bool BonesInsertEmptyFrame(BonesAnimation* animation, int position);
 bool BonesCopyFrame(BonesAnimation* animation, int sourceFrame, int targetFrame);
@@ -576,5 +575,6 @@ void DrawAnimatedCharacter(AnimatedCharacter* character, Camera camera);
 void SetCharacterFrame(AnimatedCharacter* character, int frame);
 void SetCharacterAutoPlay(AnimatedCharacter* character, bool autoPlay);
 void SetCharacterBillboards(AnimatedCharacter* character, bool heads, bool torsos);
+void AnimController_UpdateFrameBounds(AnimationController* controller, int clipIndex,BonesAnimation* animation);
 
 #endif // BONES_CORE_H

@@ -90,6 +90,8 @@ typedef struct {
     float lastClickTime;
     int cycleIndex;
     bool isDraggingGizmo;
+    bool showAddFramesDialog;
+    int framesToAdd;
 } EditorState;
 
 typedef struct {
@@ -130,6 +132,13 @@ static void RecalculateAffectedInterpolations(AppState* app, int movedKeyframe);
 static void MoveBoneInFrame(AppState* app, int frameNumber, const char* boneName, Vector3 newPosition);
 static void MoveKeyframeInTimeline(AppState* app, int fromFrameNumber, int toFrameNumber);
 static int FindFrameIndexByNumber(AppState* app, int frameNumber);
+static int FindMaxFrameNumber(AppState* app);
+static bool Button(Rectangle bounds, const char* text, Color color);
+static void DrawTextField(Rectangle bounds, const char* text, bool active);
+static void AddMultipleFramesAtEnd(AppState* app, int numFramesToAdd, BonesAnimation* animation);
+static void DrawAddFramesDialog(AppState* app);  
+bool BonesDeleteFrame(AppState* app,BonesAnimation* animation, int frameIndex);
+bool BonesDuplicateFrame(AppState* app, BonesAnimation* animation, int frameIndex);
 // ============================================================================
 // UNDO/REDO SYSTEM
 // ============================================================================
@@ -219,6 +228,337 @@ static bool PerformRedo(AppState* app) {
 }
 
 
+void AnimController_UpdateFrameBounds(AnimationController* controller, int clipIndex,BonesAnimation* animation) {
+    if (!controller || !controller->bonesAnimation || clipIndex < 0 || 
+        clipIndex >= controller->clipCount) return;
+    
+    if (!animation) return;
+    
+    for (int i = 0; i < animation->frameCount; i++) {
+        animation->frames[i].frameNumber = i;
+    }
+
+    BonesAnimation* anim = (BonesAnimation*)controller->bonesAnimation;
+    if (!anim->isLoaded || anim->frameCount == 0) return;
+    
+    AnimationClipMetadata* clip = &controller->clips[clipIndex];
+    
+    // Recalcular los límites basándose en los frames actuales
+    int minFrame = anim->frames[0].frameNumber;
+    int maxFrame = anim->frames[0].frameNumber;
+    
+    for (int i = 1; i < anim->frameCount; i++) {
+        if (anim->frames[i].frameNumber < minFrame) {
+            minFrame = anim->frames[i].frameNumber;
+        }
+        if (anim->frames[i].frameNumber > maxFrame) {
+            maxFrame = anim->frames[i].frameNumber;
+        }
+    }
+    
+    clip->startFrame = minFrame;
+    clip->endFrame = maxFrame;
+}
+
+
+// DUPLICATE: Solo duplica el frame actual (crea una copia como keyframe)
+bool BonesDuplicateFrame(AppState* app, BonesAnimation* animation, int frameIndex) {
+    if (!animation || frameIndex < 0 || frameIndex >= animation->frameCount ||
+        animation->frameCount >= animation->maxFrames) {
+        TraceLog(LOG_WARNING, "Cannot duplicate frame: invalid params or no space");
+        return false;
+    }
+    
+    AnimationFrame* sourceFrame = &animation->frames[frameIndex];
+    
+    // Hacer espacio para el nuevo frame (insertar después del actual)
+    for (int i = animation->frameCount; i > frameIndex + 1; i--) {
+        animation->frames[i] = animation->frames[i - 1];
+    }
+    
+    // Copiar el frame
+    animation->frames[frameIndex + 1] = *sourceFrame;
+    animation->frames[frameIndex + 1].isOriginalKeyframe = true; // Siempre es keyframe
+    animation->frameCount++;
+    
+    if (app->character->animController && 
+        app->character->animController->currentClipIndex >= 0) {
+        AnimController_UpdateFrameBounds(app->character->animController, app->character->animController->currentClipIndex, animation);
+    }
+    
+    TraceLog(LOG_INFO, "Duplicated frame at index %d (new total: %d)", 
+             frameIndex, animation->frameCount);
+    
+    return true;
+}
+
+// DELETE: Solo puede borrar keyframes, y borra también los interpolados anteriores
+bool BonesDeleteFrame(AppState* app, BonesAnimation* animation, int frameIndex) {
+    if (!animation || frameIndex < 0 || frameIndex >= animation->frameCount) {
+        TraceLog(LOG_WARNING, "Cannot delete frame: invalid index");
+        return false;
+    }
+    
+    AnimationFrame* frameToDelete = &animation->frames[frameIndex];
+    
+    // NO se pueden borrar frames interpolados directamente
+    if (!frameToDelete->isOriginalKeyframe) {
+        TraceLog(LOG_WARNING, "Cannot delete interpolated frame. Delete the keyframe instead.");
+        return false;
+    }
+    
+    // No se puede borrar el último keyframe si es el único
+    int keyframeCount = 0;
+    for (int i = 0; i < animation->frameCount; i++) {
+        if (animation->frames[i].isOriginalKeyframe) {
+            keyframeCount++;
+        }
+    }
+    
+    if (keyframeCount <= 1) {
+        TraceLog(LOG_WARNING, "Cannot delete the last keyframe");
+        return false;
+    }
+    
+    // Encontrar el keyframe anterior
+    int prevKeyframeIdx = -1;
+    for (int i = frameIndex - 1; i >= 0; i--) {
+        if (animation->frames[i].isOriginalKeyframe) {
+            prevKeyframeIdx = i;
+            break;
+        }
+    }
+    
+    // Encontrar el siguiente keyframe
+    int nextKeyframeIdx = -1;
+    for (int i = frameIndex + 1; i < animation->frameCount; i++) {
+        if (animation->frames[i].isOriginalKeyframe) {
+            nextKeyframeIdx = i;
+            break;
+        }
+    }
+    
+    // Determinar cuántos frames borrar
+    int startDeleteIdx = frameIndex;
+    int endDeleteIdx = frameIndex;
+    
+    // Si hay interpolados entre el anterior y este keyframe, borrarlos también
+    if (prevKeyframeIdx != -1) {
+        // Borrar desde el frame después del keyframe anterior
+        // hasta este keyframe inclusive
+        startDeleteIdx = prevKeyframeIdx + 1;
+    }
+    
+    int framesToDelete = endDeleteIdx - startDeleteIdx + 1;
+    
+    TraceLog(LOG_INFO, "Deleting keyframe at %d and %d interpolated frames (total: %d)", 
+             frameIndex, framesToDelete - 1, framesToDelete);
+    
+    // Mover todos los frames posteriores hacia atrás
+    for (int i = startDeleteIdx; i < animation->frameCount - framesToDelete; i++) {
+        animation->frames[i] = animation->frames[i + framesToDelete];
+    }
+    
+    animation->frameCount -= framesToDelete;
+    
+    // Si había un siguiente keyframe, reinterpolamos entre el anterior y el siguiente
+    if (prevKeyframeIdx != -1 && nextKeyframeIdx != -1) {
+        // Calcular nuevos índices después del borrado
+        int newPrevIdx = prevKeyframeIdx;
+        int newNextIdx = nextKeyframeIdx - framesToDelete;
+        
+        if (newNextIdx > newPrevIdx + 1) {
+            // Hay espacio para interpolar
+            BonesInterpolateFrames(animation, newPrevIdx, newNextIdx, 
+                                  newNextIdx - newPrevIdx - 1);
+        }
+    }
+    
+    if (app->character->animController && 
+        app->character->animController->currentClipIndex >= 0) {
+        AnimController_UpdateFrameBounds(app->character->animController,app->character->animController->currentClipIndex, animation);
+    }
+    
+    return true;
+}
+
+static void AddMultipleFramesAtEnd(AppState* app, int numFramesToAdd, BonesAnimation* animation) {
+    if (numFramesToAdd < 1 || !animation) {
+        TraceLog(LOG_WARNING, "Invalid number of frames to add: %d", numFramesToAdd);
+        return;
+    }
+    
+    // Verificar espacio disponible
+    if (animation->frameCount + numFramesToAdd > animation->maxFrames) {
+        TraceLog(LOG_WARNING, "Not enough space to add %d frames (current: %d, max: %d)", 
+                 numFramesToAdd, animation->frameCount, animation->maxFrames);
+        return;
+    }
+    
+    // Encontrar el último KEYFRAME existente
+    int lastKeyframeIndex = -1;
+    int lastFrameNumber = 0;
+    
+    for (int i = animation->frameCount - 1; i >= 0; i--) {
+        if (animation->frames[i].isOriginalKeyframe) {
+            lastKeyframeIndex = i;
+            lastFrameNumber = animation->frames[i].frameNumber;
+            break;
+        }
+    }
+    
+    if (lastKeyframeIndex == -1) {
+        TraceLog(LOG_WARNING, "No keyframe found to extend from");
+        return;
+    }
+    
+    AnimationFrame* sourceFrame = &animation->frames[lastKeyframeIndex];
+    
+    TraceLog(LOG_INFO, "Adding %d frames after frame %d", numFramesToAdd, lastFrameNumber);
+    
+    // Crear exactamente numFramesToAdd frames: 1 keyframe + (numFramesToAdd-1) interpolados
+    for (int i = 1; i <= numFramesToAdd; i++) {
+        int newIndex = animation->frameCount;
+        AnimationFrame* newFrame = &animation->frames[newIndex];
+        
+        // Copiar el frame fuente
+        *newFrame = *sourceFrame;
+        newFrame->valid = true;
+        newFrame->frameNumber = lastFrameNumber + i;
+        
+        // SOLO el último frame es keyframe, los demás son interpolados
+        newFrame->isOriginalKeyframe = (i == numFramesToAdd);
+        
+        animation->frameCount++;
+    }
+    
+    // Ahora interpolar manualmente los frames intermedios (sin llamar a BonesInterpolateFrames)
+    if (numFramesToAdd > 1) {
+        int startKeyframeIdx = lastKeyframeIndex;
+        int endKeyframeIdx = animation->frameCount - 1; // El nuevo keyframe final
+        
+        AnimationFrame* startFrame = &animation->frames[startKeyframeIdx];
+        AnimationFrame* endFrame = &animation->frames[endKeyframeIdx];
+        
+        // Para cada frame intermedio, calcular la interpolación
+        for (int frameOffset = 1; frameOffset < numFramesToAdd; frameOffset++) {
+            int interpFrameIdx = startKeyframeIdx + frameOffset;
+            AnimationFrame* interpFrame = &animation->frames[interpFrameIdx];
+            
+            float t = (float)frameOffset / (float)numFramesToAdd;
+            
+            // Interpolar todas las personas y huesos
+            for (int p = 0; p < startFrame->personCount && p < endFrame->personCount; p++) {
+                Person* startPerson = &startFrame->persons[p];
+                Person* endPerson = &endFrame->persons[p];
+                Person* interpPerson = &interpFrame->persons[p];
+                
+                if (!startPerson->active || !endPerson->active) continue;
+                
+                for (int b = 0; b < startPerson->boneCount; b++) {
+                    Bone* startBone = &startPerson->bones[b];
+                    if (!startBone->position.valid) continue;
+                    
+                    // Buscar el hueso correspondiente en el frame final
+                    for (int eb = 0; eb < endPerson->boneCount; eb++) {
+                        Bone* endBone = &endPerson->bones[eb];
+                        if (strcmp(startBone->name, endBone->name) == 0 && endBone->position.valid) {
+                            // Buscar el hueso en el frame interpolado
+                            for (int ib = 0; ib < interpPerson->boneCount; ib++) {
+                                Bone* interpBone = &interpPerson->bones[ib];
+                                if (strcmp(interpBone->name, startBone->name) == 0) {
+                                    // Interpolar la posición
+                                    interpBone->position.position = Vector3Lerp(
+                                        startBone->position.position,
+                                        endBone->position.position,
+                                        t
+                                    );
+                                    interpBone->position.valid = true;
+                                    interpBone->position.confidence = 
+                                        startBone->position.confidence * (1.0f - t) + 
+                                        endBone->position.confidence * t;
+                                    break;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Actualizar el controlador de animación
+    if (app->character->animController) {
+        AnimController_UpdateFrameBounds(app->character->animController, 
+                                        app->character->animController->currentClipIndex, 
+                                        animation);
+    }
+    
+    // Manejar reproducción
+    bool wasPlaying = app->editor.isPlaying;
+    if (wasPlaying) {
+        SetCharacterAutoPlay(app->character, false);
+    }
+    
+    app->character->forceUpdate = true;
+    app->editor.needsSave = true;
+    
+    // Ir al nuevo frame final
+    int newFrameIndex = animation->frameCount - 1;
+    SetCharacterFrame(app->character, newFrameIndex);
+    
+    if (wasPlaying) {
+        SetCharacterAutoPlay(app->character, true);
+        app->editor.isPlaying = true;
+    }
+    
+    // Actualizar selección
+    int newFrameNumber = animation->frames[newFrameIndex].frameNumber;
+    app->editor.selectionStart = newFrameNumber;
+    app->editor.selectionEnd = newFrameNumber;
+    
+    TraceLog(LOG_INFO, "Added %d frames (1 keyframe + %d interpolated). Total frames: %d", 
+             numFramesToAdd, numFramesToAdd - 1, animation->frameCount);
+}
+
+static void DrawAddFramesDialog(AppState* app) {
+    if (!app->editor.showAddFramesDialog) return;
+    
+    int dialogW = 400;
+    int dialogH = 180;
+    int dialogX = (app->screenWidth - dialogW) / 2;
+    int dialogY = (app->screenHeight - dialogH) / 2;
+    
+    DrawRectangle(0, 0, app->screenWidth, app->screenHeight, (Color){0, 0, 0, 150});
+    DrawRectangle(dialogX, dialogY, dialogW, dialogH, RAYWHITE);
+    DrawRectangleLinesEx((Rectangle){(float)dialogX, (float)dialogY, (float)dialogW, (float)dialogH}, 3, BLACK);
+    
+    DrawText("Add Frames at End", dialogX + 20, dialogY + 20, 20, BLACK);
+    DrawText("Number of frames to add:", dialogX + 20, dialogY + 60, 16, DARKGRAY);
+    
+    char framesText[32];
+    snprintf(framesText, sizeof(framesText), "%d", app->editor.framesToAdd);
+    DrawTextField((Rectangle){(float)(dialogX + 20), (float)(dialogY + 85), (float)(dialogW - 40), 30},
+        framesText, true);
+    
+    // Botones + y -
+    if (Button((Rectangle){(float)(dialogX + dialogW - 180), (float)(dialogY + 85), 30, 30}, "+", GREEN)) {
+        app->editor.framesToAdd++;
+    }
+    if (Button((Rectangle){(float)(dialogX + dialogW - 145), (float)(dialogY + 85), 30, 30}, "-", RED)) {
+        if (app->editor.framesToAdd > 1) app->editor.framesToAdd--;
+    }
+    
+    if (Button((Rectangle){(float)(dialogX + 20), (float)(dialogY + 130), 100, 35}, "ADD", GREEN)) {
+        AddMultipleFramesAtEnd(app, app->editor.framesToAdd, &app->character->animation);
+        app->editor.showAddFramesDialog = false;
+    }
+    
+    if (Button((Rectangle){(float)(dialogX + 140), (float)(dialogY + 130), 100, 35}, "CANCEL", RED)) {
+        app->editor.showAddFramesDialog = false;
+    }
+}
 // ============================================================================
 // CHARACTER PROFILE MANAGEMENT
 // ============================================================================
@@ -816,7 +1156,7 @@ static void MoveKeyframeInTimeline(AppState* app, int fromFrameNumber, int toFra
         if (prevKeyframe != -1 && nextKeyframe != -1) {
             RecalculateInterpolatedFrames(app, prevKeyframe, nextKeyframe);
         } else {
-            BonesDeleteFrame(&app->character->animation, fromIndex);
+            BonesDeleteFrame(app,&app->character->animation, fromIndex);
             app->character->maxFrames = app->character->animation.frameCount;
         }
     }
@@ -1374,7 +1714,7 @@ static void DrawControlPanel(AppState* app) {
             int frameIndex = FindFrameIndexByNumber(app, app->editor.selectionStart);
             if (frameIndex != -1) {
                 int deletedFrameNumber = app->editor.selectionStart;
-                BonesDeleteFrame(&app->character->animation, frameIndex);
+                BonesDeleteFrame(app, &app->character->animation, frameIndex);
                 app->character->maxFrames = app->character->animation.frameCount;
                 app->editor.needsSave = true;
                 int nextValidFrame = -1;
@@ -1407,17 +1747,46 @@ static void DrawControlPanel(AppState* app) {
         }
     }
     buttonX += 85;
-    if (Button((Rectangle){(float)buttonX, (float)panelY, 80, BUTTON_SIZE}, 
-               "DUPLICATE", BLUE)) {
-        if (app->editor.selectionStart != -1 && FrameExists(app, app->editor.selectionStart)) {
-            int frameIndex = FindFrameIndexByNumber(app, app->editor.selectionStart);
-            if (frameIndex != -1) {
-                BonesDuplicateFrame(&app->character->animation, frameIndex);
-                app->character->maxFrames = app->character->animation.frameCount;
-                app->editor.needsSave = true;
+if (Button((Rectangle){(float)buttonX, (float)panelY, 80, BUTTON_SIZE}, 
+           "DUPLICATE", BLUE)) {
+    if (app->editor.selectionStart != -1 && FrameExists(app, app->editor.selectionStart)) {
+        int frameIndex = FindFrameIndexByNumber(app, app->editor.selectionStart);
+        if (frameIndex != -1) {
+            // Verificar si estamos en el último keyframe
+            bool isLastKeyframe = false;
+            int lastKeyframeIdx = -1;
+            for (int i = app->character->animation.frameCount - 1; i >= 0; i--) {
+                if (app->character->animation.frames[i].isOriginalKeyframe) {
+                    lastKeyframeIdx = i;
+                    break;
+                }
+            }
+            
+            isLastKeyframe = (frameIndex == lastKeyframeIdx);
+            
+            if (isLastKeyframe) {
+                // Si es el último keyframe, abrir diálogo para añadir múltiples
+                app->editor.showAddFramesDialog = true;
+            } else {
+                // Comportamiento normal: duplicar frame
+                if (BonesDuplicateFrame(app, &app->character->animation, frameIndex)) {
+                    app->editor.needsSave = true;
+                    
+                    // Actualizar selección al frame duplicado
+                    int newFrameNumber = app->editor.selectionStart + 1;
+                    app->editor.selectionStart = newFrameNumber;
+                    app->editor.selectionEnd = newFrameNumber;
+                    
+                    // Ir al frame duplicado
+                    int newIndex = FindFrameIndexByNumber(app, newFrameNumber);
+                    if (newIndex != -1) {
+                        SetCharacterFrame(app->character, newIndex);
+                    }
+                }
             }
         }
     }
+}
     buttonX += 85;
     if (Button((Rectangle){(float)buttonX, (float)panelY, 100, BUTTON_SIZE}, 
                "INTERPOLATE", PURPLE)) {
@@ -1817,6 +2186,7 @@ static void App_Draw(AppState* app) {
     DrawTimeline(app);
     DrawControlPanel(app);
     DrawExportDialog(app);
+    DrawAddFramesDialog(app);
     EndDrawing();
 }
 
@@ -1973,7 +2343,8 @@ static void App_HandleInput(AppState* app) {
         int frameIndex = FindFrameIndexByNumber(app, app->editor.selectionStart);
         if (frameIndex != -1) {
             int deletedFrameNumber = app->editor.selectionStart;
-            BonesDeleteFrame(&app->character->animation, frameIndex);
+            BonesDeleteFrame(
+app, &app->character->animation, frameIndex);
             app->character->maxFrames = app->character->animation.frameCount;
             app->editor.needsSave = true;
             int nextValidFrame = -1;
@@ -2110,6 +2481,8 @@ static bool App_Init(AppState* app) {
     }
     
     // Configuración inicial del editor ANTES de crear el personaje
+    app->editor.showAddFramesDialog = false;
+    app->editor.framesToAdd = 10;
     app->camMode = 1;
     app->orbitRadius = 2.5f;
     app->orbitPitch = -0.2f;
