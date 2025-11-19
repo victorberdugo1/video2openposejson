@@ -2610,7 +2610,7 @@ void CalculateLimbBoneRenderData(const BoneRenderData* boneData, const Person* p
         }
     }
 
-    if (strcmp(boneData->boneName, "Neck") == 0 && person) {
+    /*if (strcmp(boneData->boneName, "Neck") == 0 && person) {
         Vector3 headPos = CalculateHeadPosition(person);
         Vector3 neckToHead = Vector3Subtract(headPos, boneData->position);
         if (Vector3Length(neckToHead) > 0.001f) {
@@ -2623,7 +2623,37 @@ void CalculateLimbBoneRenderData(const BoneRenderData* boneData, const Person* p
             rotationCompensation += atan2f(Vector3DotProduct(neckToHead, camRight),
                 Vector3DotProduct(neckToHead, camUp)) * RAD2DEG;
         }
+    }*/
+
+if (strcmp(boneData->boneName, "Neck") == 0) {
+    Vector3 estimatedHeadPos = Vector3Add(boneData->position, 
+                                         Vector3Scale(boneData->orientation.up, 0.15f));
+    
+    Vector3 direction = Vector3Subtract(estimatedHeadPos, boneData->position);
+    
+    if (Vector3Length(direction) > 0.001f) {
+        direction = SafeNormalize(direction);
+        
+        Vector3 camForward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+        Vector3 camRight = Vector3Normalize(Vector3CrossProduct(camForward, camera.up));
+        Vector3 camUp = Vector3Normalize(Vector3CrossProduct(camRight, camForward));
+        
+        Vector3 projectedDir = Vector3Subtract(direction, 
+            Vector3Scale(camForward, Vector3DotProduct(direction, camForward)));
+        
+        if (Vector3Length(projectedDir) > 0.001f) {
+            projectedDir = SafeNormalize(projectedDir);
+            
+            float angle = atan2f(Vector3DotProduct(projectedDir, camRight),
+                               Vector3DotProduct(projectedDir, camUp)) * RAD2DEG;
+            angle = fmodf(angle + 180.0f, 360.0f);
+            *outRotation = angle;
+            
+
+        }
     }
+}
+
 
     if ((sector == 0 || sector == 4) &&
         localPitchDeg < 60.0f && localPitchDeg > -60.0f) {

@@ -10,7 +10,7 @@ LEye NULL 0 0.20
 REye NULL 0 0.20
 LEar NULLg 0 0.15
 REar NULLg 0 0.15
-Neck data/textures/zeta/neck.png 1 0.135
+Neck data/textures/zeta/neck.png 1 0.07
 LShoulder data/textures/zeta/arm.png 1 0.13
 RShoulder data/textures/zeta/arm.png 1 0.13
 Chest data/textures/zeta/chest.png 1 0.22
