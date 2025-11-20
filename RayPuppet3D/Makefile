@@ -6,7 +6,7 @@ SRC_DIR = src
 OBJ_DIR = obj
 
 # Archivos fuente
-SRC =  main.c bones3d.c
+SRC = main.c bones3d.c
 
 # Rutas completas de los fuentes
 SRCS = $(addprefix $(SRC_DIR)/, $(SRC))
@@ -18,93 +18,77 @@ OBJ = $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/%.o, $(SRCS))
 RAYLIB_DIR = raylib
 RAYLIB_LIB = libraylib.a
 
+# =============================
+# Compilador según sistema
+# =============================
 ifeq ($(OS),Windows_NT)
 	# Windows
 	CC = gcc
 	CFLAGS = -Wall -Wextra -Werror -I$(INC_DIR) -I$(RAYLIB_DIR)/src -g -MMD -MP
 	LDFLAGS = -L. -lraylib -lopengl32 -lgdi32 -lwinmm -lole32 -lws2_32 -lm
-	RAYLIB_MAKE = $(MAKE)
 else
-	# POSIX
+	# Linux / POSIX
 	CC = cc
 	CFLAGS = -Wall -Wextra -Werror -I$(INC_DIR) -I$(RAYLIB_DIR)/src -g -fsanitize=address -fsanitize=leak -MMD -MP
 	LDFLAGS = -L. -lraylib -lm -ldl -lpthread -lGL -lX11
-	RAYLIB_MAKE = $(MAKE)
 endif
 
-# Colores (pueden mostrarse como texto literal en algunos shells)
+# Colores
 GREEN = \033[0;32m
 RED = \033[0;91m
 RESET = \033[0m
 
-all: $(OBJ_DIR) $(NAME)
+# Target principal
+all: $(OBJ_DIR) $(RAYLIB_LIB) $(NAME)
 
 # ============================
-# Descargar / compilar raylib
+# Compilar Raylib si no existe
 # ============================
 $(RAYLIB_LIB):
-ifeq ($(OS),Windows_NT)
-	@rem Windows-friendly commands (no multiline parens)
-	@echo $(RESET)Checking for $(RAYLIB_DIR)...
-	@if not exist "$(RAYLIB_DIR)" git clone https://github.com/raysan5/raylib.git "$(RAYLIB_DIR)"
-	@echo $(RESET)Building raylib...
-	@$(RAYLIB_MAKE) -C "$(RAYLIB_DIR)/src" PLATFORM=PLATFORM_DESKTOP RAYLIB_LIBTYPE=STATIC
-	@copy /Y "$(RAYLIB_DIR)\src\$(RAYLIB_LIB)" .
-else
-	@echo $(RESET)Checking for $(RAYLIB_DIR)...
+	@echo "$(RESET)Checking for raylib..."
 	@if [ ! -d "$(RAYLIB_DIR)" ]; then \
-		echo "$(RESET)Cloning raylib..."; \
+		echo "Cloning raylib..."; \
 		git clone https://github.com/raysan5/raylib.git "$(RAYLIB_DIR)"; \
 	fi
-	@echo $(RESET)Building raylib...
-	@$(RAYLIB_MAKE) -C "$(RAYLIB_DIR)/src" PLATFORM=PLATFORM_DESKTOP RAYLIB_LIBTYPE=STATIC
+	@echo "Building raylib..."
+	@$(MAKE) -C "$(RAYLIB_DIR)/src" PLATFORM=PLATFORM_DESKTOP RAYLIB_LIBTYPE=STATIC
 	@cp -f "$(RAYLIB_DIR)/src/$(RAYLIB_LIB)" .
-endif
 
-$(NAME): $(RAYLIB_LIB) $(OBJ)
+# ============================
+# Compilar programa principal
+# ============================
+$(NAME): $(OBJ)
 	$(CC) $(CFLAGS) -o $@ $(OBJ) $(LDFLAGS)
-	@echo "$(GREEN)Executable $(NAME) successfully created.$(RESET)"
+	@echo "$(GREEN)Executable $(NAME) created.$(RESET)"
 
-# Regla para compilar cada .c -> .o (crea directorio si hace falta)
+# ============================
+# Compilar cada archivo .c
+# ============================
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
-ifeq ($(OS),Windows_NT)
-	@if not exist "$(@D)" mkdir "$(@D)"
-else
 	@mkdir -p "$(@D)"
-endif
 	$(CC) $(CFLAGS) -c $< -o $@
 	@echo "$(GREEN)Compiled: $<$(RESET)"
 
-# Asegurar que exista el directorio obj antes de compilar
+# ============================
+# Crear carpeta obj si falta
+# ============================
 $(OBJ_DIR):
-ifeq ($(OS),Windows_NT)
-	@if not exist "$(OBJ_DIR)" mkdir "$(OBJ_DIR)"
-else
 	@mkdir -p "$(OBJ_DIR)"
-endif
 
+# ============================
+# Limpieza
+# ============================
 clean:
-ifeq ($(OS),Windows_NT)
-	@if exist "$(OBJ_DIR)" rmdir /S /Q "$(OBJ_DIR)"
-	@echo "$(RED)Object files deleted.$(RESET)"
-else
-	@rm -rf $(OBJ_DIR)
-	@echo "$(RED)Object files deleted.$(RESET)"
-endif
+	@rm -rf "$(OBJ_DIR)"
+	@echo "$(RED)Object files removed.$(RESET)"
 
 fclean: clean
-ifeq ($(OS),Windows_NT)
-	@if exist "$(NAME)" del /Q "$(NAME)"
-	@if exist "$(RAYLIB_LIB)" del /Q "$(RAYLIB_LIB)"
-	@echo "$(RED)Executable and libraries deleted.$(RESET)"
-else
-	@rm -f $(NAME) $(RAYLIB_LIB)
-	@echo "$(RED)Executable and libraries deleted.$(RESET)"
-endif
+	@rm -f "$(NAME)" "$(RAYLIB_LIB)"
+	@echo "$(RED)Executable and libraries removed.$(RESET)"
 
 re: fclean all
 
 .PHONY: all clean fclean re
 
-# Incluir dependencias generadas automáticamente
+# Incluir dependencias generadas automáticamente (.d)
 -include $(OBJ:.o=.d)
