@@ -9,7 +9,10 @@ TEST_OBJ_DIR = obj_test
 
 # Archivos fuente
 SRC = main.c bones3d.c
+<<<<<<< HEAD
 TEST_SRC = test.c bones3d.c
+=======
+>>>>>>> 89e5a4119502b35ff71c2c019c2063fc30ec3fa1
 
 # Rutas completas de los fuentes
 SRCS = $(addprefix $(SRC_DIR)/, $(SRC))
@@ -23,18 +26,19 @@ TEST_OBJ = $(patsubst $(SRC_DIR)/%.c, $(TEST_OBJ_DIR)/%.o, $(TEST_SRCS))
 RAYLIB_DIR = raylib
 RAYLIB_LIB = libraylib.a
 
+# =============================
+# Compilador según sistema
+# =============================
 ifeq ($(OS),Windows_NT)
 	# Windows
 	CC = gcc
 	CFLAGS = -Wall -Wextra -Werror -I$(INC_DIR) -I$(RAYLIB_DIR)/src -g -MMD -MP
 	LDFLAGS = -L. -lraylib -lopengl32 -lgdi32 -lwinmm -lole32 -lws2_32 -lm
-	RAYLIB_MAKE = $(MAKE)
 else
-	# POSIX
+	# Linux / POSIX
 	CC = cc
 	CFLAGS = -Wall -Wextra -Werror -I$(INC_DIR) -I$(RAYLIB_DIR)/src -g -fsanitize=address -fsanitize=leak -MMD -MP
 	LDFLAGS = -L. -lraylib -lm -ldl -lpthread -lGL -lX11
-	RAYLIB_MAKE = $(MAKE)
 endif
 
 # Colores
@@ -43,12 +47,14 @@ RED = \033[0;91m
 YELLOW = \033[0;33m
 RESET = \033[0m
 
-all: $(OBJ_DIR) $(NAME)
+# Target principal
+all: $(OBJ_DIR) $(RAYLIB_LIB) $(NAME)
 
 # ============================
-# Descargar / compilar raylib
+# Compilar Raylib si no existe
 # ============================
 $(RAYLIB_LIB):
+<<<<<<< HEAD
 ifeq ($(OS),Windows_NT)
 	@rem Windows-friendly commands
 	@echo $(RESET)Checking for $(RAYLIB_DIR)...
@@ -58,23 +64,32 @@ ifeq ($(OS),Windows_NT)
 	@copy /Y "$(RAYLIB_DIR)\src\$(RAYLIB_LIB)" .
 else
 	@echo $(RESET)Checking for $(RAYLIB_DIR)...
+=======
+	@echo "$(RESET)Checking for raylib..."
+>>>>>>> 89e5a4119502b35ff71c2c019c2063fc30ec3fa1
 	@if [ ! -d "$(RAYLIB_DIR)" ]; then \
-		echo "$(RESET)Cloning raylib..."; \
+		echo "Cloning raylib..."; \
 		git clone https://github.com/raysan5/raylib.git "$(RAYLIB_DIR)"; \
 	fi
-	@echo $(RESET)Building raylib...
-	@$(RAYLIB_MAKE) -C "$(RAYLIB_DIR)/src" PLATFORM=PLATFORM_DESKTOP RAYLIB_LIBTYPE=STATIC
+	@echo "Building raylib..."
+	@$(MAKE) -C "$(RAYLIB_DIR)/src" PLATFORM=PLATFORM_DESKTOP RAYLIB_LIBTYPE=STATIC
 	@cp -f "$(RAYLIB_DIR)/src/$(RAYLIB_LIB)" .
-endif
 
 # ============================
+<<<<<<< HEAD
 # Compilar ejecutable principal
 # ============================
 $(NAME): $(RAYLIB_LIB) $(OBJ)
+=======
+# Compilar programa principal
+# ============================
+$(NAME): $(OBJ)
+>>>>>>> 89e5a4119502b35ff71c2c019c2063fc30ec3fa1
 	$(CC) $(CFLAGS) -o $@ $(OBJ) $(LDFLAGS)
-	@echo "$(GREEN)Executable $(NAME) successfully created.$(RESET)"
+	@echo "$(GREEN)Executable $(NAME) created.$(RESET)"
 
 # ============================
+<<<<<<< HEAD
 # Compilar ejecutable de test
 # ============================
 test: $(RAYLIB_LIB) $(TEST_OBJ_DIR) $(TEST_NAME)
@@ -90,15 +105,16 @@ $(TEST_NAME): $(RAYLIB_LIB) $(TEST_OBJ)
 # ============================
 
 # Objetos principales
+=======
+# Compilar cada archivo .c
+# ============================
+>>>>>>> 89e5a4119502b35ff71c2c019c2063fc30ec3fa1
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
-ifeq ($(OS),Windows_NT)
-	@if not exist "$(@D)" mkdir "$(@D)"
-else
 	@mkdir -p "$(@D)"
-endif
 	$(CC) $(CFLAGS) -c $< -o $@
 	@echo "$(GREEN)Compiled: $<$(RESET)"
 
+<<<<<<< HEAD
 # Objetos de test
 $(TEST_OBJ_DIR)/%.o: $(SRC_DIR)/%.c
 ifeq ($(OS),Windows_NT)
@@ -110,13 +126,15 @@ endif
 	@echo "$(GREEN)Compiled (test): $<$(RESET)"
 
 # Asegurar directorios
+=======
+# ============================
+# Crear carpeta obj si falta
+# ============================
+>>>>>>> 89e5a4119502b35ff71c2c019c2063fc30ec3fa1
 $(OBJ_DIR):
-ifeq ($(OS),Windows_NT)
-	@if not exist "$(OBJ_DIR)" mkdir "$(OBJ_DIR)"
-else
 	@mkdir -p "$(OBJ_DIR)"
-endif
 
+<<<<<<< HEAD
 $(TEST_OBJ_DIR):
 ifeq ($(OS),Windows_NT)
 	@if not exist "$(TEST_OBJ_DIR)" mkdir "$(TEST_OBJ_DIR)"
@@ -124,10 +142,13 @@ else
 	@mkdir -p "$(TEST_OBJ_DIR)"
 endif
 
+=======
+>>>>>>> 89e5a4119502b35ff71c2c019c2063fc30ec3fa1
 # ============================
 # Limpieza
 # ============================
 clean:
+<<<<<<< HEAD
 ifeq ($(OS),Windows_NT)
 	@if exist "$(OBJ_DIR)" rmdir /S /Q "$(OBJ_DIR)"
 	@if exist "$(TEST_OBJ_DIR)" rmdir /S /Q "$(TEST_OBJ_DIR)"
@@ -147,11 +168,19 @@ else
 	@rm -f $(NAME) $(TEST_NAME) $(RAYLIB_LIB)
 	@echo "$(RED)Executable and libraries deleted.$(RESET)"
 endif
+=======
+	@rm -rf "$(OBJ_DIR)"
+	@echo "$(RED)Object files removed.$(RESET)"
+
+fclean: clean
+	@rm -f "$(NAME)" "$(RAYLIB_LIB)"
+	@echo "$(RED)Executable and libraries removed.$(RESET)"
+>>>>>>> 89e5a4119502b35ff71c2c019c2063fc30ec3fa1
 
 re: fclean all
 
 .PHONY: all clean fclean re test
 
-# Incluir dependencias generadas automáticamente
+# Incluir dependencias generadas automáticamente (.d)
 -include $(OBJ:.o=.d)
 -include $(TEST_OBJ:.o=.d)
