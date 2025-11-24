@@ -2473,8 +2473,8 @@ static bool App_Init(AppState* app) {
         // Crear perfil por defecto
         CharacterProfile* defaultProfile = &g_characterManager.profiles[0];
         strcpy(defaultProfile->name, "default");
-        strcpy(defaultProfile->texturesConfigPath, "data/textures/bone_textures.txt");
-        strcpy(defaultProfile->textureSetsPath, "data/textures/texture_sets.txt");
+        strcpy(defaultProfile->texturesConfigPath, "data/textures/hil/bone_textures.txt");
+        strcpy(defaultProfile->textureSetsPath, "data/textures/hil/texture_sets.txt");
         strcpy(defaultProfile->animationsPath, "data/animations/");
         g_characterManager.profileCount = 1;
         g_characterManager.currentProfileIndex = 0;

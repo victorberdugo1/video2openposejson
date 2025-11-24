@@ -470,12 +470,18 @@ void CalculateHandBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenI
 // FUNCIONES DE RECOLECCIÓN DE DATOS
 // ============================================================================
 
-void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, BoneRenderData** renderBones,
-    int* renderBonesCount, int* renderBonesCapacity, BoneConfig* boneConfigs, int boneConfigCount);
 void CollectHeadsForRendering(const BonesAnimation* animation, HeadRenderData** heads,
-    int* headCount, int* headCapacity, BoneConfig* boneConfigs, int boneConfigCount);
+    int* headCount, int* headCapacity, BoneConfig* boneConfigs, int boneConfigCount,
+    TextureSetCollection* textureSets);
+
 void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData** torsos,
-    int* torsoCount, int* torsoCapacity, BoneConfig* boneConfigs, int boneConfigCount);
+    int* torsoCount, int* torsoCapacity, BoneConfig* boneConfigs, int boneConfigCount,
+    TextureSetCollection* textureSets);
+
+void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, BoneRenderData** renderBones,
+    int* renderBonesCount, int* renderBonesCapacity, BoneConfig* boneConfigs, int boneConfigCount,
+    TextureSetCollection* textureSets);
+
 
 void EnrichBoneRenderDataWithOrientation(BoneRenderData* renderBone, const Person* person);
 bool ResizeRenderBonesArray(BoneRenderData** renderBones, int* renderBonesCapacity, int newCapacity);
@@ -500,7 +506,10 @@ bool LoadSimpleTextureConfig(SimpleTextureSystem* system, const char* filename);
 void LoadBoneConfigurations(SimpleTextureSystem* textureSystem, BoneConfig** boneConfigs, int* boneConfigCount);
 
 BoneConfig* FindBoneConfig(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName);
-const char* GetTexturePathForBone(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName);
+
+const char* GetTexturePathForBone(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName,
+    TextureSetCollection* textureSets);
+
 bool IsBoneVisible(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName);
 float GetBoneSize(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName);
 

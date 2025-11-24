@@ -1,7 +1,7 @@
 #include "bones_core.h"
 #include "raylib.h"
 
-TextureSetCollection* g_textureSets = NULL;
+// TextureSetCollection* g_textureSets = NULL;
 
 static AnimationFrame g_transitionFromFrame;
 static AnimationFrame g_transitionToFrame;
@@ -124,9 +124,10 @@ AnimatedCharacter* CreateAnimatedCharacter(const char* textureConfigPath, const 
 
     character->textureSets = BonesTextureSets_Create();
     if (textureSetsPath && !BonesTextureSets_LoadFromFile(character->textureSets, textureSetsPath)) {
+        // Advertencia pero continuamos
     }
 
-    g_textureSets = character->textureSets;
+    // ELIMINADO: g_textureSets = character->textureSets;
 
     if (textureConfigPath) {
         LoadSimpleTextureConfig(&character->textureSystem, textureConfigPath);
@@ -168,7 +169,7 @@ void DestroyAnimatedCharacter(AnimatedCharacter* character) {
     CleanupTextureSystem(&character->textureSystem, &character->boneConfigs, &character->boneConfigCount);
     BonesFree(&character->animation);
     
-    g_textureSets = NULL;
+    // ELIMINADO: g_textureSets = NULL;
     
     free(character);
 }
@@ -941,21 +942,25 @@ void UpdateAnimatedCharacter(AnimatedCharacter* character, float deltaTime) {
             needsRestore = true;
         }
 
+        // MODIFICADO: Pasar textureSets a cada función
         CollectBonesForRendering(&character->animation, character->renderer->camera, 
                                 &character->renderBones, &character->renderBonesCount,
                                 &character->renderBonesCapacity, 
-                                character->boneConfigs, character->boneConfigCount);
+                                character->boneConfigs, character->boneConfigCount,
+                                character->textureSets);  // <-- AÑADIDO
         
         if (character->renderHeadBillboards) {
             CollectHeadsForRendering(&character->animation, &character->renderHeads, 
                                    &character->renderHeadsCount, &character->renderHeadsCapacity,
-                                   character->boneConfigs, character->boneConfigCount);
+                                   character->boneConfigs, character->boneConfigCount,
+                                   character->textureSets);  // <-- AÑADIDO
         }
 
         if (character->renderTorsoBillboards) {
             CollectTorsosForRendering(&character->animation, &character->renderTorsos,
                                     &character->renderTorsosCount, &character->renderTorsosCapacity,
-                                    character->boneConfigs, character->boneConfigCount);
+                                    character->boneConfigs, character->boneConfigCount,
+                                    character->textureSets);  // <-- AÑADIDO
         }
 
         if (needsRestore) {
@@ -1792,7 +1797,7 @@ bool ShouldRenderHip(const Person* person) {
     return CacheBones(person).hipCount >= 1;
 }
 
-static void CollectRenderItems(const AnimationFrame* frame, void** items, int* itemCount, int* itemCapacity,
+/*static void CollectRenderItems(const AnimationFrame* frame, void** items, int* itemCount, int* itemCapacity,
     size_t itemSize, bool isHead, bool isTorso, BoneConfig* boneConfigs, int boneConfigCount,
     bool (*shouldRender)(const Person*), Vector3 (*calcPosition)(const Person*),
     void (*calcOrientation)(const Person*, void*), const char* defaultTexture, float defaultSize) {
@@ -1900,10 +1905,11 @@ static void CollectRenderItems(const AnimationFrame* frame, void** items, int* i
 
         (*itemCount)++;
     }
-}
+}*/
 
 void CollectHeadsForRendering(const BonesAnimation* animation, HeadRenderData** heads,
-    int* headCount, int* headCapacity, BoneConfig* boneConfigs, int boneConfigCount) {
+    int* headCount, int* headCapacity, BoneConfig* boneConfigs, int boneConfigCount,
+    TextureSetCollection* textureSets) {  // <-- AÑADIDO PARÁMETRO
     
     if (!animation->isLoaded) {
         *headCount = 0;
@@ -1917,13 +1923,86 @@ void CollectHeadsForRendering(const BonesAnimation* animation, HeadRenderData** 
     }
 
     const AnimationFrame* frame = &animation->frames[currentFrame];
-    CollectRenderItems(frame, (void**)heads, headCount, headCapacity, sizeof(HeadRenderData),
-        true, false, boneConfigs, boneConfigCount, ShouldRenderHead, CalculateHeadPosition,
-        NULL, "data/textures/hil/Head.png", 0.25f);
+    
+    *headCount = 0;
+    int estimatedHeads = frame->personCount;
+    
+    if (*headCapacity < estimatedHeads) {
+        HeadRenderData* newArray = (HeadRenderData*)realloc(*heads, sizeof(HeadRenderData) * estimatedHeads);
+        if (!newArray) return;
+        *heads = newArray;
+        *headCapacity = estimatedHeads;
+    }
+
+    static char processedHeads[200][25];
+    int processedCount = 0;
+
+    for (int p = 0; p < frame->personCount; p++) {
+        const Person* person = &frame->persons[p];
+        if (!ShouldRenderHead(person)) continue;
+
+        char headKey[25];
+        snprintf(headKey, sizeof(headKey), "%s_head", person->personId);
+
+        bool alreadyProcessed = false;
+        for (int i = 0; i < processedCount; i++) {
+            if (strcmp(processedHeads[i], headKey) == 0) {
+                alreadyProcessed = true;
+                break;
+            }
+        }
+        if (alreadyProcessed) continue;
+
+        if (processedCount < 200) {
+            strncpy(processedHeads[processedCount], headKey, 24);
+            processedHeads[processedCount][24] = '\0';
+            processedCount++;
+        }
+
+        HeadRenderData* head = &(*heads)[*headCount];
+        memset(head, 0, sizeof(HeadRenderData));
+        
+        head->position = CalculateHeadPosition(person);
+        head->orientation = CalculateHeadOrientation(person);
+        head->valid = true;
+        head->visible = true;
+
+        bool textureFound = false;
+        // MODIFICADO: Usar textureSets pasado como parámetro
+        if (textureSets && textureSets->loaded) {
+            const char* activeTexture = BonesTextureSets_GetActiveTexture(textureSets, "Head");
+            if (activeTexture) {
+                strncpy(head->texturePath, activeTexture, MAX_FILE_PATH_LENGTH - 1);
+                head->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
+                textureFound = true;
+            }
+        }
+        
+        if (!textureFound) {
+            BoneConfig* config = FindBoneConfig(boneConfigs, boneConfigCount, "Head");
+            if (config) {
+                strncpy(head->texturePath, config->texturePath, MAX_FILE_PATH_LENGTH - 1);
+                head->size = config->size;
+            } else {
+                strncpy(head->texturePath, "data/textures/hil/Head.png", MAX_FILE_PATH_LENGTH - 1);
+                head->size = 0.25f;
+            }
+            head->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
+        } else {
+            BoneConfig* config = FindBoneConfig(boneConfigs, boneConfigCount, "Head");
+            head->size = config ? config->size : 0.25f;
+        }
+
+        strncpy(head->personId, person->personId, 15);
+        head->personId[15] = '\0';
+
+        (*headCount)++;
+    }
 }
 
 void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData** torsos,
-    int* torsoCount, int* torsoCapacity, BoneConfig* boneConfigs, int boneConfigCount) {
+    int* torsoCount, int* torsoCapacity, BoneConfig* boneConfigs, int boneConfigCount,
+    TextureSetCollection* textureSets) {  // <-- AÑADIDO PARÁMETRO
 
     *torsoCount = 0;
     if (!animation->isLoaded) return;
@@ -1981,18 +2060,34 @@ void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData*
                 torsoData->valid = true;
                 torsoData->visible = true;
 
-                BoneConfig* chestConfig = FindBoneConfig(boneConfigs, boneConfigCount, "Chest");
-                if (chestConfig) {
-                    strncpy(torsoData->texturePath, chestConfig->texturePath, MAX_FILE_PATH_LENGTH - 1);
-                    torsoData->size = chestConfig->size;
-                    torsoData->visible = chestConfig->visible;
+                // MODIFICADO: Intentar obtener textura del textureSets
+                bool textureFound = false;
+                if (textureSets && textureSets->loaded) {
+                    const char* activeTexture = BonesTextureSets_GetActiveTexture(textureSets, "Chest");
+                    if (activeTexture) {
+                        strncpy(torsoData->texturePath, activeTexture, MAX_FILE_PATH_LENGTH - 1);
+                        torsoData->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
+                        textureFound = true;
+                    }
                 }
-                else {
-                    strncpy(torsoData->texturePath, "tex/Chest.png", MAX_FILE_PATH_LENGTH - 1);
-                    torsoData->size = 0.4f;
-                    torsoData->visible = true;
+
+                if (!textureFound) {
+                    BoneConfig* chestConfig = FindBoneConfig(boneConfigs, boneConfigCount, "Chest");
+                    if (chestConfig) {
+                        strncpy(torsoData->texturePath, chestConfig->texturePath, MAX_FILE_PATH_LENGTH - 1);
+                        torsoData->size = chestConfig->size;
+                        torsoData->visible = chestConfig->visible;
+                    } else {
+                        strncpy(torsoData->texturePath, "tex/Chest.png", MAX_FILE_PATH_LENGTH - 1);
+                        torsoData->size = 0.4f;
+                        torsoData->visible = true;
+                    }
+                    torsoData->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
+                } else {
+                    BoneConfig* chestConfig = FindBoneConfig(boneConfigs, boneConfigCount, "Chest");
+                    torsoData->size = chestConfig ? chestConfig->size : 0.4f;
+                    torsoData->visible = chestConfig ? chestConfig->visible : true;
                 }
-                torsoData->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
 
                 strncpy(torsoData->personId, person->personId, 15);
                 torsoData->personId[15] = '\0';
@@ -2035,18 +2130,34 @@ void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData*
                 torsoData->valid = true;
                 torsoData->visible = true;
 
-                BoneConfig* hipConfig = FindBoneConfig(boneConfigs, boneConfigCount, "Hip");
-                if (hipConfig) {
-                    strncpy(torsoData->texturePath, hipConfig->texturePath, MAX_FILE_PATH_LENGTH - 1);
-                    torsoData->size = hipConfig->size;
-                    torsoData->visible = hipConfig->visible;
+                // MODIFICADO: Intentar obtener textura del textureSets
+                bool textureFound = false;
+                if (textureSets && textureSets->loaded) {
+                    const char* activeTexture = BonesTextureSets_GetActiveTexture(textureSets, "Hip");
+                    if (activeTexture) {
+                        strncpy(torsoData->texturePath, activeTexture, MAX_FILE_PATH_LENGTH - 1);
+                        torsoData->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
+                        textureFound = true;
+                    }
                 }
-                else {
-                    strncpy(torsoData->texturePath, "tex/Hip.png", MAX_FILE_PATH_LENGTH - 1);
-                    torsoData->size = 0.35f;
-                    torsoData->visible = true;
+
+                if (!textureFound) {
+                    BoneConfig* hipConfig = FindBoneConfig(boneConfigs, boneConfigCount, "Hip");
+                    if (hipConfig) {
+                        strncpy(torsoData->texturePath, hipConfig->texturePath, MAX_FILE_PATH_LENGTH - 1);
+                        torsoData->size = hipConfig->size;
+                        torsoData->visible = hipConfig->visible;
+                    } else {
+                        strncpy(torsoData->texturePath, "tex/Hip.png", MAX_FILE_PATH_LENGTH - 1);
+                        torsoData->size = 0.35f;
+                        torsoData->visible = true;
+                    }
+                    torsoData->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
+                } else {
+                    BoneConfig* hipConfig = FindBoneConfig(boneConfigs, boneConfigCount, "Hip");
+                    torsoData->size = hipConfig ? hipConfig->size : 0.35f;
+                    torsoData->visible = hipConfig ? hipConfig->visible : true;
                 }
-                torsoData->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
 
                 strncpy(torsoData->personId, person->personId, 15);
                 torsoData->personId[15] = '\0';
@@ -2070,7 +2181,9 @@ bool ResizeRenderBonesArray(BoneRenderData** renderBones, int* renderBonesCapaci
 }
 
 void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, BoneRenderData** renderBones,
-    int* renderBonesCount, int* renderBonesCapacity, BoneConfig* boneConfigs, int boneConfigCount) {
+    int* renderBonesCount, int* renderBonesCapacity, BoneConfig* boneConfigs, int boneConfigCount,
+    TextureSetCollection* textureSets) {  // <-- AÑADIDO PARÁMETRO
+    
     *renderBonesCount = 0;
     if (!animation->isLoaded) return;
 
@@ -2143,17 +2256,37 @@ void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, Bo
             renderBone->distance = distance;
             renderBone->valid = true;
 
-            if (config) {
-                strncpy(renderBone->texturePath, config->texturePath, MAX_FILE_PATH_LENGTH - 1);
-                renderBone->visible = config->visible;
-                renderBone->size = config->size;
+            // MODIFICADO: Intentar obtener textura del textureSets primero
+            bool textureFound = false;
+            if (textureSets && textureSets->loaded) {
+                const char* activeTexture = BonesTextureSets_GetActiveTexture(textureSets, bone->name);
+                if (activeTexture) {
+                    strncpy(renderBone->texturePath, activeTexture, MAX_FILE_PATH_LENGTH - 1);
+                    renderBone->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
+                    textureFound = true;
+                }
             }
-            else {
-                strncpy(renderBone->texturePath, GetTexturePathForBone(boneConfigs, boneConfigCount, bone->name), MAX_FILE_PATH_LENGTH - 1);
-                renderBone->visible = IsBoneVisible(boneConfigs, boneConfigCount, bone->name);
-                renderBone->size = GetBoneSize(boneConfigs, boneConfigCount, bone->name);
+
+            if (!textureFound) {
+                if (config) {
+                    strncpy(renderBone->texturePath, config->texturePath, MAX_FILE_PATH_LENGTH - 1);
+                    renderBone->visible = config->visible;
+                    renderBone->size = config->size;
+                } else {
+                    strncpy(renderBone->texturePath, GetTexturePathForBone(boneConfigs, boneConfigCount, bone->name, textureSets), MAX_FILE_PATH_LENGTH - 1);
+                    renderBone->visible = IsBoneVisible(boneConfigs, boneConfigCount, bone->name);
+                    renderBone->size = GetBoneSize(boneConfigs, boneConfigCount, bone->name);
+                }
+                renderBone->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
+            } else {
+                if (config) {
+                    renderBone->visible = config->visible;
+                    renderBone->size = config->size;
+                } else {
+                    renderBone->visible = true;
+                    renderBone->size = 0.35f;
+                }
             }
-            renderBone->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
 
             strncpy(renderBone->boneName, bone->name, MAX_BONE_NAME_LENGTH - 1);
             renderBone->boneName[MAX_BONE_NAME_LENGTH - 1] = '\0';
@@ -3227,7 +3360,6 @@ void BonesRenderer_RenderFrame(BonesRenderer* renderer,
 
     BeginMode3D(renderer->camera);
     
-    BonesRenderer_DrawGrid(renderer);
     if (autoCenterCalculated) {
         BonesRenderer_DrawAutoCenter(renderer, autoCenter);
     }
@@ -3352,12 +3484,6 @@ void BonesRenderer_RenderFrame(BonesRenderer* renderer,
     }
 
     EndMode3D();
-}
-
-void BonesRenderer_DrawGrid(BonesRenderer* renderer) {
-    if (renderer) {
-        DrawGrid(24, 0.5f);
-    }
 }
 
 void BonesRenderer_DrawAutoCenter(BonesRenderer* renderer, Vector3 autoCenter) {
@@ -3972,9 +4098,12 @@ BoneConfig* FindBoneConfig(BoneConfig* boneConfigs, int boneConfigCount, const c
     return NULL;
 }
 
-const char* GetTexturePathForBone(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName) {
-    if (g_textureSets) {
-        const char* activeTexture = BonesTextureSets_GetActiveTexture(g_textureSets, boneName);
+const char* GetTexturePathForBone(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName,
+    TextureSetCollection* textureSets) {  // <-- AÑADIDO PARÁMETRO
+    
+    // MODIFICADO: Usar textureSets pasado como parámetro
+    if (textureSets && textureSets->loaded) {
+        const char* activeTexture = BonesTextureSets_GetActiveTexture(textureSets, boneName);
         if (activeTexture) {
             return activeTexture;
         }

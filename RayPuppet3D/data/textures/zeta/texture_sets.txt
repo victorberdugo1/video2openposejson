@@ -1,12 +1,6 @@
 # Bone Variant TexturePath
 # Expresiones de cabeza
 Head idle data/textures/zeta/head.png
-Head blink data/textures/zeta/Head_Blink.png
-Head talk_open data/textures/zeta/Head_Talk1.png
-Head talk_closed data/textures/zeta/Head_Talk2.png
-Head happy data/textures/zeta/Head_Happy.png
-Head sad data/textures/zeta/Head_Sad.png
-Head angry data/textures/zeta/Head_Angry.png
 
 # Puedes añadir variantes de otras partes
 # LWrist idle hil/HandR.png
