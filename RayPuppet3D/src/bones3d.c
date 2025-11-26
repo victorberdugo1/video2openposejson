@@ -2817,7 +2817,7 @@ void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
     }
 
     if (torsoData->type == TORSO_CHEST && torsoData->person &&
-        localPitchDeg < 70.0f && localPitchDeg > -70.0f && outRotation) {
+        localPitchDeg < 70.0f && localPitchDeg > -70.0f  && !torsoData->disableCompensation) {
 
         Vector3 hipPosition = CalculateHipPosition(torsoData->person);
 
@@ -2846,9 +2846,8 @@ void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
             while (*outRotation < 0.0f) *outRotation += 360.0f;
         }
     }
-
     if (torsoData->type == TORSO_HIP && torsoData->person &&
-        localPitchDeg < 70.0f && localPitchDeg > -70.0f) {
+        localPitchDeg < 70.0f && localPitchDeg > -70.0f  && !torsoData->disableCompensation) {
 
         Vector3 chestPosition = CalculateChestPosition(torsoData->person);
 

@@ -2506,6 +2506,12 @@ static bool App_Init(AppState* app) {
     app->screenWidth = GetScreenWidth();
     app->screenHeight = GetScreenHeight();
     
+    if (app->character && app->character->renderTorsos) {
+        for (int i = 0; i < app->character->renderTorsosCount; i++) {
+            app->character->renderTorsos[i].disableCompensation = false;
+        }
+    }
+
     // Crear personaje con el primer perfil
     if (!SwitchCharacterProfile(app, 0)) {
         CloseWindow();

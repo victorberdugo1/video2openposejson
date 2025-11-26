@@ -28,7 +28,7 @@ typedef struct {
     char currentClip[64];
     char texCfgPath[512];
     char texSetsPath[512];
-    Vector3 lastValidCenter;  // Para mantener el centro entre transiciones
+    Vector3 lastValidCenter;
     bool hasValidCenter;
 } GameCharacter;
 
@@ -230,6 +230,7 @@ void DrawAnimatedCharacterTransformed(AnimatedCharacter* character, Camera camer
     if (torsosCopy) {
         for (int i = 0; i < tc; ++i) {
             TorsoRenderData* t = &torsosCopy[i];
+	    t->disableCompensation = true;//TODO: compensate *outRotation = pitchToChest ± 80;
             if (!t->valid) continue;
             t->position = rotatePointAroundPivot(t->position, pivot, worldPosition, rot);
             if (t->orientation.valid) {
