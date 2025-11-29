@@ -217,4 +217,5 @@ obj/
 # Ignorar archivos generados por el sistema
 *.o
 *.a
+*.d
 *.exe
