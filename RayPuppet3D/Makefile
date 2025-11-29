@@ -1,115 +1,109 @@
-# Makefile multi-plataforma (Windows + Unix)
 NAME = raypup
 TEST_NAME = test_viewer
 
-# Directorios
 INC_DIR = inc
 SRC_DIR = src
 OBJ_DIR = obj
 TEST_OBJ_DIR = obj_test
 
-# Archivos fuente
 SRC = main.c bones3d.c
 TEST_SRC = test.c bones3d.c
 
-# Rutas completas de los fuentes
 SRCS = $(addprefix $(SRC_DIR)/, $(SRC))
 TEST_SRCS = $(addprefix $(SRC_DIR)/, $(TEST_SRC))
 
-# Objetos
 OBJ = $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/%.o, $(SRCS))
 TEST_OBJ = $(patsubst $(SRC_DIR)/%.c, $(TEST_OBJ_DIR)/%.o, $(TEST_SRCS))
 
-# Raylib
 RAYLIB_DIR = raylib
 RAYLIB_LIB = libraylib.a
 
-# =============================
-# Compilador según sistema
-# =============================
+# ============================================================================
+# PLATAFORMA
+# ============================================================================
+
 ifeq ($(OS),Windows_NT)
-	CC = gcc
-	CFLAGS = -Wall -Wextra -Werror -I$(INC_DIR) -I$(RAYLIB_DIR)/src -g -MMD -MP
-	LDFLAGS = -L. -lraylib -lopengl32 -lgdi32 -lwinmm -lole32 -lws2_32 -lm
+
+    CC = gcc
+    CFLAGS = -Wall -Wextra -Werror -I$(INC_DIR) -I$(RAYLIB_DIR)/src -g -MMD -MP
+    LDFLAGS = -L. -lraylib -lopengl32 -lgdi32 -lwinmm -lole32 -lws2_32 -lm
+
+    MKDIR_P = if not exist "$(@D)" mkdir "$(@D)"
+    MKDIR_DIR = if not exist "$(1)" mkdir "$(1)"
+    RM = del /F /Q
+    RMDIR = rmdir /S /Q
+    CP = copy /Y
+
 else
-	CC = cc
-	CFLAGS = -Wall -Wextra -Werror -I$(INC_DIR) -I$(RAYLIB_DIR)/src -g -fsanitize=address -fsanitize=leak -MMD -MP
-	LDFLAGS = -L. -lraylib -lm -ldl -lpthread -lGL -lX11
+
+    CC = cc
+    CFLAGS = -Wall -Wextra -Werror -I$(INC_DIR) -I$(RAYLIB_DIR)/src -g -MMD -MP
+    LDFLAGS = -L. -lraylib -lm -ldl -lpthread -lGL -lX11
+
+    MKDIR_P = mkdir -p "$(@D)"
+    MKDIR_DIR = mkdir -p "$(1)"
+    RM = rm -f
+    RMDIR = rm -rf
+    CP = cp -f
+
 endif
 
-# Colores (pueden ignorarse en Windows cmd)
-GREEN = \033[0;32m
-RED = \033[0;91m
-YELLOW = \033[0;33m
-RESET = \033[0m
+# ============================================================================
+# TARGETS
+# ============================================================================
 
-# =============================
-# Comandos portables
-# =============================
-# mkdir portable (usa la lógica en las recetas individuales)
-MKDIR_P = mkdir -p
-
-# =============================
-# Target principal
-# =============================
 all: $(OBJ_DIR) $(RAYLIB_LIB) $(NAME)
 
-# =============================
-# Compilar Raylib si no existe
-# =============================
+test: $(RAYLIB_LIB) $(TEST_OBJ_DIR) $(TEST_NAME)
+	./$(TEST_NAME)
+
+# ============================================================================
+# RAYLIB
+# ============================================================================
+
 $(RAYLIB_LIB):
-	@echo "$(RESET)Checking for raylib...$(RESET)"
+ifeq ($(OS),Windows_NT)
+	@if not exist "$(RAYLIB_DIR)" ( \
+		echo Cloning raylib... & \
+		git clone https://github.com/raysan5/raylib.git "$(RAYLIB_DIR)" \
+	)
+	@$(MAKE) -C "$(RAYLIB_DIR)/src" PLATFORM=PLATFORM_DESKTOP RAYLIB_LIBTYPE=STATIC
+	@$(CP) "$(RAYLIB_DIR)\src\$(RAYLIB_LIB)" .
+else
 	@if [ ! -d "$(RAYLIB_DIR)" ]; then \
 		echo "Cloning raylib..."; \
 		git clone https://github.com/raysan5/raylib.git "$(RAYLIB_DIR)"; \
 	fi
-	@echo "Building raylib..."
 	@$(MAKE) -C "$(RAYLIB_DIR)/src" PLATFORM=PLATFORM_DESKTOP RAYLIB_LIBTYPE=STATIC
-	@cp -f "$(RAYLIB_DIR)/src/$(RAYLIB_LIB)" .
+	@$(CP) "$(RAYLIB_DIR)/src/$(RAYLIB_LIB)" .
+endif
 
-# =============================
-# Compilar ejecutable principal
-# =============================
+# ============================================================================
+# EXECUTABLES
+# ============================================================================
+
 $(NAME): $(OBJ)
 	$(CC) $(CFLAGS) -o $@ $(OBJ) $(LDFLAGS)
-	@echo "$(GREEN)Executable $(NAME) created.$(RESET)"
 
-# =============================
-# Compilar ejecutable de test
-# =============================
-test: $(RAYLIB_LIB) $(TEST_OBJ_DIR) $(TEST_NAME)
-	@echo "$(YELLOW)Running test viewer...$(RESET)"
-	./$(TEST_NAME)
-
-$(TEST_NAME): $(RAYLIB_LIB) $(TEST_OBJ)
+$(TEST_NAME): $(TEST_OBJ)
 	$(CC) $(CFLAGS) -o $@ $(TEST_OBJ) $(LDFLAGS)
-	@echo "$(GREEN)Test executable $(TEST_NAME) successfully created.$(RESET)"
 
-# =============================
-# Reglas de compilación
-# =============================
+# ============================================================================
+# COMPILACIÓN OBJETOS
+# ============================================================================
 
-# Objetos principales
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
-ifeq ($(OS),Windows_NT)
-	@if not exist "$(@D)" mkdir "$(@D)"
-else
-	@mkdir -p "$(@D)"
-endif
+	@$(MKDIR_P)
 	$(CC) $(CFLAGS) -c $< -o $@
-	@echo "$(GREEN)Compiled: $<$(RESET)"
 
-# Objetos de test
 $(TEST_OBJ_DIR)/%.o: $(SRC_DIR)/%.c
-ifeq ($(OS),Windows_NT)
-	@if not exist "$(@D)" mkdir "$(@D)"
-else
-	@mkdir -p "$(@D)"
-endif
+	@$(MKDIR_P)
 	$(CC) $(CFLAGS) -c $< -o $@
-	@echo "$(GREEN)Compiled (test): $<$(RESET)"
 
-# Crear carpetas si faltan
+# ============================================================================
+# DIRECTORIOS
+# ============================================================================
+
 $(OBJ_DIR):
 ifeq ($(OS),Windows_NT)
 	@if not exist "$(OBJ_DIR)" mkdir "$(OBJ_DIR)"
@@ -124,34 +118,30 @@ else
 	@mkdir -p "$(TEST_OBJ_DIR)"
 endif
 
-# =============================
-# Limpieza (compatible Windows / Unix)
-# =============================
+# ============================================================================
+# CLEAN
+# ============================================================================
+
 clean:
 ifeq ($(OS),Windows_NT)
-	@if exist "$(OBJ_DIR)" rmdir /S /Q "$(OBJ_DIR)"
-	@if exist "$(TEST_OBJ_DIR)" rmdir /S /Q "$(TEST_OBJ_DIR)"
-	@echo "$(RED)Object files removed.$(RESET)"
+	@if exist "$(OBJ_DIR)" $(RMDIR) "$(OBJ_DIR)"
+	@if exist "$(TEST_OBJ_DIR)" $(RMDIR) "$(TEST_OBJ_DIR)"
 else
-	@rm -rf "$(OBJ_DIR)" "$(TEST_OBJ_DIR)"
-	@echo "$(RED)Object files removed.$(RESET)"
+	$(RMDIR) "$(OBJ_DIR)" "$(TEST_OBJ_DIR)"
 endif
 
 fclean: clean
 ifeq ($(OS),Windows_NT)
-	@if exist "$(NAME)" del /F /Q "$(NAME)"
-	@if exist "$(TEST_NAME)" del /F /Q "$(TEST_NAME)"
-	@if exist "$(RAYLIB_LIB)" del /F /Q "$(RAYLIB_LIB)"
-	@echo "$(RED)Executable and libraries removed.$(RESET)"
+	@if exist "$(NAME)" $(RM) "$(NAME)"
+	@if exist "$(TEST_NAME)" $(RM) "$(TEST_NAME)"
+	@if exist "$(RAYLIB_LIB)" $(RM) "$(RAYLIB_LIB)"
 else
-	@rm -f "$(NAME)" "$(TEST_NAME)" "$(RAYLIB_LIB)"
-	@echo "$(RED)Executable and libraries removed.$(RESET)"
+	$(RM) "$(NAME)" "$(TEST_NAME)" "$(RAYLIB_LIB)"
 endif
 
 re: fclean all
 
 .PHONY: all clean fclean re test
 
-# Incluir dependencias generadas automáticamente (.d)
 -include $(OBJ:.o=.d)
 -include $(TEST_OBJ:.o=.d)
