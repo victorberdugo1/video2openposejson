@@ -2816,64 +2816,58 @@ void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
         *outMirrored = (sector >= 1 && sector <= 4);
     }
 
-    if (torsoData->type == TORSO_CHEST && torsoData->person &&
-        localPitchDeg < 70.0f && localPitchDeg > -70.0f  && !torsoData->disableCompensation) {
-
-        Vector3 hipPosition = CalculateHipPosition(torsoData->person);
-
-        Vector3 chestToHip = Vector3Subtract(hipPosition, torsoData->position);
-        float distance = Vector3Length(chestToHip);
-        if (distance > 0.001f) {
-            chestToHip = Vector3Scale(chestToHip, 1.0f / distance);
-
-            float pitchToHip = atan2f(chestToHip.y,
-                sqrtf(chestToHip.x * chestToHip.x + chestToHip.z * chestToHip.z)) * RAD2DEG;
-
-            Vector3 camToTorso = Vector3Subtract(torsoData->position, camera.position);
-            camToTorso = SafeNormalize(camToTorso);
-            Vector3 torsoRight = torsoData->orientation.right;
-            float sideDot = Vector3DotProduct(camToTorso, torsoRight);
-            bool viewingFromRight = (sideDot > 0.0f);
-
-            if (viewingFromRight) {
-                *outRotation = -pitchToHip - 80.0f;
-            }
-            else {
-                *outRotation = pitchToHip + 80.0f;
-            }
-
-            while (*outRotation >= 360.0f) *outRotation -= 360.0f;
-            while (*outRotation < 0.0f) *outRotation += 360.0f;
+    // Aplicar compensación basada en la inclinación del torso
+    if (torsoData->person && localPitchDeg < 70.0f && localPitchDeg > -70.0f) {
+        
+        Vector3 otherPosition;
+        bool hasOtherPosition = false;
+        
+        // Obtener la posición del otro extremo del torso
+        if (torsoData->type == TORSO_CHEST) {
+            otherPosition = CalculateHipPosition(torsoData->person);
+            hasOtherPosition = (Vector3Length(otherPosition) > 0.001f);
         }
-    }
-    if (torsoData->type == TORSO_HIP && torsoData->person &&
-        localPitchDeg < 70.0f && localPitchDeg > -70.0f  && !torsoData->disableCompensation) {
-
-        Vector3 chestPosition = CalculateChestPosition(torsoData->person);
-
-        Vector3 hipToChest = Vector3Subtract(chestPosition, torsoData->position);
-
-        float distance = Vector3Length(hipToChest);
-        if (distance > 0.001f) {
-            hipToChest = Vector3Scale(hipToChest, 1.0f / distance);
-
-            float pitchToChest = atan2f(hipToChest.y,
-                sqrtf(hipToChest.x * hipToChest.x + hipToChest.z * hipToChest.z)) * RAD2DEG;
-
-            Vector3 camToTorso = Vector3Subtract(torsoData->position, camera.position);
-            Vector3 torsoRight = torsoData->orientation.right;
-            float sideDot = Vector3DotProduct(camToTorso, torsoRight);
-            bool viewingFromRight = (sideDot > 0.0f);
-
-            if (viewingFromRight) {
-                *outRotation = pitchToChest - 80;
+        else if (torsoData->type == TORSO_HIP) {
+            otherPosition = CalculateChestPosition(torsoData->person);
+            hasOtherPosition = (Vector3Length(otherPosition) > 0.001f);
+        }
+        
+        if (hasOtherPosition) {
+            Vector3 torsoVector = Vector3Subtract(otherPosition, torsoData->position);
+            float distance = Vector3Length(torsoVector);
+            
+            if (distance > 0.001f) {
+                torsoVector = SafeNormalize(torsoVector);
+                
+                // Calcular el pitch del vector del torso en espacio mundial
+                float worldPitch = atan2f(torsoVector.y,
+                    sqrtf(torsoVector.x * torsoVector.x + torsoVector.z * torsoVector.z)) * RAD2DEG;
+                
+                // Determinar el lado de visualización en espacio local
+                bool viewingFromRight = (localCamDir.x > 0.0f);
+                
+                // Aplicar compensación según el tipo de torso y lado de visualización
+                if (torsoData->type == TORSO_CHEST) {
+                    if (viewingFromRight) {
+                        *outRotation = -worldPitch - 80.0f;
+                    }
+                    else {
+                        *outRotation = worldPitch + 80.0f;
+                    }
+                }
+                else { // TORSO_HIP
+                    if (viewingFromRight) {
+                        *outRotation = worldPitch - 80.0f;
+                    }
+                    else {
+                        *outRotation = -worldPitch + 80.0f;
+                    }
+                }
+                
+                // Normalizar rotación
+                while (*outRotation >= 360.0f) *outRotation -= 360.0f;
+                while (*outRotation < 0.0f) *outRotation += 360.0f;
             }
-            else {
-                *outRotation = -pitchToChest + 80;
-            }
-
-            while (*outRotation >= 360.0f) *outRotation -= 360.0f;
-            while (*outRotation < 0.0f) *outRotation += 360.0f;
         }
     }
 }

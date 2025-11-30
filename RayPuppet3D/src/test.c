@@ -69,6 +69,30 @@ void DrawAnimatedCharacterTransformed(AnimatedCharacter* character, Camera camer
         if (torsosCopy) memcpy(torsosCopy, character->renderTorsos, sizeof(TorsoRenderData) * tc);
     }
 
+    // Crear copia transformada del frame actual para los torsos
+    AnimationFrame* transformedFrame = NULL;
+    if (tc > 0 && character->animation.isLoaded && 
+        character->currentFrame >= 0 && character->currentFrame < character->animation.frameCount) {
+        
+        transformedFrame = (AnimationFrame*)malloc(sizeof(AnimationFrame));
+        if (transformedFrame) {
+            // Copiar frame actual
+            *transformedFrame = character->animation.frames[character->currentFrame];
+            
+            // Transformar todas las posiciones de huesos en el frame
+            for (int p = 0; p < transformedFrame->personCount; p++) {
+                Person* person = &transformedFrame->persons[p];
+                for (int b = 0; b < person->boneCount; b++) {
+                    Bone* bone = &person->bones[b];
+                    if (bone->position.valid) {
+                        bone->position.position = RotatePointAroundPivot(
+                            bone->position.position, pivot, worldPosition, rot);
+                    }
+                }
+            }
+        }
+    }
+
     // Transformar bones
     if (bonesCopy) {
         for (int i = 0; i < bc; i++) {
@@ -79,6 +103,11 @@ void DrawAnimatedCharacterTransformed(AnimatedCharacter* character, Camera camer
                 b->orientation.forward = Vector3Transform(b->orientation.forward, rot);
                 b->orientation.up = Vector3Transform(b->orientation.up, rot);
                 b->orientation.right = Vector3Transform(b->orientation.right, rot);
+                
+                b->orientation.forward = SafeNormalize(b->orientation.forward);
+                b->orientation.up = SafeNormalize(b->orientation.up);
+                b->orientation.right = SafeNormalize(b->orientation.right);
+                
                 b->orientation.position = b->position;
                 b->orientation.yaw += worldRotation;
             }
@@ -95,26 +124,60 @@ void DrawAnimatedCharacterTransformed(AnimatedCharacter* character, Camera camer
                 h->orientation.forward = Vector3Transform(h->orientation.forward, rot);
                 h->orientation.up = Vector3Transform(h->orientation.up, rot);
                 h->orientation.right = Vector3Transform(h->orientation.right, rot);
+                
+                h->orientation.forward = SafeNormalize(h->orientation.forward);
+                h->orientation.up = SafeNormalize(h->orientation.up);
+                h->orientation.right = SafeNormalize(h->orientation.right);
+                
                 h->orientation.position = h->position;
                 h->orientation.yaw += worldRotation;
             }
         }
     }
 
-    // Transformar torsos
+    // Transformar torsos - CRÍTICO: Usar el frame transformado
     if (torsosCopy) {
         for (int i = 0; i < tc; i++) {
             TorsoRenderData* t = &torsosCopy[i];
-            t->disableCompensation = true;
+            
             if (!t->valid) continue;
-            t->position = RotatePointAroundPivot(t->position, pivot, worldPosition, rot);
+            
+            // IMPORTANTE: Actualizar el puntero al person transformado
+            if (transformedFrame && t->person) {
+                // Buscar el person correspondiente en el frame transformado
+                for (int p = 0; p < transformedFrame->personCount; p++) {
+                    if (strcmp(transformedFrame->persons[p].personId, t->personId) == 0) {
+                        t->person = &transformedFrame->persons[p];
+                        break;
+                    }
+                }
+            }
+            
+            // Transformar orientación PRIMERO
             if (t->orientation.valid) {
                 t->orientation.forward = Vector3Transform(t->orientation.forward, rot);
                 t->orientation.up = Vector3Transform(t->orientation.up, rot);
                 t->orientation.right = Vector3Transform(t->orientation.right, rot);
-                t->orientation.position = t->position;
+                
+                t->orientation.forward = SafeNormalize(t->orientation.forward);
+                t->orientation.up = SafeNormalize(t->orientation.up);
+                t->orientation.right = SafeNormalize(t->orientation.right);
+                
                 t->orientation.yaw += worldRotation;
+                
+                while (t->orientation.yaw > PI) t->orientation.yaw -= 2.0f * PI;
+                while (t->orientation.yaw < -PI) t->orientation.yaw += 2.0f * PI;
             }
+            
+            // DESPUÉS transformar posición
+            t->position = RotatePointAroundPivot(t->position, pivot, worldPosition, rot);
+            
+            if (t->orientation.valid) {
+                t->orientation.position = t->position;
+            }
+            
+            // NO deshabilitar compensación
+            t->disableCompensation = false;
         }
     }
 
@@ -132,6 +195,7 @@ void DrawAnimatedCharacterTransformed(AnimatedCharacter* character, Camera camer
     if (bonesCopy) free(bonesCopy);
     if (headsCopy) free(headsCopy);
     if (torsosCopy) free(torsosCopy);
+    if (transformedFrame) free(transformedFrame);
 
     // Restaurar cámara
     character->renderer->camera = origCam;
@@ -268,10 +332,10 @@ void ProcessInput(GameWorld* w, float dt) {
         // Desplazamiento lateral con A/D
         float lateralSpeed = 2.0f;
         if (IsKeyDown(KEY_A)) {
-            lateralOffset = Vector3Add(lateralOffset, Vector3Scale(right, -lateralSpeed * dt));
+            lateralOffset = Vector3Add(lateralOffset, Vector3Scale(right, lateralSpeed * dt));
         }
         if (IsKeyDown(KEY_D)) {
-            lateralOffset = Vector3Add(lateralOffset, Vector3Scale(right, lateralSpeed * dt));
+            lateralOffset = Vector3Add(lateralOffset, Vector3Scale(right, -lateralSpeed * dt));
         }
         
         // Limitar desplazamiento lateral
@@ -382,17 +446,6 @@ void RenderWorld(GameWorld* w) {
         
         DrawAnimatedCharacterTransformed(gc->character, w->camera, gc->position, gc->rotation);
 
-        // Indicador de dirección
-        if (idx == w->controlled) {
-            Vector3 start = gc->position;
-            start.y += 0.05f;
-            Vector3 end = Vector3Add(start, (Vector3){sinf(gc->rotation) * 0.5f, 0, cosf(gc->rotation) * 0.5f});
-            DrawLine3D(start, end, GREEN);
-            DrawSphere(end, 0.05f, GREEN);
-        }
-
-        // Indicador de posición
-        DrawSphere(gc->position, 0.03f, idx == w->controlled ? BLUE : RED);
     }
 
     EndMode3D();
