@@ -1,18 +1,30 @@
-#python normalizer.py -a animation.json -r body.json -o 3d_combined_data.json
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# Uso:
+# python normalizer.py -a animation.json -r body.json -o 3d_combined_data.json -v
 
 import json
 import numpy as np
 import sys
 import os
 
+# ---------------------------
+# Ajustes: cuánto aplicar del movimiento en X y cuánto avanzar en Z
+# ---------------------------
+BLEND_X = 0.42  # 0.0 = no mover, 1.0 = mover totalmente como antes, 0.5 = mitad
+BLEND_Z = 0.4  # desplazamiento añadido en Z (positivo = adelantar, negativo = retroceder)
+
 def normalize_to_exact_body_size(animation_file, reference_file, output_file, verbose=False):
     """
-    Normaliza una animación para que tenga EXACTAMENTE el mismo tamaño y posición que el body de referencia
+    Normaliza una animación para que tenga EXACTAMENTE el mismo tamaño y posición que el body de referencia,
+    y después traslada en X una fracción (BLEND_X) del valor que antes restábamos para poner 'Neck' en X=0,
+    y añade un desplazamiento en Z controlado por BLEND_Z.
     """
     
     if verbose:
         print("🔄 Iniciando normalización a tamaño exacto del body...")
-    
+        print(f"🔧 BLEND_X = {BLEND_X}    BLEND_Z = {BLEND_Z}")
+
     # Cargar datos
     with open(animation_file, 'r') as f:
         animation_data = json.load(f)
@@ -52,6 +64,12 @@ def normalize_to_exact_body_size(animation_file, reference_file, output_file, ve
         if verbose and frame_count % 50 == 0:
             print(f"🔄 Procesados {frame_count} frames...")
     
+    # Trasladar parcialmente el eje X (BLEND_X) y avanzar en Z (BLEND_Z)
+    if verbose:
+        print(f"➡️ Trasladando eje X: aplicando BLEND_X = {BLEND_X} sobre el movimiento hacia 'Neck' = 0 (por frame)...")
+        print(f"➡️ Adelantando en Z: BLEND_Z = {BLEND_Z} (sumado a cada joint.z)")
+    normalized_animation = translate_x_to_neck_zero_blend_and_z(normalized_animation, joint_name='Neck', blend=BLEND_X, z_offset=BLEND_Z, verbose=verbose)
+    
     # Guardar resultado
     with open(output_file, 'w') as f:
         json.dump(normalized_animation, f, indent=2)
@@ -90,10 +108,10 @@ def calculate_exact_transformation(source_body, target_body, verbose=False):
     source_ranges = calculate_ranges(source_points, source_center)
     target_ranges = calculate_ranges(target_points, target_center)
     
-    # Factores de escala
-    scale_x = target_ranges['x'] / source_ranges['x'] if source_ranges['x'] > 0 else 1.0
-    scale_y = target_ranges['y'] / source_ranges['y'] if source_ranges['y'] > 0 else 1.0
-    scale_z = target_ranges['z'] / source_ranges['z'] if source_ranges['z'] > 0 else 1.0
+    # Factores de escala (evitar división por 0)
+    scale_x = target_ranges['x'] / source_ranges['x'] if source_ranges['x'] > 1e-9 else 1.0
+    scale_y = target_ranges['y'] / source_ranges['y'] if source_ranges['y'] > 1e-9 else 1.0
+    scale_z = target_ranges['z'] / source_ranges['z'] if source_ranges['z'] > 1e-9 else 1.0
     
     transform = {
         'source_center': source_center,
@@ -105,11 +123,11 @@ def calculate_exact_transformation(source_body, target_body, verbose=False):
     
     if verbose:
         print("🔧 Transformación calculada:")
-        print(f"   Centro origen: [{source_center[0]:.4f}, {source_center[1]:.4f}, {source_center[2]:.4f}]")
-        print(f"   Centro destino: [{target_center[0]:.4f}, {target_center[1]:.4f}, {target_center[2]:.4f}]")
-        print(f"   Escalas: X={scale_x:.4f}, Y={scale_y:.4f}, Z={scale_z:.4f}")
-        print(f"   Rangos origen: X={source_ranges['x']:.4f}, Y={source_ranges['y']:.4f}, Z={source_ranges['z']:.4f}")
-        print(f"   Rangos destino: X={target_ranges['x']:.4f}, Y={target_ranges['y']:.4f}, Z={target_ranges['z']:.4f}")
+        print(f"   Centro origen: [{source_center[0]:.6f}, {source_center[1]:.6f}, {source_center[2]:.6f}]")
+        print(f"   Centro destino: [{target_center[0]:.6f}, {target_center[1]:.6f}, {target_center[2]:.6f}]")
+        print(f"   Escalas: X={scale_x:.6f}, Y={scale_y:.6f}, Z={scale_z:.6f}")
+        print(f"   Rangos origen: X={source_ranges['x']:.6f}, Y={source_ranges['y']:.6f}, Z={source_ranges['z']:.6f}")
+        print(f"   Rangos destino: X={target_ranges['x']:.6f}, Y={target_ranges['y']:.6f}, Z={target_ranges['z']:.6f}")
         print()
     
     return transform
@@ -179,6 +197,52 @@ def apply_exact_transformation(body_data, transform):
     
     return transformed_body
 
+def translate_x_to_neck_zero_blend_and_z(animation, joint_name='Neck', blend=0.5, z_offset=0.03, verbose=False):
+    """
+    Para cada frame:
+      - calcula neck_x (o fallback midpoint shoulders)
+      - aplica delta_x = neck_x * blend (antes restábamos neck_x)
+      - resta delta_x a todas las joints.x  => movimiento parcial hacia X=0
+      - añade z_offset a todas las joints.z => adelantar en Z
+    """
+    out = {}
+    missing_count = 0
+    for frame_name, frame_data in animation.items():
+        person = frame_data.get('person_0', {})
+        neck = person.get(joint_name)
+        if neck and 'x' in neck:
+            neck_x = neck['x']
+        else:
+            # fallback: midpoint shoulders
+            Ls = person.get('LShoulder'); Rs = person.get('RShoulder')
+            if Ls and Rs and 'x' in Ls and 'x' in Rs:
+                neck_x = (Ls['x'] + Rs['x']) / 2.0
+            else:
+                neck_x = 0.0
+                missing_count += 1
+        
+        # aplicar solo la fracción 'blend' del desplazamiento
+        delta_x = neck_x * blend
+        
+        # restar delta_x a todas las joints.x y añadir z_offset a z
+        new_frame = {}
+        for pid, pdata in frame_data.items():
+            new_person = {}
+            for jname, jdata in pdata.items():
+                newj = dict(jdata)
+                if 'x' in jdata:
+                    newj['x'] = jdata['x'] - delta_x
+                if 'z' in jdata:
+                    newj['z'] = jdata['z'] + z_offset
+                new_person[jname] = newj
+            new_frame[pid] = new_person
+        out[frame_name] = new_frame
+    if verbose:
+        if missing_count > 0:
+            print(f"⚠️ {missing_count} frames no tenían '{joint_name}' ni shoulders; se usó 0 como fallback.")
+        print(f"✅ Traslación X completada con blend={blend} y Z offset aplicado = {z_offset}")
+    return out
+
 def verify_transformation(normalized_animation, reference_body, verbose=False):
     """
     Verifica que la transformación fue exitosa comparando el primer frame transformado con la referencia
@@ -221,7 +285,7 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(
-        description='Normaliza animación para que tenga exactamente el tamaño del body de referencia'
+        description='Normaliza animación para que tenga exactamente el tamaño del body de referencia y centra X en Neck (blendable) y adelanta Z'
     )
     
     parser.add_argument('-a', '--animation', required=True, help='Archivo de animación JSON')
