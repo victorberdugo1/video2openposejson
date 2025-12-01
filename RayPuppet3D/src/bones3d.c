@@ -3258,6 +3258,70 @@ static void SortRenderItems(RenderItem* items, int itemCount) {
     }
 }
 
+void CalculateHandBoneRenderDataWithOrientation(const BoneRenderData* boneData, 
+                                                Camera camera, int* outChosenIndex, 
+                                                float* outRotation, bool* outMirrored) {
+    // Matrices 5x5 para las manos (25 sprites)
+    static const int handIndices[3][8] = {
+        {23, 22, 2, 15, 16, 17, 18, 24},  // Fila 0
+        {9, 4, 0, 5, 6, 7, 8, 14},         // Fila 1
+        {20, 19, 1, 10, 11, 12, 13, 21}   // Fila 2
+    };
+    
+    Vector3 camDir = Vector3Subtract(boneData->position, camera.position);
+    camDir = SafeNormalize(camDir);
+    
+    Vector3 localCamDir = {
+        Vector3DotProduct(camDir, boneData->orientation.right),
+        Vector3DotProduct(camDir, boneData->orientation.up),
+        Vector3DotProduct(camDir, boneData->orientation.forward)
+    };
+    
+    float localYaw = atan2f(localCamDir.x, localCamDir.z);
+    if (localYaw < 0.0f) localYaw += 2.0f * PI;
+    
+    float localPitchDeg = atan2f(localCamDir.y,
+        sqrtf(localCamDir.x * localCamDir.x + localCamDir.z * localCamDir.z)) * RAD2DEG;
+    
+    // INVERTIR el pitch
+    localPitchDeg = -localPitchDeg;
+    
+    float normalizedYaw = localYaw * RAD2DEG + 22.5f;
+    if (normalizedYaw >= 360.0f) normalizedYaw -= 360.0f;
+    
+    int sector = (int)(normalizedYaw / 45.0f) % 8;
+    // INVERTIR el sector
+    sector = (8 - sector) % 8;
+    
+    // Usar las mismas reglas de pitch que CalculateHandBoneRenderData
+    if (localPitchDeg >= 52.5f) {
+        *outChosenIndex = 22;
+        *outRotation = sector * 45.0f + 180.0f;
+        *outMirrored = false;
+    }
+    else if (localPitchDeg <= -51.0f) {
+        *outChosenIndex = 3;
+        *outRotation = 0.0f;
+        *outMirrored = false;
+    }
+    else {
+        int pitchRow;
+        // INVERTIR las filas de pitch
+        if (localPitchDeg >= 22.5f) {
+            pitchRow = 2;  // Antes era 0
+        }
+        else if (localPitchDeg >= -22.5f) {
+            pitchRow = 1;  // Se mantiene igual
+        }
+        else {
+            pitchRow = 0;  // Antes era 2
+        }
+        
+        *outChosenIndex = handIndices[pitchRow][sector];
+        *outRotation = 0.0f;
+        *outMirrored = false;
+    }
+}
 static void RenderBoneInternal(BonesRenderer* renderer, const BoneRenderData* bone, 
                               Vector3 renderPosition, const AnimationFrame* frame,
                               BoneRenderData* allBones, int boneCount) {
@@ -3280,8 +3344,13 @@ static void RenderBoneInternal(BonesRenderer* renderer, const BoneRenderData* bo
     const Person* bonePerson = frame ? FindPersonByBoneName(frame, bone->boneName) : NULL;
 
     if (isWrist) {
+if (bone->orientation.valid) {
+        CalculateHandBoneRenderDataWithOrientation(bone, renderer->camera, &chosenIndex, &rotation, &mirrored);
+    } else {
         CalculateHandBoneRenderData(bone->position, renderer->camera, &chosenIndex, &rotation, &mirrored, bone->boneName);
-    } else if (bone->orientation.valid) {
+    }
+    }
+    else if (bone->orientation.valid) {
         CalculateLimbBoneRenderData(bone, bonePerson, renderer->camera, &chosenIndex, &rotation, &mirrored);
     }
 

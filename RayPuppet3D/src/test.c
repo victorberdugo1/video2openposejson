@@ -94,25 +94,60 @@ void DrawAnimatedCharacterTransformed(AnimatedCharacter* character, Camera camer
     }
 
     // Transformar bones
+    // Transformar bones (PARCHE: forzamos orientación de muñecas para que sigan worldRotation)
     if (bonesCopy) {
         for (int i = 0; i < bc; i++) {
             BoneRenderData* b = &bonesCopy[i];
             if (!b->valid) continue;
+
+            // Transformar posición respecto al pivot/posición mundial
             b->position = RotatePointAroundPivot(b->position, pivot, worldPosition, rot);
+
+            // Si existe orientación, rotarla por la rotación global
             if (b->orientation.valid) {
                 b->orientation.forward = Vector3Transform(b->orientation.forward, rot);
-                b->orientation.up = Vector3Transform(b->orientation.up, rot);
-                b->orientation.right = Vector3Transform(b->orientation.right, rot);
-                
+                b->orientation.up      = Vector3Transform(b->orientation.up, rot);
+                b->orientation.right   = Vector3Transform(b->orientation.right, rot);
+
                 b->orientation.forward = SafeNormalize(b->orientation.forward);
-                b->orientation.up = SafeNormalize(b->orientation.up);
-                b->orientation.right = SafeNormalize(b->orientation.right);
-                
+                b->orientation.up      = SafeNormalize(b->orientation.up);
+                b->orientation.right   = SafeNormalize(b->orientation.right);
+
                 b->orientation.position = b->position;
                 b->orientation.yaw += worldRotation;
+                while (b->orientation.yaw > PI)  b->orientation.yaw -= 2.0f * PI;
+                while (b->orientation.yaw < -PI) b->orientation.yaw += 2.0f * PI;
             }
+
+
+if (IsWristBone(b->boneName)) {
+
+    Vector3 personRight = { -cosf(worldRotation), 0.0f, sinf(worldRotation) };
+    
+    Vector3 charForward = Vector3Scale(personRight, -1.0f);
+    
+    charForward = SafeNormalize(charForward);
+    
+    Vector3 up = (Vector3){ 0.0f, 1.0f, 0.0f };
+    Vector3 right = Vector3Normalize(Vector3CrossProduct(charForward, up));
+    up = Vector3Normalize(Vector3CrossProduct(right, charForward));
+    
+    b->orientation.forward = charForward;
+    b->orientation.right = right;
+    b->orientation.up = up;
+    b->orientation.position = b->position;
+    
+    // CORRECCIÓN: Invertir el yaw en 180 grados para compensar el mapeo
+    b->orientation.yaw = atan2f(b->orientation.forward.x, b->orientation.forward.z) + PI;
+    
+    while (b->orientation.yaw > PI)  b->orientation.yaw -= 2.0f * PI;
+    while (b->orientation.yaw < -PI) b->orientation.yaw += 2.0f * PI;
+    
+    b->orientation.valid = true;
+}
         }
     }
+
 
     // Transformar heads
     if (headsCopy) {
@@ -135,7 +170,6 @@ void DrawAnimatedCharacterTransformed(AnimatedCharacter* character, Camera camer
         }
     }
 
-    // Transformar torsos - CRÍTICO: Usar el frame transformado
     if (torsosCopy) {
         for (int i = 0; i < tc; i++) {
             TorsoRenderData* t = &torsosCopy[i];
@@ -153,7 +187,6 @@ void DrawAnimatedCharacterTransformed(AnimatedCharacter* character, Camera camer
                 }
             }
             
-            // Transformar orientación PRIMERO
             if (t->orientation.valid) {
                 t->orientation.forward = Vector3Transform(t->orientation.forward, rot);
                 t->orientation.up = Vector3Transform(t->orientation.up, rot);
@@ -169,21 +202,18 @@ void DrawAnimatedCharacterTransformed(AnimatedCharacter* character, Camera camer
                 while (t->orientation.yaw < -PI) t->orientation.yaw += 2.0f * PI;
             }
             
-            // DESPUÉS transformar posición
             t->position = RotatePointAroundPivot(t->position, pivot, worldPosition, rot);
             
             if (t->orientation.valid) {
                 t->orientation.position = t->position;
             }
             
-            // NO deshabilitar compensación
             t->disableCompensation = false;
         }
     }
 
     Vector3 transformedCenter = Vector3Add(worldPosition, pivot);
 
-    // Renderizar
     BonesRenderer_RenderFrame(character->renderer,
                               bonesCopy ? bonesCopy : character->renderBones, bc,
                               headsCopy ? headsCopy : character->renderHeads, hc,
