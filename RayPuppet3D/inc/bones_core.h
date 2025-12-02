@@ -587,4 +587,6 @@ void SetCharacterAutoPlay(AnimatedCharacter* character, bool autoPlay);
 void SetCharacterBillboards(AnimatedCharacter* character, bool heads, bool torsos);
 void AnimController_UpdateFrameBounds(AnimationController* controller, int clipIndex,BonesAnimation* animation);
 
+void DrawAnimatedCharacterTransformed(AnimatedCharacter* character, Camera camera,
+                                      Vector3 worldPosition, float worldRotation);
 #endif // BONES_CORE_H
