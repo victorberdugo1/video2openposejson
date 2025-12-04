@@ -402,8 +402,29 @@ static const struct {
 // FUNCIONES CORE - ANIMACIÓN
 // ============================================================================
 
-BonesError BonesInit(BonesAnimation* animation, int maxFrames);
-void BonesFree(BonesAnimation* animation);
+  BonesError BonesInit(BonesAnimation* animation, int maxFrames) {
+    if (!animation) return BONES_ERROR_NULL_POINTER;
+
+    if (maxFrames <= 0 || maxFrames > MAX_FRAMES) maxFrames = MAX_FRAMES;
+
+    memset(animation, 0, sizeof(BonesAnimation));
+    animation->frames = calloc(maxFrames, sizeof(AnimationFrame));
+
+    if (!animation->frames) return BONES_ERROR_MEMORY_ALLOCATION;
+
+    animation->maxFrames = maxFrames;
+    animation->currentFrame = -1;
+    return BONES_SUCCESS;
+}
+
+  void BonesFree(BonesAnimation* animation) {
+    if (animation) {
+        free(animation->frames);
+        memset(animation, 0, sizeof(BonesAnimation));
+        animation->currentFrame = -1;
+    }
+}
+
 BonesError BonesLoadFromJSON(BonesAnimation* animation, const char* jsonFilePath);
 BonesError BonesLoadFromString(BonesAnimation* animation, const char* jsonString);
 BonesError BonesSetFrame(BonesAnimation* animation, int frameNumber);
@@ -411,59 +432,35 @@ int BonesGetCurrentFrame(const BonesAnimation* animation);
 int BonesGetFrameCount(const BonesAnimation* animation);
 bool BonesIsValidFrame(const BonesAnimation* animation, int frameNumber);
 bool BonesIsPositionValid(Vector3 position);
-const char* BonesGetErrorString(BonesError error);
+  const char* BonesGetErrorString(BonesError error) {
+    static const char* errorStrings[] = {
+        [BONES_SUCCESS] = "Operation successful",
+        [BONES_ERROR_NULL_POINTER] = "Null pointer received",
+        [BONES_ERROR_FILE_NOT_FOUND] = "File not found",
+        [BONES_ERROR_INVALID_JSON] = "Invalid or malformed JSON",
+        [BONES_ERROR_MEMORY_ALLOCATION] = "Memory allocation error",
+        [BONES_ERROR_BONE_NOT_FOUND] = "Bone not found",
+        [BONES_ERROR_FRAME_OUT_OF_RANGE] = "Frame out of valid range",
+        [BONES_ERROR_PERSON_NOT_FOUND] = "Person not found",
+        [BONES_ERROR_INVALID_COORDINATES] = "Invalid coordinates",
+        [BONES_ERROR_BUFFER_OVERFLOW] = "Buffer overflow",
+        [BONES_ERROR_EMPTY_DATA] = "Empty or no content data"
+    };
+    return (error < sizeof(errorStrings) / sizeof(errorStrings[0]) && errorStrings[error])
+        ? errorStrings[error] : "Unknown error";
+}
 
-// ============================================================================
-// FUNCIONES DE EDICIÓN DE ANIMACIONES
-// ============================================================================
 
-
-bool BonesInterpolateFrames(BonesAnimation* animation, int frameA, int frameB, int framesToAdd);
-bool BonesInsertEmptyFrame(BonesAnimation* animation, int position);
-bool BonesCopyFrame(BonesAnimation* animation, int sourceFrame, int targetFrame);
-bool BonesCreateMissingFrames(BonesAnimation* animation);
-
-// ============================================================================
-// FUNCIONES DE CONFIGURACIÓN
-// ============================================================================
-
-BonesRenderConfig BonesGetDefaultRenderConfig(void);
-void BonesSetRenderConfig(const BonesRenderConfig* config);
-void SetAnimationTransitionDuration(float duration);
 
 // ============================================================================
 // FUNCIONES DE CÁLCULO DE POSICIONES
 // ============================================================================
 
-Vector3 GetBonePositionByName(const Person* person, const char* boneName);
+
 Vector3 CalculateHeadPosition(const Person* person);
 Vector3 CalculateChestPosition(const Person* person);
 Vector3 CalculateHipPosition(const Person* person);
-VirtualSpine CalculateVirtualSpine(const Person* person);
 
-// ============================================================================
-// FUNCIONES DE ORIENTACIÓN
-// ============================================================================
-
-HeadOrientation CalculateHeadOrientation(const Person* person);
-TorsoOrientation CalculateChestOrientation(const Person* person);
-TorsoOrientation CalculateHipOrientation(const Person* person);
-BoneOrientation CalculateBoneOrientation(const char* boneName, const Person* person, Vector3 bonePosition);
-
-// ============================================================================
-// FUNCIONES DE RENDERIZADO - CÁLCULOS
-// ============================================================================
-
-bool ShouldRenderHead(const Person* person);
-bool ShouldRenderChest(const Person* person);
-bool ShouldRenderHip(const Person* person);
-
-void CalculateHeadRenderData(const HeadRenderData* headData, Camera camera,
-    int* outChosenIndex, float* outRotation, bool* outMirrored);
-void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
-    int* outChosenIndex, float* outRotation, bool* outMirrored);
-void CalculateLimbBoneRenderData(const BoneRenderData* boneData, const Person* person, Camera camera,
-    int* outChosenIndex, float* outRotation, bool* outMirrored);
 void CalculateHandBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex,
     float* outRotation, bool* outMirrored, const char* boneName);
 
@@ -491,18 +488,54 @@ bool ResizeRenderBonesArray(BoneRenderData** renderBones, int* renderBonesCapaci
 // FUNCIONES AUXILIARES
 // ============================================================================
 
-Vector3 SafeNormalize(Vector3 v);
-bool IsWristBone(const char* boneName);
-bool GetBoneConnectionsWithPriority(const char* boneName, char connections[3][32], float priorities[3]);
-BoneConnectionPositions GetBoneConnectionPositionsEx(const BoneRenderData* boneData, const Person* person);
-BoneRenderData* FindRenderBoneByName(BoneRenderData* bones, int count, const char* name);
-const Person* FindPersonByBoneName(const AnimationFrame* frame, const char* boneName);
+BoneRenderData* FindRenderBoneByName(BoneRenderData* bones, int boneCount, const char* boneName) {
+    for (int i = 0; i < boneCount; i++) {
+        if (strcmp(bones[i].boneName, boneName) == 0) {
+            return &bones[i];
+        }
+    }
+    return NULL;
+}
+
+const Person* FindPersonByBoneName(const AnimationFrame* frame, const char* boneName) {
+    if (!frame || !boneName) return NULL;
+    for (int p = 0; p < frame->personCount; p++) {
+        const Person* person = &frame->persons[p];
+        if (!person->active) continue;
+        for (int b = 0; b < person->boneCount; b++) {
+            if (strcmp(person->bones[b].name, boneName) == 0) return person;
+        }
+    }
+    return NULL;
+}
+
+Vector3 SafeNormalize(Vector3 v) {
+    float length = Vector3Length(v);
+    if (length < 1e-6f) return (Vector3) { 0, 0, 1 };
+    return Vector3Scale(v, 1.0f / length);
+}
+
+bool IsWristBone(const char* boneName) {
+    if (!boneName) return false;
+    return (strcmp(boneName, "LWrist") == 0) || (strcmp(boneName, "RWrist") == 0);
+}
 
 // ============================================================================
 // SISTEMA DE TEXTURAS
 // ============================================================================
 
-void CleanupTextureSystem(SimpleTextureSystem* textureSystem, BoneConfig** boneConfigs, int* boneConfigCount);
+  void CleanupTextureSystem(SimpleTextureSystem* textureSystem, BoneConfig** boneConfigs, int*boneConfigCount) {
+    if (textureSystem->configs) {
+        free(textureSystem->configs);
+        memset(textureSystem, 0, sizeof(SimpleTextureSystem));
+    }
+    if (*boneConfigs) {
+        free(*boneConfigs);
+        *boneConfigs = NULL;
+        *boneConfigCount = 0;
+    }
+}
+
 bool LoadSimpleTextureConfig(SimpleTextureSystem* system, const char* filename);
 void LoadBoneConfigurations(SimpleTextureSystem* textureSystem, BoneConfig** boneConfigs, int* boneConfigCount);
 
@@ -518,8 +551,19 @@ float GetBoneSize(BoneConfig* boneConfigs, int boneConfigCount, const char* bone
 // TEXTURE SETS API
 // ============================================================================
 
-TextureSetCollection* BonesTextureSets_Create(void);
-void BonesTextureSets_Free(TextureSetCollection* collection);
+  TextureSetCollection* BonesTextureSets_Create(void) {
+    TextureSetCollection* collection;
+    collection = (TextureSetCollection*)calloc(1, sizeof(TextureSetCollection));
+    if (!collection) return NULL;
+    collection->loaded = false;
+    collection->setCount = 0;
+    return collection;
+}
+
+  void BonesTextureSets_Free(TextureSetCollection* collection) {
+    if (collection) free(collection);
+}
+
 bool BonesTextureSets_LoadFromFile(TextureSetCollection* collection, const char* filePath);
 const char* BonesTextureSets_GetActiveTexture(const TextureSetCollection* collection, const char* boneName);
 bool BonesTextureSets_SetVariant(TextureSetCollection* collection, const char* boneName, const char* variantName);
@@ -544,9 +588,41 @@ int AnimController_GetCurrentFrame(const AnimationController* controller);
 // RENDERER API
 // ============================================================================
 
-BonesRenderer* BonesRenderer_Create(void);
-void BonesRenderer_Free(BonesRenderer* renderer);
-bool BonesRenderer_Init(BonesRenderer* renderer);
+  BonesRenderer* BonesRenderer_Create(void) {
+    BonesRenderer* renderer = (BonesRenderer*)calloc(1, sizeof(BonesRenderer));
+    if (!renderer) return NULL;
+    
+    renderer->textureCount = 0;
+    renderer->physCols = 4;
+    renderer->physRows = 4;
+    
+    return renderer;
+}
+
+  void BonesRenderer_Free(BonesRenderer* renderer) {
+    if (!renderer) return;
+    
+    for (int i = 0; i < renderer->textureCount; i++) {
+        UnloadTexture(renderer->textures[i]);
+    }
+    
+    free(renderer);
+}
+
+  bool BonesRenderer_Init(BonesRenderer* renderer) {
+    if (!renderer) return false;
+    
+    renderer->camera = (Camera){
+        .position = {0.0f, 0.6f, 2.5f},
+        .target = {0.0f, 0.6f, 0.0f},
+        .up = {0.0f, 1.0f, 0.0f},
+        .fovy = 45.0f,
+        .projection = CAMERA_PERSPECTIVE
+    };
+    
+    return true;
+}
+
 int BonesRenderer_LoadTexture(BonesRenderer* renderer, const char* path);
 void BonesRenderer_SetAtlasDimensions(BonesRenderer* renderer, int cols, int rows);
 void BonesRenderer_RenderFrame(BonesRenderer* renderer, 
@@ -577,377 +653,10 @@ void DrawTorsoBillboard(Texture2D texture, Camera camera, const TorsoRenderData*
 // PERSONAJE ANIMADO API
 // ============================================================================
 
-AnimatedCharacter* CreateAnimatedCharacter(const char* textureConfigPath, const char* textureSetsPath);
-void DestroyAnimatedCharacter(AnimatedCharacter* character);
-bool LoadAnimation(AnimatedCharacter* character, const char* animationPath, const char* metadataPath);
-void UpdateAnimatedCharacter(AnimatedCharacter* character, float deltaTime);
-void DrawAnimatedCharacter(AnimatedCharacter* character, Camera camera);
-void SetCharacterFrame(AnimatedCharacter* character, int frame);
-void SetCharacterAutoPlay(AnimatedCharacter* character, bool autoPlay);
-void SetCharacterBillboards(AnimatedCharacter* character, bool heads, bool torsos);
-void AnimController_UpdateFrameBounds(AnimationController* controller, int clipIndex,BonesAnimation* animation);
-
-void DrawAnimatedCharacterTransformed(AnimatedCharacter* character, Camera camera,
-                                      Vector3 worldPosition, float worldRotation);
-
-static AnimationFrame g_transitionFromFrame;
-static AnimationFrame g_transitionToFrame;
-static bool g_isTransitioning = false;
-static float g_transitionTime = 0.0f;
-static float g_transitionDuration = 0.85f;
-static bool g_hasValidFromFrame = false;
-
-static BonesRenderConfig g_renderConfig = {
-    .defaultBoneSize = 0.35f,
-    .drawDebugSpheres = false,
-    .enableDepthSorting = true,
-    .debugColor = RED,
-    .debugSphereRadius = 0.035f,
-    .showInvalidBones = false
-};
-
-static const struct {
-    const char* boneName;
-    const char* connections[3];
-    float priority[3];
-} BONE_CONNECTIONS[] = {
-    {"LShoulder", {"LShoulder", "LElbow", ""}, {1.0f, 0.8f, 0.0f}},
-    {"LElbow", {"LElbow", "LWrist", ""}, {1.0f, 0.8f, 0.0f}},
-    {"LWrist", {"LWrist", "LElbow", ""}, {1.0f, 0.0f, 0.0f}},
-    {"RShoulder", {"RShoulder", "RElbow", ""}, {1.0f, 0.8f, 0.0f}},
-    {"RElbow", {"RElbow", "RWrist", ""}, {1.0f, 0.8f, 0.0f}},
-    {"RWrist", {"RElbow", "RWrist", ""}, {1.0f, 0.0f, 0.0f}},
-    {"LHip", {"LHip", "LKnee", ""}, {1.0f, 0.8f, 0.0f}},
-    {"LKnee", {"LKnee", "LAnkle", ""}, {1.0f, 0.8f, 0.0f}},
-    {"LAnkle", {"LKnee", "LAnkle", ""}, {1.0f, 0.8f, 0.0f}},
-    {"RHip", {"RHip", "RKnee", ""}, {1.0f, 0.8f, 0.0f}},
-    {"RKnee", {"RKnee", "RAnkle", ""}, {1.0f, 0.8f, 0.0f}},
-    {"RAnkle", {"RKnee", "RAnkle", ""}, {1.0f, 0.8f, 0.0f}},
-    {"Neck", {"Neck", "Head", ""},  {0.8f, 1.0f, 0.0f}},
-    {"", {"", "", ""}, {0.0f, 0.0f, 0.0f}}
-};
-
-static const struct {
-    const char* boneName;
-    const char* primaryConnection;
-    const char* secondaryConnection;
-    bool reverseForward;
-    bool isLimb;
-    bool useStableOrientation;
-} BONE_ORIENTATIONS[] = {
-    {"LShoulder", "LElbow", "Neck", false, true, true},
-    {"LElbow", "Neck", "LWrist", true, true, true},
-    {"LWrist", "LElbow", "", false, false, true},
-    {"RShoulder", "RElbow", "Neck", true, true, true},
-    {"RElbow", "Neck", "RWrist", false, true, true},
-    {"RWrist", "RElbow", "", false, false, true},
-    {"LHip", "LKnee", "Hip", true, true, true},
-    {"LKnee", "LAnkle", "LHip", true, true, true},
-    {"LAnkle", "LKnee", "FRONT_CALCULATED", true, false, true},
-    {"RHip", "RKnee", "Hip", false, true, true},
-    {"RKnee", "RAnkle", "RHip", true, true, true},
-    {"RAnkle", "RKnee", "REAR_CALCULATED", false, false, true},
-    {"Neck", "HEAD_CALCULATED", "", true, false, true},
-    {"", "", "", false, false, false}
-};
-
-static const struct {
-    const char* boneName;
-    float yawOffset;
-    float pitchOffset;
-    float rollOffset;
-} BONE_ANGLE_OFFSETS[] = {
-    {"LShoulder", 90.0f, 180.0f, -90.0f},
-    {"LElbow", 90.0f, 225.0f, -90.0f},
-    {"LWrist", 90.0f, 180.0f, 90.0f},
-    {"RShoulder", -90.0f, 0.0f, 90.0f},
-    {"RElbow", -90.0f, -90.0f, 90.0f},
-    {"RWrist", 90.0f, 180.0f, 90.0f},
-    {"LHip", 90.0f, -45.0f, 90.0f},
-    {"LKnee", 90.0f, 90.0f, 90.0f},
-    {"LAnkle",  90.0f, -90.0f, 90.0f},
-    {"RHip", -90.0f, -45.0f, -90.0f},
-    {"RKnee", -90.0f, 90.0f, 90.0f},
-    {"RAnkle", 90.0f, 180.0f, 90.0f},
-    {"Neck", -90.0f, 180.0f, -90.0f},
-    {"", 0.0f, 0.0f, 0.0f}
-};
-
-static const struct {
-    const char* boneName;
-    float scaleFactorUp;
-    float scaleFactorDown;
-} BONE_SCALE_FACTORS[] = {
-    {"LShoulder", 0.3f, 1.2f},
-    {"RShoulder", 0.3f, 1.2f},
-    {"LElbow", 0.0f, 0.9f},
-    {"RElbow", 0.0f, 0.9f},
-    {"LHip", 0.1f, 1.0f},
-    {"RHip", 0.1f, 1.0f},
-    {"LKnee", 0.1f, 1.0f},
-    {"RKnee", 0.1f, 1.0f},
-    {"", 0.5f, 0.5f}
-};
-
-static const float HEAD_DEPTH_OFFSET = 0.04f;
-static const float CHEST_OFFSET_Y = -0.06f;
-static const float CHEST_OFFSET_Z = -0.005f;
-static const float CHEST_FALLBACK_Y = -0.08f;
-static const float HIP_OFFSET_Y = -0.02f;
 
 
-static Vector3 RotatePointAroundPivot(Vector3 point, Vector3 pivot, Vector3 worldPos, Matrix rotY) {
-    Vector3 relative = Vector3Subtract(point, pivot);
-    Vector3 rotated = Vector3Transform(relative, rotY);
-    Vector3 pivotWorld = Vector3Add(worldPos, pivot);
-    return Vector3Add(pivotWorld, rotated);
-}
 
-void DrawAnimatedCharacterTransformed(AnimatedCharacter* character, Camera camera,
-                                      Vector3 worldPosition, float worldRotation) {
-    if (!character || !character->animation.isLoaded) return;
-
-    // Guardar cámara original
-    Camera origCam = character->renderer->camera;
-    character->renderer->camera = camera;
-
-    Matrix rot = MatrixRotateY(worldRotation);
-    Vector3 pivot = character->autoCenter;
-
-    int bc = character->renderBonesCount;
-    int hc = character->renderHeadsCount;
-    int tc = character->renderTorsosCount;
-
-    // Copiar datos de renderizado
-    BoneRenderData* bonesCopy = NULL;
-    HeadRenderData* headsCopy = NULL;
-    TorsoRenderData* torsosCopy = NULL;
-
-    if (bc > 0) {
-        bonesCopy = (BoneRenderData*)malloc(sizeof(BoneRenderData) * bc);
-        if (bonesCopy) memcpy(bonesCopy, character->renderBones, sizeof(BoneRenderData) * bc);
-    }
-    if (hc > 0) {
-        headsCopy = (HeadRenderData*)malloc(sizeof(HeadRenderData) * hc);
-        if (headsCopy) memcpy(headsCopy, character->renderHeads, sizeof(HeadRenderData) * hc);
-    }
-    if (tc > 0) {
-        torsosCopy = (TorsoRenderData*)malloc(sizeof(TorsoRenderData) * tc);
-        if (torsosCopy) memcpy(torsosCopy, character->renderTorsos, sizeof(TorsoRenderData) * tc);
-    }
-
-    // Crear copia transformada del frame actual para los torsos
-    AnimationFrame* transformedFrame = NULL;
-    if (tc > 0 && character->animation.isLoaded && 
-        character->currentFrame >= 0 && character->currentFrame < character->animation.frameCount) {
-        
-        transformedFrame = (AnimationFrame*)malloc(sizeof(AnimationFrame));
-        if (transformedFrame) {
-            // Copiar frame actual
-            *transformedFrame = character->animation.frames[character->currentFrame];
-            
-            // Transformar todas las posiciones de huesos en el frame
-            for (int p = 0; p < transformedFrame->personCount; p++) {
-                Person* person = &transformedFrame->persons[p];
-                for (int b = 0; b < person->boneCount; b++) {
-                    Bone* bone = &person->bones[b];
-                    if (bone->position.valid) {
-                        bone->position.position = RotatePointAroundPivot(
-                            bone->position.position, pivot, worldPosition, rot);
-                    }
-                }
-            }
-        }
-    }
-
-    // Transformar bones
-    // Transformar bones (PARCHE: forzamos orientación de muñecas para que sigan worldRotation)
-    if (bonesCopy) {
-        for (int i = 0; i < bc; i++) {
-            BoneRenderData* b = &bonesCopy[i];
-            if (!b->valid) continue;
-
-            // Transformar posición respecto al pivot/posición mundial
-            b->position = RotatePointAroundPivot(b->position, pivot, worldPosition, rot);
-
-            // Si existe orientación, rotarla por la rotación global
-            if (b->orientation.valid) {
-                b->orientation.forward = Vector3Transform(b->orientation.forward, rot);
-                b->orientation.up      = Vector3Transform(b->orientation.up, rot);
-                b->orientation.right   = Vector3Transform(b->orientation.right, rot);
-
-                b->orientation.forward = SafeNormalize(b->orientation.forward);
-                b->orientation.up      = SafeNormalize(b->orientation.up);
-                b->orientation.right   = SafeNormalize(b->orientation.right);
-
-                b->orientation.position = b->position;
-                b->orientation.yaw += worldRotation;
-                while (b->orientation.yaw > PI)  b->orientation.yaw -= 2.0f * PI;
-                while (b->orientation.yaw < -PI) b->orientation.yaw += 2.0f * PI;
-            }
-
-
-if (IsWristBone(b->boneName)) {
-
-    Vector3 personRight = { -cosf(worldRotation), 0.0f, sinf(worldRotation) };
-    
-    Vector3 charForward = Vector3Scale(personRight, -1.0f);
-    
-    charForward = SafeNormalize(charForward);
-    
-    Vector3 up = (Vector3){ 0.0f, 1.0f, 0.0f };
-    Vector3 right = Vector3Normalize(Vector3CrossProduct(charForward, up));
-    up = Vector3Normalize(Vector3CrossProduct(right, charForward));
-    
-    b->orientation.forward = charForward;
-    b->orientation.right = right;
-    b->orientation.up = up;
-    b->orientation.position = b->position;
-    
-    // CORRECCIÓN: Invertir el yaw en 180 grados para compensar el mapeo
-    b->orientation.yaw = atan2f(b->orientation.forward.x, b->orientation.forward.z) + PI;
-    
-    while (b->orientation.yaw > PI)  b->orientation.yaw -= 2.0f * PI;
-    while (b->orientation.yaw < -PI) b->orientation.yaw += 2.0f * PI;
-    
-    b->orientation.valid = true;
-}
-        }
-    }
-
-
-    // Transformar heads
-    if (headsCopy) {
-        for (int i = 0; i < hc; i++) {
-            HeadRenderData* h = &headsCopy[i];
-            if (!h->valid) continue;
-            h->position = RotatePointAroundPivot(h->position, pivot, worldPosition, rot);
-            if (h->orientation.valid) {
-                h->orientation.forward = Vector3Transform(h->orientation.forward, rot);
-                h->orientation.up = Vector3Transform(h->orientation.up, rot);
-                h->orientation.right = Vector3Transform(h->orientation.right, rot);
-                
-                h->orientation.forward = SafeNormalize(h->orientation.forward);
-                h->orientation.up = SafeNormalize(h->orientation.up);
-                h->orientation.right = SafeNormalize(h->orientation.right);
-                
-                h->orientation.position = h->position;
-                h->orientation.yaw += worldRotation;
-            }
-        }
-    }
-
-    if (torsosCopy) {
-        for (int i = 0; i < tc; i++) {
-            TorsoRenderData* t = &torsosCopy[i];
-            
-            if (!t->valid) continue;
-            
-            // IMPORTANTE: Actualizar el puntero al person transformado
-            if (transformedFrame && t->person) {
-                // Buscar el person correspondiente en el frame transformado
-                for (int p = 0; p < transformedFrame->personCount; p++) {
-                    if (strcmp(transformedFrame->persons[p].personId, t->personId) == 0) {
-                        t->person = &transformedFrame->persons[p];
-                        break;
-                    }
-                }
-            }
-            
-            if (t->orientation.valid) {
-                t->orientation.forward = Vector3Transform(t->orientation.forward, rot);
-                t->orientation.up = Vector3Transform(t->orientation.up, rot);
-                t->orientation.right = Vector3Transform(t->orientation.right, rot);
-                
-                t->orientation.forward = SafeNormalize(t->orientation.forward);
-                t->orientation.up = SafeNormalize(t->orientation.up);
-                t->orientation.right = SafeNormalize(t->orientation.right);
-                
-                t->orientation.yaw += worldRotation;
-                
-                while (t->orientation.yaw > PI) t->orientation.yaw -= 2.0f * PI;
-                while (t->orientation.yaw < -PI) t->orientation.yaw += 2.0f * PI;
-            }
-            
-            t->position = RotatePointAroundPivot(t->position, pivot, worldPosition, rot);
-            
-            if (t->orientation.valid) {
-                t->orientation.position = t->position;
-            }
-            
-            t->disableCompensation = false;
-        }
-    }
-
-    Vector3 transformedCenter = Vector3Add(worldPosition, pivot);
-
-    BonesRenderer_RenderFrame(character->renderer,
-                              bonesCopy ? bonesCopy : character->renderBones, bc,
-                              headsCopy ? headsCopy : character->renderHeads, hc,
-                              torsosCopy ? torsosCopy : character->renderTorsos, tc,
-                              transformedCenter,
-                              character->autoCenterCalculated);
-
-    // Liberar copias
-    if (bonesCopy) free(bonesCopy);
-    if (headsCopy) free(headsCopy);
-    if (torsosCopy) free(torsosCopy);
-    if (transformedFrame) free(transformedFrame);
-
-    // Restaurar cámara
-    character->renderer->camera = origCam;
-}
-
-// ============================================================================
-// INITIALIZATION AND CLEANUP
-// ============================================================================
-
-AnimatedCharacter* CreateAnimatedCharacter(const char* textureConfigPath, const char* textureSetsPath) {
-    AnimatedCharacter* character = (AnimatedCharacter*)calloc(1, sizeof(AnimatedCharacter));
-    if (!character) return NULL;
-
-    character->renderer = BonesRenderer_Create();
-    if (!character->renderer || !BonesRenderer_Init(character->renderer)) {
-        free(character);
-        return NULL;
-    }
-
-    character->textureSets = BonesTextureSets_Create();
-    if (textureSetsPath && !BonesTextureSets_LoadFromFile(character->textureSets, textureSetsPath)) {
-        // Advertencia pero continuamos
-    }
-
-    // ELIMINADO: g_textureSets = character->textureSets;
-
-    if (textureConfigPath) {
-        LoadSimpleTextureConfig(&character->textureSystem, textureConfigPath);
-        LoadBoneConfigurations(&character->textureSystem, &character->boneConfigs, &character->boneConfigCount);
-    }
-
-    if (BonesInit(&character->animation, 1000) != BONES_SUCCESS) {
-        BonesRenderer_Free(character->renderer);
-        BonesTextureSets_Free(character->textureSets);
-        free(character);
-        return NULL;
-    }
-
-    character->renderHeadBillboards = true;
-    character->renderTorsoBillboards = true;
-    character->autoPlay = true;
-    character->autoPlaySpeed = 0.1f;
-    character->lastProcessedFrame = -1;
-
-    character->renderConfig = BonesGetDefaultRenderConfig();
-    character->renderConfig.drawDebugSpheres = true;
-    character->renderConfig.debugColor = GREEN;
-    character->renderConfig.debugSphereRadius = 0.035f;
-    character->renderConfig.enableDepthSorting = true;
-    BonesSetRenderConfig(&character->renderConfig);
-
-    return character;
-}
-
-void DestroyAnimatedCharacter(AnimatedCharacter* character) {
+  void DestroyAnimatedCharacter(AnimatedCharacter* character) {
     if (!character) return;
 
     AnimController_Free(character->animController);
@@ -964,92 +673,18 @@ void DestroyAnimatedCharacter(AnimatedCharacter* character) {
     free(character);
 }
 
-BonesError BonesInit(BonesAnimation* animation, int maxFrames) {
-    if (!animation) return BONES_ERROR_NULL_POINTER;
+static AnimationFrame g_transitionFromFrame;
+static AnimationFrame g_transitionToFrame;
+static bool g_isTransitioning = false;
+static float g_transitionTime = 0.0f;
+static float g_transitionDuration = 0.85f;
+static bool g_hasValidFromFrame = false;
 
-    if (maxFrames <= 0 || maxFrames > MAX_FRAMES) maxFrames = MAX_FRAMES;
-
-    memset(animation, 0, sizeof(BonesAnimation));
-    animation->frames = calloc(maxFrames, sizeof(AnimationFrame));
-
-    if (!animation->frames) return BONES_ERROR_MEMORY_ALLOCATION;
-
-    animation->maxFrames = maxFrames;
-    animation->currentFrame = -1;
-    return BONES_SUCCESS;
-}
-
-void BonesFree(BonesAnimation* animation) {
-    if (animation) {
-        free(animation->frames);
-        memset(animation, 0, sizeof(BonesAnimation));
-        animation->currentFrame = -1;
+  void SetAnimationTransitionDuration(float duration) {
+    if (duration > 0.0f && duration < 1.0f) {
+        g_transitionDuration = duration;
     }
 }
-
-BonesRenderer* BonesRenderer_Create(void) {
-    BonesRenderer* renderer = (BonesRenderer*)calloc(1, sizeof(BonesRenderer));
-    if (!renderer) return NULL;
-    
-    renderer->textureCount = 0;
-    renderer->physCols = 4;
-    renderer->physRows = 4;
-    
-    return renderer;
-}
-
-void BonesRenderer_Free(BonesRenderer* renderer) {
-    if (!renderer) return;
-    
-    for (int i = 0; i < renderer->textureCount; i++) {
-        UnloadTexture(renderer->textures[i]);
-    }
-    
-    free(renderer);
-}
-
-bool BonesRenderer_Init(BonesRenderer* renderer) {
-    if (!renderer) return false;
-    
-    renderer->camera = (Camera){
-        .position = {0.0f, 0.6f, 2.5f},
-        .target = {0.0f, 0.6f, 0.0f},
-        .up = {0.0f, 1.0f, 0.0f},
-        .fovy = 45.0f,
-        .projection = CAMERA_PERSPECTIVE
-    };
-    
-    return true;
-}
-
-TextureSetCollection* BonesTextureSets_Create(void) {
-    TextureSetCollection* collection;
-    collection = (TextureSetCollection*)calloc(1, sizeof(TextureSetCollection));
-    if (!collection) return NULL;
-    collection->loaded = false;
-    collection->setCount = 0;
-    return collection;
-}
-
-void BonesTextureSets_Free(TextureSetCollection* collection) {
-    if (collection) free(collection);
-}
-
-void CleanupTextureSystem(SimpleTextureSystem* textureSystem, BoneConfig** boneConfigs, int*boneConfigCount) {
-    if (textureSystem->configs) {
-        free(textureSystem->configs);
-        memset(textureSystem, 0, sizeof(SimpleTextureSystem));
-    }
-    if (*boneConfigs) {
-        free(*boneConfigs);
-        *boneConfigs = NULL;
-        *boneConfigCount = 0;
-    }
-}
-
-// ============================================================================
-// ANIMATION FRAME MANAGEMENT
-// ============================================================================
 
 static void CopyAnimationFrame(AnimationFrame* dest, const AnimationFrame* src) {
     if (!dest || !src) return;
@@ -1087,6 +722,33 @@ static void CopyAnimationFrame(AnimationFrame* dest, const AnimationFrame* src) 
         }
     }
 }
+
+static void CaptureCurrentFrame(AnimatedCharacter* character) {
+    if (!character || !character->animation.isLoaded) {
+        g_hasValidFromFrame = false;
+        return;
+    }
+    
+    if (character->currentFrame < 0 || character->currentFrame >= character->animation.frameCount) {
+        g_hasValidFromFrame = false;
+        return;
+    }
+    
+    const AnimationFrame* currentFrame = &character->animation.frames[character->currentFrame];
+    CopyAnimationFrame(&g_transitionFromFrame, currentFrame);
+    g_hasValidFromFrame = true;
+}
+
+static void StartAnimationTransition(void) {
+    if (!g_hasValidFromFrame) {
+        return;
+    }
+    
+    g_isTransitioning = true;
+    g_transitionTime = 0.0f;
+}
+
+
 
 static void InterpolateTransitionFrames(const AnimationFrame* fromFrame, 
                                        const AnimationFrame* toFrame,
@@ -1192,152 +854,7 @@ static void InterpolateTransitionFrames(const AnimationFrame* fromFrame,
     }
 }
 
-static void CaptureCurrentFrame(AnimatedCharacter* character) {
-    if (!character || !character->animation.isLoaded) {
-        g_hasValidFromFrame = false;
-        return;
-    }
-    
-    if (character->currentFrame < 0 || character->currentFrame >= character->animation.frameCount) {
-        g_hasValidFromFrame = false;
-        return;
-    }
-    
-    const AnimationFrame* currentFrame = &character->animation.frames[character->currentFrame];
-    CopyAnimationFrame(&g_transitionFromFrame, currentFrame);
-    g_hasValidFromFrame = true;
-}
-
-static void StartAnimationTransition(void) {
-    if (!g_hasValidFromFrame) {
-        return;
-    }
-    
-    g_isTransitioning = true;
-    g_transitionTime = 0.0f;
-}
-
-void SetAnimationTransitionDuration(float duration) {
-    if (duration > 0.0f && duration < 1.0f) {
-        g_transitionDuration = duration;
-    }
-}
-
-static void InterpolateBone(const Bone* boneA, const Bone* boneB, Bone* result, float t) {
-    strncpy(result->name, boneA->name, MAX_BONE_NAME_LENGTH - 1);
-    result->name[MAX_BONE_NAME_LENGTH - 1] = '\0';
-    
-    result->position.position.x = boneA->position.position.x * (1.0f - t) + boneB->position.position.x * t;
-    result->position.position.y = boneA->position.position.y * (1.0f - t) + boneB->position.position.y * t;
-    result->position.position.z = boneA->position.position.z * (1.0f - t) + boneB->position.position.z * t;
-    
-    result->position.valid = boneA->position.valid && boneB->position.valid;
-    result->position.confidence = (boneA->position.confidence + boneB->position.confidence) * 0.5f;
-    
-    result->size.x = boneA->size.x * (1.0f - t) + boneB->size.x * t;
-    result->size.y = boneA->size.y * (1.0f - t) + boneB->size.y * t;
-    
-    result->visible = boneA->visible || boneB->visible;
-    result->textureIndex = boneA->textureIndex;
-    result->rotation = boneA->rotation * (1.0f - t) + boneB->rotation * t;
-    result->mirrored = boneA->mirrored;
-}
-
-static void InterpolatePerson(const Person* personA, const Person* personB, Person* result, float t) {
-    strncpy(result->personId, personA->personId, 15);
-    result->personId[15] = '\0';
-    
-    result->active = personA->active || personB->active;
-    result->boneCount = personA->boneCount > personB->boneCount ? personA->boneCount : personB->boneCount;
-    
-    for (int i = 0; i < result->boneCount; i++) {
-        if (i < personA->boneCount && i < personB->boneCount) {
-            InterpolateBone(&personA->bones[i], &personB->bones[i], &result->bones[i], t);
-        } else if (i < personA->boneCount) {
-            result->bones[i] = personA->bones[i];
-        } else {
-            result->bones[i] = personB->bones[i];
-        }
-    }
-}
-
-bool BonesInterpolateFrames(BonesAnimation* animation, int frameA, int frameB, int framesToAdd) {
-    if (!animation || frameA < 0 || frameB <= frameA || frameB >= animation->frameCount ||
-        framesToAdd <= 0 || animation->frameCount + framesToAdd > animation->maxFrames) {
-        return false;
-    }
-    
-    for (int i = animation->frameCount - 1; i >= frameB; i--) {
-        animation->frames[i + framesToAdd] = animation->frames[i];
-        animation->frames[i + framesToAdd].frameNumber = i + framesToAdd;
-    }
-    
-    AnimationFrame* srcA = &animation->frames[frameA];
-    AnimationFrame* srcB = &animation->frames[frameB + framesToAdd];
-    
-    for (int i = 0; i < framesToAdd; i++) {
-        int newFrameIndex = frameA + i + 1;
-        float t = (float)(i + 1) / (float)(framesToAdd + 1);
-        
-        AnimationFrame* dest = &animation->frames[newFrameIndex];
-        dest->frameNumber = newFrameIndex;
-        dest->personCount = srcA->personCount > srcB->personCount ? srcA->personCount : srcB->personCount;
-        dest->valid = true;
-        
-        for (int p = 0; p < dest->personCount; p++) {
-            if (p < srcA->personCount && p < srcB->personCount) {
-                InterpolatePerson(&srcA->persons[p], &srcB->persons[p], &dest->persons[p], t);
-            } else if (p < srcA->personCount) {
-                dest->persons[p] = srcA->persons[p];
-            } else {
-                dest->persons[p] = srcB->persons[p];
-            }
-        }
-    }
-    
-    animation->frameCount += framesToAdd;
-    
-    return true;
-}
-
-bool BonesInsertEmptyFrame(BonesAnimation* animation, int position) {
-    if (!animation || position < 0 || position > animation->frameCount ||
-        animation->frameCount >= animation->maxFrames) {
-        return false;
-    }
-    
-    for (int i = animation->frameCount; i > position; i--) {
-        animation->frames[i] = animation->frames[i - 1];
-        animation->frames[i].frameNumber = i;
-    }
-    
-    AnimationFrame* newFrame = &animation->frames[position];
-    memset(newFrame, 0, sizeof(AnimationFrame));
-    newFrame->frameNumber = position;
-    newFrame->valid = true;
-    
-    animation->frameCount++;
-    
-    return true;
-}
-
-bool BonesCopyFrame(BonesAnimation* animation, int sourceFrame, int targetFrame) {
-    if (!animation || sourceFrame < 0 || sourceFrame >= animation->frameCount ||
-        targetFrame < 0 || targetFrame >= animation->maxFrames) {
-        return false;
-    }
-    
-    animation->frames[targetFrame] = animation->frames[sourceFrame];
-    animation->frames[targetFrame].frameNumber = targetFrame;
-    
-    if (targetFrame >= animation->frameCount) {
-        animation->frameCount = targetFrame + 1;
-    }
-    
-    return true;
-}
-
-bool BonesCreateMissingFrames(BonesAnimation* animation) {
+  bool BonesCreateMissingFrames(BonesAnimation* animation) {
     if (!animation || !animation->isLoaded || animation->frameCount < 2) {
         return false;
     }
@@ -1505,11 +1022,7 @@ bool BonesCreateMissingFrames(BonesAnimation* animation) {
     return true;
 }
 
-// ============================================================================
-// ANIMATION LOADING AND PLAYBACK
-// ============================================================================
-
-bool LoadAnimation(AnimatedCharacter* character, const char* animationPath, const char* metadataPath) {
+  bool LoadAnimation(AnimatedCharacter* character, const char* animationPath, const char* metadataPath) {
     if (!character) return false;
 
     CaptureCurrentFrame(character);
@@ -1558,7 +1071,8 @@ bool LoadAnimation(AnimatedCharacter* character, const char* animationPath, cons
     return true;
 }
 
-void UpdateAnimatedCharacter(AnimatedCharacter* character, float deltaTime) {
+
+  void UpdateAnimatedCharacter(AnimatedCharacter* character, float deltaTime) {
     if (!character) return;
 
     if (character->animController && character->autoPlay) {
@@ -1762,7 +1276,20 @@ void UpdateAnimatedCharacter(AnimatedCharacter* character, float deltaTime) {
     }
 }
 
-void SetCharacterFrame(AnimatedCharacter* character, int frame) {
+
+  void DrawAnimatedCharacter(AnimatedCharacter* character, Camera camera) {
+    if (!character || !character->animation.isLoaded) return;
+
+    character->renderer->camera = camera;
+
+    BonesRenderer_RenderFrame(character->renderer,
+                             character->renderBones, character->renderBonesCount,
+                             character->renderHeads, character->renderHeadsCount,
+                             character->renderTorsos, character->renderTorsosCount,
+                             character->autoCenter, character->autoCenterCalculated);
+}
+
+  void SetCharacterFrame(AnimatedCharacter* character, int frame) {
     if (!character) return;
     
     if (frame >= 0 && frame < character->maxFrames) {
@@ -1776,13 +1303,13 @@ void SetCharacterFrame(AnimatedCharacter* character, int frame) {
     }
 }
 
-void SetCharacterAutoPlay(AnimatedCharacter* character, bool autoPlay) {
+  void SetCharacterAutoPlay(AnimatedCharacter* character, bool autoPlay) {
     if (character) {
         character->autoPlay = autoPlay;
     }
 }
 
-void SetCharacterBillboards(AnimatedCharacter* character, bool heads, bool torsos) {
+  void SetCharacterBillboards(AnimatedCharacter* character, bool heads, bool torsos) {
     if (character) {
         character->renderHeadBillboards = heads;
         character->renderTorsoBillboards = torsos;
@@ -1790,9 +1317,413 @@ void SetCharacterBillboards(AnimatedCharacter* character, bool heads, bool torso
     }
 }
 
-// ============================================================================
-// BONE POSITION CALCULATIONS
-// ============================================================================
+
+static const struct {
+    const char* boneName;
+    const char* connections[3];
+    float priority[3];
+} BONE_CONNECTIONS[] = {
+    {"LShoulder", {"LShoulder", "LElbow", ""}, {1.0f, 0.8f, 0.0f}},
+    {"LElbow", {"LElbow", "LWrist", ""}, {1.0f, 0.8f, 0.0f}},
+    {"LWrist", {"LWrist", "LElbow", ""}, {1.0f, 0.0f, 0.0f}},
+    {"RShoulder", {"RShoulder", "RElbow", ""}, {1.0f, 0.8f, 0.0f}},
+    {"RElbow", {"RElbow", "RWrist", ""}, {1.0f, 0.8f, 0.0f}},
+    {"RWrist", {"RElbow", "RWrist", ""}, {1.0f, 0.0f, 0.0f}},
+    {"LHip", {"LHip", "LKnee", ""}, {1.0f, 0.8f, 0.0f}},
+    {"LKnee", {"LKnee", "LAnkle", ""}, {1.0f, 0.8f, 0.0f}},
+    {"LAnkle", {"LKnee", "LAnkle", ""}, {1.0f, 0.8f, 0.0f}},
+    {"RHip", {"RHip", "RKnee", ""}, {1.0f, 0.8f, 0.0f}},
+    {"RKnee", {"RKnee", "RAnkle", ""}, {1.0f, 0.8f, 0.0f}},
+    {"RAnkle", {"RKnee", "RAnkle", ""}, {1.0f, 0.8f, 0.0f}},
+    {"Neck", {"Neck", "Head", ""},  {0.8f, 1.0f, 0.0f}},
+    {"", {"", "", ""}, {0.0f, 0.0f, 0.0f}}
+};
+
+static const struct {
+    const char* boneName;
+    const char* primaryConnection;
+    const char* secondaryConnection;
+    bool reverseForward;
+    bool isLimb;
+    bool useStableOrientation;
+} BONE_ORIENTATIONS[] = {
+    {"LShoulder", "LElbow", "Neck", false, true, true},
+    {"LElbow", "Neck", "LWrist", true, true, true},
+    {"LWrist", "LElbow", "", false, false, true},
+    {"RShoulder", "RElbow", "Neck", true, true, true},
+    {"RElbow", "Neck", "RWrist", false, true, true},
+    {"RWrist", "RElbow", "", false, false, true},
+    {"LHip", "LKnee", "Hip", true, true, true},
+    {"LKnee", "LAnkle", "LHip", true, true, true},
+    {"LAnkle", "LKnee", "FRONT_CALCULATED", true, false, true},
+    {"RHip", "RKnee", "Hip", false, true, true},
+    {"RKnee", "RAnkle", "RHip", true, true, true},
+    {"RAnkle", "RKnee", "REAR_CALCULATED", false, false, true},
+    {"Neck", "HEAD_CALCULATED", "", true, false, true},
+    {"", "", "", false, false, false}
+};
+
+static const struct {
+    const char* boneName;
+    float yawOffset;
+    float pitchOffset;
+    float rollOffset;
+} BONE_ANGLE_OFFSETS[] = {
+    {"LShoulder", 90.0f, 180.0f, -90.0f},
+    {"LElbow", 90.0f, 225.0f, -90.0f},
+    {"LWrist", 90.0f, 180.0f, 90.0f},
+    {"RShoulder", -90.0f, 0.0f, 90.0f},
+    {"RElbow", -90.0f, -90.0f, 90.0f},
+    {"RWrist", 90.0f, 180.0f, 90.0f},
+    {"LHip", 90.0f, -45.0f, 90.0f},
+    {"LKnee", 90.0f, 90.0f, 90.0f},
+    {"LAnkle",  90.0f, -90.0f, 90.0f},
+    {"RHip", -90.0f, -45.0f, -90.0f},
+    {"RKnee", -90.0f, 90.0f, 90.0f},
+    {"RAnkle", 90.0f, 180.0f, 90.0f},
+    {"Neck", -90.0f, 180.0f, -90.0f},
+    {"", 0.0f, 0.0f, 0.0f}
+};
+
+static const struct {
+    const char* boneName;
+    float scaleFactorUp;
+    float scaleFactorDown;
+} BONE_SCALE_FACTORS[] = {
+    {"LShoulder", 0.3f, 1.2f},
+    {"RShoulder", 0.3f, 1.2f},
+    {"LElbow", 0.0f, 0.9f},
+    {"RElbow", 0.0f, 0.9f},
+    {"LHip", 0.1f, 1.0f},
+    {"RHip", 0.1f, 1.0f},
+    {"LKnee", 0.1f, 1.0f},
+    {"RKnee", 0.1f, 1.0f},
+    {"", 0.5f, 0.5f}
+};
+
+static const float HEAD_DEPTH_OFFSET = 0.04f;
+static const float CHEST_OFFSET_Y = -0.06f;
+static const float CHEST_OFFSET_Z = -0.005f;
+static const float CHEST_FALLBACK_Y = -0.08f;
+static const float HIP_OFFSET_Y = -0.02f;
+
+
+static Vector3 RotatePointAroundPivot(Vector3 point, Vector3 pivot, Vector3 worldPos, Matrix rotY) {
+    Vector3 relative = Vector3Subtract(point, pivot);
+    Vector3 rotated = Vector3Transform(relative, rotY);
+    Vector3 pivotWorld = Vector3Add(worldPos, pivot);
+    return Vector3Add(pivotWorld, rotated);
+}
+
+  void DrawAnimatedCharacterTransformed(AnimatedCharacter* character, Camera camera,
+                                      Vector3 worldPosition, float worldRotation) {
+    if (!character || !character->animation.isLoaded) return;
+
+    // Guardar cámara original
+    Camera origCam = character->renderer->camera;
+    character->renderer->camera = camera;
+
+    Matrix rot = MatrixRotateY(worldRotation);
+    Vector3 pivot = character->autoCenter;
+
+    int bc = character->renderBonesCount;
+    int hc = character->renderHeadsCount;
+    int tc = character->renderTorsosCount;
+
+    // Copiar datos de renderizado
+    BoneRenderData* bonesCopy = NULL;
+    HeadRenderData* headsCopy = NULL;
+    TorsoRenderData* torsosCopy = NULL;
+
+    if (bc > 0) {
+        bonesCopy = (BoneRenderData*)malloc(sizeof(BoneRenderData) * bc);
+        if (bonesCopy) memcpy(bonesCopy, character->renderBones, sizeof(BoneRenderData) * bc);
+    }
+    if (hc > 0) {
+        headsCopy = (HeadRenderData*)malloc(sizeof(HeadRenderData) * hc);
+        if (headsCopy) memcpy(headsCopy, character->renderHeads, sizeof(HeadRenderData) * hc);
+    }
+    if (tc > 0) {
+        torsosCopy = (TorsoRenderData*)malloc(sizeof(TorsoRenderData) * tc);
+        if (torsosCopy) memcpy(torsosCopy, character->renderTorsos, sizeof(TorsoRenderData) * tc);
+    }
+
+    // Crear copia transformada del frame actual para los torsos
+    AnimationFrame* transformedFrame = NULL;
+    if (tc > 0 && character->animation.isLoaded && 
+        character->currentFrame >= 0 && character->currentFrame < character->animation.frameCount) {
+        
+        transformedFrame = (AnimationFrame*)malloc(sizeof(AnimationFrame));
+        if (transformedFrame) {
+            // Copiar frame actual
+            *transformedFrame = character->animation.frames[character->currentFrame];
+            
+            // Transformar todas las posiciones de huesos en el frame
+            for (int p = 0; p < transformedFrame->personCount; p++) {
+                Person* person = &transformedFrame->persons[p];
+                for (int b = 0; b < person->boneCount; b++) {
+                    Bone* bone = &person->bones[b];
+                    if (bone->position.valid) {
+                        bone->position.position = RotatePointAroundPivot(
+                            bone->position.position, pivot, worldPosition, rot);
+                    }
+                }
+            }
+        }
+    }
+
+    // Transformar bones
+    // Transformar bones (PARCHE: forzamos orientación de muñecas para que sigan worldRotation)
+    if (bonesCopy) {
+        for (int i = 0; i < bc; i++) {
+            BoneRenderData* b = &bonesCopy[i];
+            if (!b->valid) continue;
+
+            // Transformar posición respecto al pivot/posición mundial
+            b->position = RotatePointAroundPivot(b->position, pivot, worldPosition, rot);
+
+            // Si existe orientación, rotarla por la rotación global
+            if (b->orientation.valid) {
+                b->orientation.forward = Vector3Transform(b->orientation.forward, rot);
+                b->orientation.up      = Vector3Transform(b->orientation.up, rot);
+                b->orientation.right   = Vector3Transform(b->orientation.right, rot);
+
+                b->orientation.forward = SafeNormalize(b->orientation.forward);
+                b->orientation.up      = SafeNormalize(b->orientation.up);
+                b->orientation.right   = SafeNormalize(b->orientation.right);
+
+                b->orientation.position = b->position;
+                b->orientation.yaw += worldRotation;
+                while (b->orientation.yaw > PI)  b->orientation.yaw -= 2.0f * PI;
+                while (b->orientation.yaw < -PI) b->orientation.yaw += 2.0f * PI;
+            }
+
+
+if (IsWristBone(b->boneName)) {
+
+    Vector3 personRight = { -cosf(worldRotation), 0.0f, sinf(worldRotation) };
+    
+    Vector3 charForward = Vector3Scale(personRight, -1.0f);
+    
+    charForward = SafeNormalize(charForward);
+    
+    Vector3 up = (Vector3){ 0.0f, 1.0f, 0.0f };
+    Vector3 right = Vector3Normalize(Vector3CrossProduct(charForward, up));
+    up = Vector3Normalize(Vector3CrossProduct(right, charForward));
+    
+    b->orientation.forward = charForward;
+    b->orientation.right = right;
+    b->orientation.up = up;
+    b->orientation.position = b->position;
+    
+    // CORRECCIÓN: Invertir el yaw en 180 grados para compensar el mapeo
+    b->orientation.yaw = atan2f(b->orientation.forward.x, b->orientation.forward.z) + PI;
+    
+    while (b->orientation.yaw > PI)  b->orientation.yaw -= 2.0f * PI;
+    while (b->orientation.yaw < -PI) b->orientation.yaw += 2.0f * PI;
+    
+    b->orientation.valid = true;
+}
+        }
+    }
+
+
+    // Transformar heads
+    if (headsCopy) {
+        for (int i = 0; i < hc; i++) {
+            HeadRenderData* h = &headsCopy[i];
+            if (!h->valid) continue;
+            h->position = RotatePointAroundPivot(h->position, pivot, worldPosition, rot);
+            if (h->orientation.valid) {
+                h->orientation.forward = Vector3Transform(h->orientation.forward, rot);
+                h->orientation.up = Vector3Transform(h->orientation.up, rot);
+                h->orientation.right = Vector3Transform(h->orientation.right, rot);
+                
+                h->orientation.forward = SafeNormalize(h->orientation.forward);
+                h->orientation.up = SafeNormalize(h->orientation.up);
+                h->orientation.right = SafeNormalize(h->orientation.right);
+                
+                h->orientation.position = h->position;
+                h->orientation.yaw += worldRotation;
+            }
+        }
+    }
+
+    if (torsosCopy) {
+        for (int i = 0; i < tc; i++) {
+            TorsoRenderData* t = &torsosCopy[i];
+            
+            if (!t->valid) continue;
+            
+            // IMPORTANTE: Actualizar el puntero al person transformado
+            if (transformedFrame && t->person) {
+                // Buscar el person correspondiente en el frame transformado
+                for (int p = 0; p < transformedFrame->personCount; p++) {
+                    if (strcmp(transformedFrame->persons[p].personId, t->personId) == 0) {
+                        t->person = &transformedFrame->persons[p];
+                        break;
+                    }
+                }
+            }
+            
+            if (t->orientation.valid) {
+                t->orientation.forward = Vector3Transform(t->orientation.forward, rot);
+                t->orientation.up = Vector3Transform(t->orientation.up, rot);
+                t->orientation.right = Vector3Transform(t->orientation.right, rot);
+                
+                t->orientation.forward = SafeNormalize(t->orientation.forward);
+                t->orientation.up = SafeNormalize(t->orientation.up);
+                t->orientation.right = SafeNormalize(t->orientation.right);
+                
+                t->orientation.yaw += worldRotation;
+                
+                while (t->orientation.yaw > PI) t->orientation.yaw -= 2.0f * PI;
+                while (t->orientation.yaw < -PI) t->orientation.yaw += 2.0f * PI;
+            }
+            
+            t->position = RotatePointAroundPivot(t->position, pivot, worldPosition, rot);
+            
+            if (t->orientation.valid) {
+                t->orientation.position = t->position;
+            }
+            
+            t->disableCompensation = false;
+        }
+    }
+
+    Vector3 transformedCenter = Vector3Add(worldPosition, pivot);
+
+    BonesRenderer_RenderFrame(character->renderer,
+                              bonesCopy ? bonesCopy : character->renderBones, bc,
+                              headsCopy ? headsCopy : character->renderHeads, hc,
+                              torsosCopy ? torsosCopy : character->renderTorsos, tc,
+                              transformedCenter,
+                              character->autoCenterCalculated);
+
+    // Liberar copias
+    if (bonesCopy) free(bonesCopy);
+    if (headsCopy) free(headsCopy);
+    if (torsosCopy) free(torsosCopy);
+    if (transformedFrame) free(transformedFrame);
+
+    // Restaurar cámara
+    character->renderer->camera = origCam;
+}
+
+
+static void InterpolateBone(const Bone* boneA, const Bone* boneB, Bone* result, float t) {
+    strncpy(result->name, boneA->name, MAX_BONE_NAME_LENGTH - 1);
+    result->name[MAX_BONE_NAME_LENGTH - 1] = '\0';
+    
+    result->position.position.x = boneA->position.position.x * (1.0f - t) + boneB->position.position.x * t;
+    result->position.position.y = boneA->position.position.y * (1.0f - t) + boneB->position.position.y * t;
+    result->position.position.z = boneA->position.position.z * (1.0f - t) + boneB->position.position.z * t;
+    
+    result->position.valid = boneA->position.valid && boneB->position.valid;
+    result->position.confidence = (boneA->position.confidence + boneB->position.confidence) * 0.5f;
+    
+    result->size.x = boneA->size.x * (1.0f - t) + boneB->size.x * t;
+    result->size.y = boneA->size.y * (1.0f - t) + boneB->size.y * t;
+    
+    result->visible = boneA->visible || boneB->visible;
+    result->textureIndex = boneA->textureIndex;
+    result->rotation = boneA->rotation * (1.0f - t) + boneB->rotation * t;
+    result->mirrored = boneA->mirrored;
+}
+
+static void InterpolatePerson(const Person* personA, const Person* personB, Person* result, float t) {
+    strncpy(result->personId, personA->personId, 15);
+    result->personId[15] = '\0';
+    
+    result->active = personA->active || personB->active;
+    result->boneCount = personA->boneCount > personB->boneCount ? personA->boneCount : personB->boneCount;
+    
+    for (int i = 0; i < result->boneCount; i++) {
+        if (i < personA->boneCount && i < personB->boneCount) {
+            InterpolateBone(&personA->bones[i], &personB->bones[i], &result->bones[i], t);
+        } else if (i < personA->boneCount) {
+            result->bones[i] = personA->bones[i];
+        } else {
+            result->bones[i] = personB->bones[i];
+        }
+    }
+}
+
+  bool BonesInterpolateFrames(BonesAnimation* animation, int frameA, int frameB, int framesToAdd) {
+    if (!animation || frameA < 0 || frameB <= frameA || frameB >= animation->frameCount ||
+        framesToAdd <= 0 || animation->frameCount + framesToAdd > animation->maxFrames) {
+        return false;
+    }
+    
+    for (int i = animation->frameCount - 1; i >= frameB; i--) {
+        animation->frames[i + framesToAdd] = animation->frames[i];
+        animation->frames[i + framesToAdd].frameNumber = i + framesToAdd;
+    }
+    
+    AnimationFrame* srcA = &animation->frames[frameA];
+    AnimationFrame* srcB = &animation->frames[frameB + framesToAdd];
+    
+    for (int i = 0; i < framesToAdd; i++) {
+        int newFrameIndex = frameA + i + 1;
+        float t = (float)(i + 1) / (float)(framesToAdd + 1);
+        
+        AnimationFrame* dest = &animation->frames[newFrameIndex];
+        dest->frameNumber = newFrameIndex;
+        dest->personCount = srcA->personCount > srcB->personCount ? srcA->personCount : srcB->personCount;
+        dest->valid = true;
+        
+        for (int p = 0; p < dest->personCount; p++) {
+            if (p < srcA->personCount && p < srcB->personCount) {
+                InterpolatePerson(&srcA->persons[p], &srcB->persons[p], &dest->persons[p], t);
+            } else if (p < srcA->personCount) {
+                dest->persons[p] = srcA->persons[p];
+            } else {
+                dest->persons[p] = srcB->persons[p];
+            }
+        }
+    }
+    
+    animation->frameCount += framesToAdd;
+    
+    return true;
+}
+
+  bool BonesInsertEmptyFrame(BonesAnimation* animation, int position) {
+    if (!animation || position < 0 || position > animation->frameCount ||
+        animation->frameCount >= animation->maxFrames) {
+        return false;
+    }
+    
+    for (int i = animation->frameCount; i > position; i--) {
+        animation->frames[i] = animation->frames[i - 1];
+        animation->frames[i].frameNumber = i;
+    }
+    
+    AnimationFrame* newFrame = &animation->frames[position];
+    memset(newFrame, 0, sizeof(AnimationFrame));
+    newFrame->frameNumber = position;
+    newFrame->valid = true;
+    
+    animation->frameCount++;
+    
+    return true;
+}
+
+  bool BonesCopyFrame(BonesAnimation* animation, int sourceFrame, int targetFrame) {
+    if (!animation || sourceFrame < 0 || sourceFrame >= animation->frameCount ||
+        targetFrame < 0 || targetFrame >= animation->maxFrames) {
+        return false;
+    }
+    
+    animation->frames[targetFrame] = animation->frames[sourceFrame];
+    animation->frames[targetFrame].frameNumber = targetFrame;
+    
+    if (targetFrame >= animation->frameCount) {
+        animation->frameCount = targetFrame + 1;
+    }
+    
+    return true;
+}
 
 Vector3 GetBonePositionByName(const Person* person, const char* boneName) {
     if (!person || !boneName) return (Vector3) { 0, 0, 0 };
@@ -1836,11 +1767,7 @@ if (strcmp(boneName, "REAR_CALCULATED") == 0) {
     return (Vector3) { 0, 0, 0 };
 }
 
-Vector3 SafeNormalize(Vector3 v) {
-    float length = Vector3Length(v);
-    if (length < 1e-6f) return (Vector3) { 0, 0, 1 };
-    return Vector3Scale(v, 1.0f / length);
-}
+
 
 static Vector3 GetStablePerpendicularVector(Vector3 forward) {
     forward = SafeNormalize(forward);
@@ -3132,14 +3059,7 @@ void EnrichBoneRenderDataWithOrientation(BoneRenderData* renderBone, const Perso
 // RENDERING CALCULATIONS
 // ============================================================================
 
-BoneRenderData* FindRenderBoneByName(BoneRenderData* bones, int boneCount, const char* boneName) {
-    for (int i = 0; i < boneCount; i++) {
-        if (strcmp(bones[i].boneName, boneName) == 0) {
-            return &bones[i];
-        }
-    }
-    return NULL;
-}
+
 
 BoneConnectionPositions GetBoneConnectionPositionsEx(const BoneRenderData* boneData, const Person* person) {
     BoneConnectionPositions result = { 0 };
@@ -3457,10 +3377,7 @@ if (strcmp(boneData->boneName, "Neck") == 0) {
     while (*outRotation < 0.0f) *outRotation += 360.0f;
 }
 
-bool IsWristBone(const char* boneName) {
-    if (!boneName) return false;
-    return (strcmp(boneName, "LWrist") == 0) || (strcmp(boneName, "RWrist") == 0);
-}
+
 
 void CalculateHandBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex,
     float* outRotation, bool* outMirrored, const char* boneName) {
@@ -4001,17 +3918,7 @@ void DrawHeadBillboard(Texture2D texture, Camera camera, const HeadRenderData* h
     DrawBonetileCustom(texture, camera, src, headData->position, worldSize, rotation, finalMirror, "Head");
 }
 
-void DrawAnimatedCharacter(AnimatedCharacter* character, Camera camera) {
-    if (!character || !character->animation.isLoaded) return;
 
-    character->renderer->camera = camera;
-
-    BonesRenderer_RenderFrame(character->renderer,
-                             character->renderBones, character->renderBonesCount,
-                             character->renderHeads, character->renderHeadsCount,
-                             character->renderTorsos, character->renderTorsosCount,
-                             character->autoCenter, character->autoCenterCalculated);
-}
 
 // ============================================================================
 // RENDERER CORE
@@ -4112,6 +4019,21 @@ void CalculateHandBoneRenderDataWithOrientation(const BoneRenderData* boneData,
         *outMirrored = false;
     }
 }
+
+bool GetBoneConnectionsWithPriority(const char* boneName, char connections[3][32], float priorities[3]) {
+    for (int i = 0; BONE_CONNECTIONS[i].boneName[0]; i++) {
+        if (strcmp(BONE_CONNECTIONS[i].boneName, boneName) == 0) {
+            for (int j = 0; j < 3; j++) {
+                strncpy(connections[j], BONE_CONNECTIONS[i].connections[j], 31);
+                connections[j][31] = '\0';
+                priorities[j] = BONE_CONNECTIONS[i].priority[j];
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
 static void RenderBoneInternal(BonesRenderer* renderer, const BoneRenderData* bone, 
                               Vector3 renderPosition, const AnimationFrame* frame,
                               BoneRenderData* allBones, int boneCount) {
@@ -4648,49 +4570,20 @@ void AnimController_Update(AnimationController* controller, float deltaTime) {
 // UTILITY FUNCTIONS
 // ============================================================================
 
-const Person* FindPersonByBoneName(const AnimationFrame* frame, const char* boneName) {
-    if (!frame || !boneName) return NULL;
-    for (int p = 0; p < frame->personCount; p++) {
-        const Person* person = &frame->persons[p];
-        if (!person->active) continue;
-        for (int b = 0; b < person->boneCount; b++) {
-            if (strcmp(person->bones[b].name, boneName) == 0) return person;
-        }
-    }
-    return NULL;
-}
 
-bool GetBoneConnectionsWithPriority(const char* boneName, char connections[3][32], float priorities[3]) {
-    for (int i = 0; BONE_CONNECTIONS[i].boneName[0]; i++) {
-        if (strcmp(BONE_CONNECTIONS[i].boneName, boneName) == 0) {
-            for (int j = 0; j < 3; j++) {
-                strncpy(connections[j], BONE_CONNECTIONS[i].connections[j], 31);
-                connections[j][31] = '\0';
-                priorities[j] = BONE_CONNECTIONS[i].priority[j];
-            }
-            return true;
-        }
-    }
-    return false;
-}
 
-const char* BonesGetErrorString(BonesError error) {
-    static const char* errorStrings[] = {
-        [BONES_SUCCESS] = "Operation successful",
-        [BONES_ERROR_NULL_POINTER] = "Null pointer received",
-        [BONES_ERROR_FILE_NOT_FOUND] = "File not found",
-        [BONES_ERROR_INVALID_JSON] = "Invalid or malformed JSON",
-        [BONES_ERROR_MEMORY_ALLOCATION] = "Memory allocation error",
-        [BONES_ERROR_BONE_NOT_FOUND] = "Bone not found",
-        [BONES_ERROR_FRAME_OUT_OF_RANGE] = "Frame out of valid range",
-        [BONES_ERROR_PERSON_NOT_FOUND] = "Person not found",
-        [BONES_ERROR_INVALID_COORDINATES] = "Invalid coordinates",
-        [BONES_ERROR_BUFFER_OVERFLOW] = "Buffer overflow",
-        [BONES_ERROR_EMPTY_DATA] = "Empty or no content data"
-    };
-    return (error < sizeof(errorStrings) / sizeof(errorStrings[0]) && errorStrings[error])
-        ? errorStrings[error] : "Unknown error";
-}
+
+
+
+
+static BonesRenderConfig g_renderConfig = {
+    .defaultBoneSize = 0.35f,
+    .drawDebugSpheres = false,
+    .enableDepthSorting = true,
+    .debugColor = RED,
+    .debugSphereRadius = 0.035f,
+    .showInvalidBones = false
+};
 
 BonesRenderConfig BonesGetDefaultRenderConfig(void) {
     return g_renderConfig;
@@ -4698,6 +4591,51 @@ BonesRenderConfig BonesGetDefaultRenderConfig(void) {
 
 void BonesSetRenderConfig(const BonesRenderConfig* config) {
     if (config) g_renderConfig = *config;
+}
+
+AnimatedCharacter* CreateAnimatedCharacter(const char* textureConfigPath, const char* textureSetsPath) {
+    AnimatedCharacter* character = (AnimatedCharacter*)calloc(1, sizeof(AnimatedCharacter));
+    if (!character) return NULL;
+
+    character->renderer = BonesRenderer_Create();
+    if (!character->renderer || !BonesRenderer_Init(character->renderer)) {
+        free(character);
+        return NULL;
+    }
+
+    character->textureSets = BonesTextureSets_Create();
+    if (textureSetsPath && !BonesTextureSets_LoadFromFile(character->textureSets, textureSetsPath)) {
+        // Advertencia pero continuamos
+    }
+
+    // ELIMINADO: g_textureSets = character->textureSets;
+
+    if (textureConfigPath) {
+        LoadSimpleTextureConfig(&character->textureSystem, textureConfigPath);
+        LoadBoneConfigurations(&character->textureSystem, &character->boneConfigs, &character->boneConfigCount);
+    }
+
+    if (BonesInit(&character->animation, 1000) != BONES_SUCCESS) {
+        BonesRenderer_Free(character->renderer);
+        BonesTextureSets_Free(character->textureSets);
+        free(character);
+        return NULL;
+    }
+
+    character->renderHeadBillboards = true;
+    character->renderTorsoBillboards = true;
+    character->autoPlay = true;
+    character->autoPlaySpeed = 0.1f;
+    character->lastProcessedFrame = -1;
+
+    character->renderConfig = BonesGetDefaultRenderConfig();
+    character->renderConfig.drawDebugSpheres = true;
+    character->renderConfig.debugColor = GREEN;
+    character->renderConfig.debugSphereRadius = 0.035f;
+    character->renderConfig.enableDepthSorting = true;
+    BonesSetRenderConfig(&character->renderConfig);
+
+    return character;
 }
 
 static BonesError ParseJSONFrame(const char* jsonData, int* outFrameNum, Person* outPersons, int* outPersonCount) {
@@ -5101,5 +5039,6 @@ void BonesTextureSets_ResetAll(TextureSetCollection* collection) {
         collection->sets[i].activeVariantIndex = 0;
     }
 }
+
 
 #endif // BONES_CORE_H
