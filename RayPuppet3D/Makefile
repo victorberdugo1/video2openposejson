@@ -6,8 +6,8 @@ SRC_DIR = src
 OBJ_DIR = obj
 TEST_OBJ_DIR = obj_test
 
-SRC = main.c bones3d.c
-TEST_SRC = test.c bones3d.c
+SRC = main.c 
+TEST_SRC = test.c 
 
 SRCS = $(addprefix $(SRC_DIR)/, $(SRC))
 TEST_SRCS = $(addprefix $(SRC_DIR)/, $(TEST_SRC))
