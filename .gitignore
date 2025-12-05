@@ -212,6 +212,7 @@ libraylib.a
 
 # Ignorar ejecutable y objetos
 raypup
+test_viewer
 obj/
 
 # Ignorar archivos generados por el sistema

@@ -112,8 +112,8 @@ void ProcessInput(GameWorld* w, float dt) {
 		if (IsKeyDown(KEY_F)) w->camAngleV -= 60.0f * dt;
 
 		// Limitar pitch vertical
-		if (w->camAngleV > 60.0f) w->camAngleV = 60.0f;
-		if (w->camAngleV < 5.0f) w->camAngleV = 5.0f;
+		if (w->camAngleV > 35.0f) w->camAngleV = 35.0f;
+		if (w->camAngleV < -35.0f) w->camAngleV = -35.0f;
 
 		// Zoom con W/S
 		if (IsKeyDown(KEY_W)) w->camDistance -= 3.0f * dt;
