@@ -1,447 +1,430 @@
-// test.c - Test con animaciones de acción completas
 #include "bones_core.h"
-#include <math.h>
-#include <stdlib.h>
-#include <string.h>
 
 // ============================================================================
 // ESTRUCTURAS
 // ============================================================================
 typedef struct {
-    AnimatedCharacter* character;
-    Vector3 position;
-    float rotation;
-    int id;
-    bool wasMoving;
-    bool isPlayingAction;
-    int actionStartFrame;  // Frame inicial de la acción
-    int actionEndFrame;    // Frame final de la acción
+	AnimatedCharacter* character;
+	Vector3 position;
+	float rotation;
+	int id;
+	bool wasMoving;
+	bool isPlayingAction;
+	int actionStartFrame;
+	int actionEndFrame;
 } GameCharacter;
 
 typedef struct {
-    GameCharacter* characters;
-    int count;
-    int max;
-    int controlled;
-    Camera camera;
-    float moveSpeed;
-    float cameraSpeed;
-    float camAngleH;
-    float camAngleV;
-    float camDistance;
-    Vector3 camLateralOffset;
+	GameCharacter* characters;
+	int count;
+	int max;
+	int controlled;
+	Camera camera;
+	float moveSpeed;
+	float cameraSpeed;
+	float camAngleH;
+	float camAngleV;
+	float camDistance;
+	Vector3 camLateralOffset;
 } GameWorld;
 
 // ============================================================================
 // GESTIÓN DEL MUNDO
 // ============================================================================
 GameWorld* CreateWorld(int maxCharacters) {
-    GameWorld* w = (GameWorld*)calloc(1, sizeof(GameWorld));
-    w->max = maxCharacters;
-    w->characters = (GameCharacter*)calloc(maxCharacters, sizeof(GameCharacter));
-    w->count = 0;
-    w->controlled = -1;
+	GameWorld* w = (GameWorld*)calloc(1, sizeof(GameWorld));
+	w->max = maxCharacters;
+	w->characters = (GameCharacter*)calloc(maxCharacters, sizeof(GameCharacter));
+	w->count = 0;
+	w->controlled = -1;
 
-    w->camera.position = (Vector3){0.0f, 2.5f, 5.0f};
-    w->camera.target = (Vector3){0.0f, 0.6f, 0.0f};
-    w->camera.up = (Vector3){0.0f, 1.0f, 0.0f};
-    w->camera.fovy = 45.0f;
-    w->camera.projection = CAMERA_PERSPECTIVE;
+	w->camera.position = (Vector3){0.0f, 2.5f, 5.0f};
+	w->camera.target = (Vector3){0.0f, 0.6f, 0.0f};
+	w->camera.up = (Vector3){0.0f, 1.0f, 0.0f};
+	w->camera.fovy = 45.0f;
+	w->camera.projection = CAMERA_PERSPECTIVE;
 
-    w->moveSpeed = 1.8f;
-    w->cameraSpeed = 3.0f;
-    w->camAngleH = 0.0f;
-    w->camAngleV = 20.0f;
-    w->camDistance = 2.5f;
-    w->camLateralOffset = (Vector3){0, 0, 0};
+	w->moveSpeed = 1.8f;
+	w->cameraSpeed = 3.0f;
+	w->camAngleH = 0.0f;
+	w->camAngleV = 20.0f;
+	w->camDistance = 2.5f;
+	w->camLateralOffset = (Vector3){0, 0, 0};
 
-    return w;
+	return w;
 }
 
 void DestroyWorld(GameWorld* w) {
-    if (!w) return;
-    for (int i = 0; i < w->count; i++) {
-        DestroyAnimatedCharacter(w->characters[i].character);
-    }
-    free(w->characters);
-    free(w);
+	if (!w) return;
+	for (int i = 0; i < w->count; i++) {
+		DestroyAnimatedCharacter(w->characters[i].character);
+	}
+	free(w->characters);
+	free(w);
 }
 
 int AddCharacter(GameWorld* w, const char* texCfg, const char* texSets,
-                 const char* animJson, const char* animMeta, Vector3 pos) {
-    if (!w || w->count >= w->max) return -1;
-    int idx = w->count;
-    GameCharacter* gc = &w->characters[idx];
+		const char* animJson, const char* animMeta, Vector3 pos) {
+	if (!w || w->count >= w->max) return -1;
+	int idx = w->count;
+	GameCharacter* gc = &w->characters[idx];
 
-    gc->character = CreateAnimatedCharacter(texCfg, texSets);
-    if (!gc->character) {
-        printf("[ERROR] Failed to create character %d\n", idx);
-        return -1;
-    }
+	gc->character = CreateAnimatedCharacter(texCfg, texSets);
+	if (!gc->character) {
+		printf("[ERROR] Failed to create character %d\n", idx);
+		return -1;
+	}
 
-    if (!LoadAnimation(gc->character, animJson, animMeta)) {
-        DestroyAnimatedCharacter(gc->character);
-        printf("[ERROR] Failed to load animation for character %d\n", idx);
-        return -1;
-    }
+	if (!LoadAnimation(gc->character, animJson, animMeta)) {
+		DestroyAnimatedCharacter(gc->character);
+		printf("[ERROR] Failed to load animation for character %d\n", idx);
+		return -1;
+	}
 
-    SetCharacterAutoPlay(gc->character, true);
-    gc->position = pos;
-    gc->rotation = 0.0f;
-    gc->id = idx;
-    gc->wasMoving = false;
-    gc->isPlayingAction = false;
-    gc->actionStartFrame = 0;
-    gc->actionEndFrame = 0;
+	SetCharacterAutoPlay(gc->character, true);
+	gc->position = pos;
+	gc->rotation = 0.0f;
+	gc->id = idx;
+	gc->wasMoving = false;
+	gc->isPlayingAction = false;
+	gc->actionStartFrame = 0;
+	gc->actionEndFrame = 0;
 
-    w->count++;
-    return idx;
+	w->count++;
+	return idx;
 }
 
 // ============================================================================
-// HELPER: Obtener info de la animación actual
+// HELPER
 // ============================================================================
 void GetAnimationInfo(AnimatedCharacter* character, int* currentFrame, int* totalFrames) {
-    if (!character || !character->animController) {
-        *currentFrame = 0;
-        *totalFrames = 0;
-        return;
-    }
+	if (!character || !character->animController) {
+		*currentFrame = 0;
+		*totalFrames = 0;
+		return;
+	}
 
-    AnimationController* ctrl = character->animController;
-    
-    if (ctrl->currentClipIndex >= 0 && ctrl->currentClipIndex < ctrl->clipCount) {
-        AnimationClipMetadata* clip = &ctrl->clips[ctrl->currentClipIndex];
-        *currentFrame = ctrl->currentFrameInJSON;
-        *totalFrames = clip->endFrame;
-    } else {
-        *currentFrame = character->currentFrame;
-        *totalFrames = character->maxFrames;
-    }
+	AnimationController* ctrl = character->animController;
+
+	if (ctrl->currentClipIndex >= 0 && ctrl->currentClipIndex < ctrl->clipCount) {
+		AnimationClipMetadata* clip = &ctrl->clips[ctrl->currentClipIndex];
+		*currentFrame = ctrl->currentFrameInJSON;
+		*totalFrames = clip->endFrame;
+	} else {
+		*currentFrame = character->currentFrame;
+		*totalFrames = character->maxFrames;
+	}
 }
 
 // ============================================================================
 // INPUT Y UPDATE
 // ============================================================================
 void ProcessInput(GameWorld* w, float dt) {
-    if (!w) return;
+	if (!w) return;
 
-    // ===== CÁMARA ORBITAL =====
-    if (w->controlled >= 0 && w->controlled < w->count) {
-        GameCharacter* c = &w->characters[w->controlled];
+	// ===== CÁMARA ORBITAL =====
+	if (w->controlled >= 0 && w->controlled < w->count) {
+		GameCharacter* c = &w->characters[w->controlled];
 
-        if (IsKeyDown(KEY_Q)) w->camAngleH += 90.0f * dt;
-        if (IsKeyDown(KEY_E)) w->camAngleH -= 90.0f * dt;
-        if (IsKeyDown(KEY_R)) w->camAngleV += 60.0f * dt;
-        if (IsKeyDown(KEY_F)) w->camAngleV -= 60.0f * dt;
+		if (IsKeyDown(KEY_Q)) w->camAngleH += 90.0f * dt;
+		if (IsKeyDown(KEY_E)) w->camAngleH -= 90.0f * dt;
+		if (IsKeyDown(KEY_R)) w->camAngleV += 60.0f * dt;
+		if (IsKeyDown(KEY_F)) w->camAngleV -= 60.0f * dt;
 
-        if (w->camAngleV > 35.0f) w->camAngleV = 35.0f;
-        if (w->camAngleV < -35.0f) w->camAngleV = -35.0f;
+		if (w->camAngleV > 35.0f) w->camAngleV = 35.0f;
+		if (w->camAngleV < -35.0f) w->camAngleV = -35.0f;
 
-        if (IsKeyDown(KEY_W)) w->camDistance -= 3.0f * dt;
-        if (IsKeyDown(KEY_S)) w->camDistance += 3.0f * dt;
-        if (w->camDistance < 1.0f) w->camDistance = 1.0f;
-        if (w->camDistance > 6.0f) w->camDistance = 6.0f;
+		if (IsKeyDown(KEY_W)) w->camDistance -= 3.0f * dt;
+		if (IsKeyDown(KEY_S)) w->camDistance += 3.0f * dt;
+		if (w->camDistance < 1.0f) w->camDistance = 1.0f;
+		if (w->camDistance > 6.0f) w->camDistance = 6.0f;
 
-        float radH = w->camAngleH * DEG2RAD;
-        float radV = w->camAngleV * DEG2RAD;
+		float radH = w->camAngleH * DEG2RAD;
+		float radV = w->camAngleV * DEG2RAD;
 
-        Vector3 forward = {
-            cosf(radV) * sinf(radH),
-            sinf(radV),
-            cosf(radV) * cosf(radH)
-        };
+		Vector3 forward = {
+			cosf(radV) * sinf(radH),
+			sinf(radV),
+			cosf(radV) * cosf(radH)
+		};
 
-        Vector3 right = Vector3Normalize(Vector3CrossProduct(forward, (Vector3){0, 1, 0}));
+		Vector3 right = Vector3Normalize(Vector3CrossProduct(forward, (Vector3){0, 1, 0}));
 
-        float lateralSpeed = 2.0f;
-        if (IsKeyDown(KEY_A)) w->camLateralOffset = Vector3Add(w->camLateralOffset, Vector3Scale(right, lateralSpeed * dt));
-        if (IsKeyDown(KEY_D)) w->camLateralOffset = Vector3Add(w->camLateralOffset, Vector3Scale(right, -lateralSpeed * dt));
+		float lateralSpeed = 2.0f;
+		if (IsKeyDown(KEY_A)) w->camLateralOffset = Vector3Add(w->camLateralOffset, Vector3Scale(right, lateralSpeed * dt));
+		if (IsKeyDown(KEY_D)) w->camLateralOffset = Vector3Add(w->camLateralOffset, Vector3Scale(right, -lateralSpeed * dt));
 
-        float lateralDist = Vector3Length(w->camLateralOffset);
-        if (lateralDist > 3.0f) w->camLateralOffset = Vector3Scale(Vector3Normalize(w->camLateralOffset), 3.0f);
+		float lateralDist = Vector3Length(w->camLateralOffset);
+		if (lateralDist > 3.0f) w->camLateralOffset = Vector3Scale(Vector3Normalize(w->camLateralOffset), 3.0f);
 
-        w->camera.target = Vector3Add(c->position, (Vector3){0, 0.6f, 0});
-        w->camera.target = Vector3Add(w->camera.target, w->camLateralOffset);
+		w->camera.target = Vector3Add(c->position, (Vector3){0, 0.6f, 0});
+		w->camera.target = Vector3Add(w->camera.target, w->camLateralOffset);
 
-        w->camera.position.x = w->camera.target.x + w->camDistance * cosf(radV) * sinf(radH);
-        w->camera.position.y = w->camera.target.y + w->camDistance * sinf(radV);
-        w->camera.position.z = w->camera.target.z + w->camDistance * cosf(radV) * cosf(radH);
-    }
+		w->camera.position.x = w->camera.target.x + w->camDistance * cosf(radV) * sinf(radH);
+		w->camera.position.y = w->camera.target.y + w->camDistance * sinf(radV);
+		w->camera.position.z = w->camera.target.z + w->camDistance * cosf(radV) * cosf(radH);
+	}
 
-    // ===== ANIMACIONES DE ACCIÓN =====
-    if (w->controlled >= 0 && w->controlled < w->count) {
-        GameCharacter* c = &w->characters[w->controlled];
-        
-        // Solo permitir nuevas acciones si no está ejecutando otra
-        if (!c->isPlayingAction) {
-            // Jump - J
-            if (IsKeyPressed(KEY_J)) {
-                if (LoadAnimation(c->character, "data/animations/jump.json", "data/animations/jump.anim")) {
-                    printf("[INFO] Ejecutando animación: Jump\n");
-                    c->isPlayingAction = true;
-                    
-                    // Obtener información de la animación cargada
-                    if (c->character->animController && 
-                        c->character->animController->currentClipIndex >= 0) {
-                        AnimationClipMetadata* clip = 
-                            &c->character->animController->clips[c->character->animController->currentClipIndex];
-                        c->actionStartFrame = clip->startFrame;
-                        c->actionEndFrame = clip->endFrame;
-                        printf("[INFO] Jump: frames %d-%d (total: %d frames)\n", 
-                               c->actionStartFrame, c->actionEndFrame, 
-                               c->actionEndFrame - c->actionStartFrame + 1);
-                    }
-                }
-            }
-            // Kick - K
-            else if (IsKeyPressed(KEY_K)) {
-                if (LoadAnimation(c->character, "data/animations/kick.json", "data/animations/kick.anim")) {
-                    printf("[INFO] Ejecutando animación: Kick\n");
-                    c->isPlayingAction = true;
-                    
-                    if (c->character->animController && 
-                        c->character->animController->currentClipIndex >= 0) {
-                        AnimationClipMetadata* clip = 
-                            &c->character->animController->clips[c->character->animController->currentClipIndex];
-                        c->actionStartFrame = clip->startFrame;
-                        c->actionEndFrame = clip->endFrame;
-                        printf("[INFO] Kick: frames %d-%d (total: %d frames)\n", 
-                               c->actionStartFrame, c->actionEndFrame, 
-                               c->actionEndFrame - c->actionStartFrame + 1);
-                    }
-                }
-            }
-            // Punch - P
-            else if (IsKeyPressed(KEY_P)) {
-                if (LoadAnimation(c->character, "data/animations/punch.json", "data/animations/punch.anim")) {
-                    printf("[INFO] Ejecutando animación: Punch\n");
-                    c->isPlayingAction = true;
-                    
-                    if (c->character->animController && 
-                        c->character->animController->currentClipIndex >= 0) {
-                        AnimationClipMetadata* clip = 
-                            &c->character->animController->clips[c->character->animController->currentClipIndex];
-                        c->actionStartFrame = clip->startFrame;
-                        c->actionEndFrame = clip->endFrame;
-                        printf("[INFO] Punch: frames %d-%d (total: %d frames)\n", 
-                               c->actionStartFrame, c->actionEndFrame, 
-                               c->actionEndFrame - c->actionStartFrame + 1);
-                    }
-                }
-            }
-        }
-    }
+	// ===== ANIMACIONES DE ACCIÓN =====
+	if (w->controlled >= 0 && w->controlled < w->count) {
+		GameCharacter* c = &w->characters[w->controlled];
 
-    // ===== CONTROL DE PERSONAJE =====
-    if (w->controlled >= 0 && w->controlled < w->count) {
-        GameCharacter* c = &w->characters[w->controlled];
-        bool moving = false;
-        
-        // Solo permitir movimiento si no está ejecutando una acción
-        if (!c->isPlayingAction) {
-            if (IsKeyDown(KEY_UP)) {
-                Vector3 dir = {sinf(c->rotation), 0, cosf(c->rotation)};
-                c->position = Vector3Add(c->position, Vector3Scale(dir, w->moveSpeed * dt));
-                moving = true;
-            }
-            if (IsKeyDown(KEY_DOWN)) {
-                Vector3 dir = {sinf(c->rotation), 0, cosf(c->rotation)};
-                c->position = Vector3Subtract(c->position, Vector3Scale(dir, w->moveSpeed * dt));
-                moving = true;
-            }
-            if (IsKeyDown(KEY_LEFT)) c->rotation += 2.5f * dt;
-            if (IsKeyDown(KEY_RIGHT)) c->rotation -= 2.5f * dt;
+		if (!c->isPlayingAction) {
+			// Jump - J
+			if (IsKeyPressed(KEY_J)) {
+				if (LoadAnimation(c->character, "data/animations/jump.json", "data/animations/jump.anim")) {
+					printf("[INFO] Ejecutando animación: Jump\n");
+					c->isPlayingAction = true;
 
-            while (c->rotation > PI) c->rotation -= 2.0f * PI;
-            while (c->rotation < -PI) c->rotation += 2.0f * PI;
+					if (c->character->animController && 
+							c->character->animController->currentClipIndex >= 0) {
+						AnimationClipMetadata* clip = 
+							&c->character->animController->clips[c->character->animController->currentClipIndex];
+						c->actionStartFrame = clip->startFrame;
+						c->actionEndFrame = clip->endFrame;
+						printf("[INFO] Jump: frames %d-%d (total: %d frames)\n", 
+								c->actionStartFrame, c->actionEndFrame, 
+								c->actionEndFrame - c->actionStartFrame + 1);
+					}
+				}
+			}
+			// Kick - K
+			else if (IsKeyPressed(KEY_K)) {
+				if (LoadAnimation(c->character, "data/animations/kick.json", "data/animations/kick.anim")) {
+					printf("[INFO] Ejecutando animación: Kick\n");
+					c->isPlayingAction = true;
 
-            // Cambiar animación según movimiento
-            if (moving != c->wasMoving) {
-                const char* animPath = moving ? "data/animations/walk.json" : "data/animations/idle.json";
-                const char* metaPath = moving ? "data/animations/walk.anim" : "data/animations/idle.anim";
-                LoadAnimation(c->character, animPath, metaPath);
-                c->wasMoving = moving;
-            }
-        }
-    }
+					if (c->character->animController && 
+							c->character->animController->currentClipIndex >= 0) {
+						AnimationClipMetadata* clip = 
+							&c->character->animController->clips[c->character->animController->currentClipIndex];
+						c->actionStartFrame = clip->startFrame;
+						c->actionEndFrame = clip->endFrame;
+						printf("[INFO] Kick: frames %d-%d (total: %d frames)\n", 
+								c->actionStartFrame, c->actionEndFrame, 
+								c->actionEndFrame - c->actionStartFrame + 1);
+					}
+				}
+			}
+			// Punch - P
+			else if (IsKeyPressed(KEY_P)) {
+				if (LoadAnimation(c->character, "data/animations/punch.json", "data/animations/punch.anim")) {
+					printf("[INFO] Ejecutando animación: Punch\n");
+					c->isPlayingAction = true;
+
+					if (c->character->animController && 
+							c->character->animController->currentClipIndex >= 0) {
+						AnimationClipMetadata* clip = 
+							&c->character->animController->clips[c->character->animController->currentClipIndex];
+						c->actionStartFrame = clip->startFrame;
+						c->actionEndFrame = clip->endFrame;
+						printf("[INFO] Punch: frames %d-%d (total: %d frames)\n", 
+								c->actionStartFrame, c->actionEndFrame, 
+								c->actionEndFrame - c->actionStartFrame + 1);
+					}
+				}
+			}
+		}
+	}
+
+	// ===== CONTROL DE PERSONAJE =====
+	if (w->controlled >= 0 && w->controlled < w->count) {
+		GameCharacter* c = &w->characters[w->controlled];
+		bool moving = false;
+
+		if (!c->isPlayingAction) {
+			if (IsKeyDown(KEY_UP)) {
+				Vector3 dir = {sinf(c->rotation), 0, cosf(c->rotation)};
+				c->position = Vector3Add(c->position, Vector3Scale(dir, w->moveSpeed * dt));
+				moving = true;
+			}
+			if (IsKeyDown(KEY_DOWN)) {
+				Vector3 dir = {sinf(c->rotation), 0, cosf(c->rotation)};
+				c->position = Vector3Subtract(c->position, Vector3Scale(dir, w->moveSpeed * dt));
+				moving = true;
+			}
+			if (IsKeyDown(KEY_LEFT)) c->rotation += 2.5f * dt;
+			if (IsKeyDown(KEY_RIGHT)) c->rotation -= 2.5f * dt;
+
+			while (c->rotation > PI) c->rotation -= 2.0f * PI;
+			while (c->rotation < -PI) c->rotation += 2.0f * PI;
+
+			if (moving != c->wasMoving) {
+				const char* animPath = moving ? "data/animations/walk.json" : "data/animations/idle.json";
+				const char* metaPath = moving ? "data/animations/walk.anim" : "data/animations/idle.anim";
+				LoadAnimation(c->character, animPath, metaPath);
+				c->wasMoving = moving;
+			}
+		}
+	}
 }
 
 void UpdateWorld(GameWorld* w, float dt) {
-    if (!w) return;
-    
-    for (int i = 0; i < w->count; i++) {
-        GameCharacter* gc = &w->characters[i];
-        UpdateAnimatedCharacter(gc->character, dt);
-        
-        // Verificar si la animación de acción ha terminado
-        if (gc->isPlayingAction) {
-            int currentFrame, totalFrames;
-            GetAnimationInfo(gc->character, &currentFrame, &totalFrames);
-            
-            // Verificar si hemos alcanzado el último frame de la acción
-            // O si el AnimationController indica que terminó
-            bool animationComplete = false;
-            
-            if (gc->character->animController) {
-                AnimationController* ctrl = gc->character->animController;
-                
-                // La animación se completó si:
-                // 1. Llegamos al último frame Y
-                // 2. El controller ya no está reproduciendo (para animaciones no-loop)
-                if (currentFrame >= gc->actionEndFrame) {
-                    if (!ctrl->playing || 
-                        (ctrl->currentClipIndex >= 0 && 
-                         !ctrl->clips[ctrl->currentClipIndex].loop)) {
-                        animationComplete = true;
-                    }
-                }
-            } else {
-                // Fallback: si no hay controller, usar el frame count
-                if (currentFrame >= totalFrames - 1) {
-                    animationComplete = true;
-                }
-            }
-            
-            if (animationComplete) {
-                printf("[INFO] Animación de acción completada. Frame final: %d/%d\n", 
-                       currentFrame, totalFrames);
-                
-                gc->isPlayingAction = false;
-                gc->actionStartFrame = 0;
-                gc->actionEndFrame = 0;
-                
-                // Volver a idle o walk según el estado de movimiento
-                const char* animPath = gc->wasMoving ? 
-                    "data/animations/walk.json" : "data/animations/idle.json";
-                const char* metaPath = gc->wasMoving ? 
-                    "data/animations/walk.anim" : "data/animations/idle.anim";
-                LoadAnimation(gc->character, animPath, metaPath);
-            }
-        }
-    }
+	if (!w) return;
+
+	for (int i = 0; i < w->count; i++) {
+		GameCharacter* gc = &w->characters[i];
+		UpdateAnimatedCharacter(gc->character, dt);
+
+		if (gc->isPlayingAction) {
+			int currentFrame, totalFrames;
+			GetAnimationInfo(gc->character, &currentFrame, &totalFrames);
+
+			bool animationComplete = false;
+
+			if (gc->character->animController) {
+				AnimationController* ctrl = gc->character->animController;
+
+				if (currentFrame >= gc->actionEndFrame) {
+					if (!ctrl->playing || 
+							(ctrl->currentClipIndex >= 0 && 
+							 !ctrl->clips[ctrl->currentClipIndex].loop)) {
+						animationComplete = true;
+					}
+				}
+			} else {
+				if (currentFrame >= totalFrames - 1) {
+					animationComplete = true;
+				}
+			}
+
+			if (animationComplete) {
+				printf("[INFO] Animación de acción completada. Frame final: %d/%d\n", 
+						currentFrame, totalFrames);
+
+				gc->isPlayingAction = false;
+				gc->actionStartFrame = 0;
+				gc->actionEndFrame = 0;
+
+				const char* animPath = gc->wasMoving ? 
+					"data/animations/walk.json" : "data/animations/idle.json";
+				const char* metaPath = gc->wasMoving ? 
+					"data/animations/walk.anim" : "data/animations/idle.anim";
+				LoadAnimation(gc->character, animPath, metaPath);
+			}
+		}
+	}
 }
 
 // ============================================================================
 // RENDER
 // ============================================================================
 void RenderWorld(GameWorld* w) {
-    if (!w) return;
-    BeginMode3D(w->camera);
-    DrawGrid(20, 1.0f);
+	if (!w) return;
+	BeginMode3D(w->camera);
+	DrawGrid(20, 1.0f);
 
-    int n = w->count;
-    if (n > 0) {
-        int idxs[64];
-        float dists[64];
-        if (n > 64) n = 64;
-        for (int i = 0; i < n; i++) {
-            idxs[i] = i;
-            dists[i] = Vector3Distance(w->camera.position, w->characters[i].position);
-        }
-        for (int i = 0; i < n - 1; i++) {
-            int sel = i;
-            for (int j = i + 1; j < n; j++) if (dists[j] > dists[sel]) sel = j;
-            if (sel != i) {
-                float td = dists[i]; dists[i] = dists[sel]; dists[sel] = td;
-                int ti = idxs[i]; idxs[i] = idxs[sel]; idxs[sel] = ti;
-            }
-        }
-        for (int i = 0; i < n; i++) {
-            GameCharacter* gc = &w->characters[idxs[i]];
-            DrawAnimatedCharacterTransformed(gc->character, w->camera, gc->position, gc->rotation);
-        }
-    }
+	int n = w->count;
+	if (n > 0) {
+		int idxs[64];
+		float dists[64];
+		if (n > 64) n = 64;
+		for (int i = 0; i < n; i++) {
+			idxs[i] = i;
+			dists[i] = Vector3Distance(w->camera.position, w->characters[i].position);
+		}
+		for (int i = 0; i < n - 1; i++) {
+			int sel = i;
+			for (int j = i + 1; j < n; j++) if (dists[j] > dists[sel]) sel = j;
+			if (sel != i) {
+				float td = dists[i]; dists[i] = dists[sel]; dists[sel] = td;
+				int ti = idxs[i]; idxs[i] = idxs[sel]; idxs[sel] = ti;
+			}
+		}
+		for (int i = 0; i < n; i++) {
+			GameCharacter* gc = &w->characters[idxs[i]];
+			DrawAnimatedCharacterTransformed(gc->character, w->camera, gc->position, gc->rotation);
+		}
+	}
 
-    EndMode3D();
+	EndMode3D();
 }
 
 void DrawUI(GameWorld* w) {
-    DrawText("Bones3D - Animaciones Completas", 10, 10, 20, DARKGRAY);
-    DrawFPS(10, 40);
-    
-    if (w->controlled >= 0) {
-        GameCharacter* c = &w->characters[w->controlled];
-        DrawText(TextFormat("Controlando personaje: %d", w->controlled), 10, 70, 16, DARKGRAY);
-        
-        if (c->isPlayingAction) {
-            int currentFrame, totalFrames;
-            GetAnimationInfo(c->character, &currentFrame, &totalFrames);
-            DrawText("[EJECUTANDO ACCION]", 10, 90, 16, RED);
-            DrawText(TextFormat("Frame: %d/%d", currentFrame, totalFrames), 10, 110, 14, RED);
-            
-            // Barra de progreso
-            float progress = (float)currentFrame / (float)totalFrames;
-            DrawRectangle(10, 130, 200, 10, LIGHTGRAY);
-            DrawRectangle(10, 130, (int)(200 * progress), 10, RED);
-        }
-    }
-    
-    DrawText("=== CONTROLES ===", 10, 150, 14, DARKGRAY);
-    DrawText("Q/E: Rotar camara horizontal", 10, 170, 14, DARKGRAY);
-    DrawText("R/F: Rotar camara vertical", 10, 190, 14, DARKGRAY);
-    DrawText("W/S: Zoom acercar/alejar", 10, 210, 14, DARKGRAY);
-    DrawText("A/D: Desplazar camara lateralmente", 10, 230, 14, DARKGRAY);
-    DrawText("Flechas: Mover/rotar personaje", 10, 250, 14, DARKGRAY);
-    DrawText("TAB: Cambiar personaje controlado", 10, 270, 14, DARKGRAY);
-    DrawText("", 10, 290, 14, DARKGRAY);
-    DrawText("=== ACCIONES ===", 10, 310, 14, DARKGREEN);
-    DrawText("J: Saltar (Jump) - SE COMPLETA", 10, 330, 14, DARKGREEN);
-    DrawText("K: Patada (Kick) - SE COMPLETA", 10, 350, 14, DARKGREEN);
-    DrawText("P: Punhetazo (Punch) - SE COMPLETA", 10, 370, 14, DARKGREEN);
+	DrawText("Test Bones3D", 10, 10, 20, DARKGRAY);
+	DrawFPS(10, 40);
+
+	if (w->controlled >= 0) {
+		GameCharacter* c = &w->characters[w->controlled];
+		DrawText(TextFormat("Controlando personaje: %d", w->controlled), 10, 70, 16, DARKGRAY);
+
+		if (c->isPlayingAction) {
+			int currentFrame, totalFrames;
+			GetAnimationInfo(c->character, &currentFrame, &totalFrames);
+			DrawText("[EJECUTANDO ACCION]", 10, 90, 16, RED);
+			DrawText(TextFormat("Frame: %d/%d", currentFrame, totalFrames), 10, 110, 14, RED);
+
+			float progress = (float)currentFrame / (float)totalFrames;
+			DrawRectangle(10, 130, 200, 10, LIGHTGRAY);
+			DrawRectangle(10, 130, (int)(200 * progress), 10, RED);
+		}
+	}
+
+	DrawText("=== CONTROLES ===", 10, 150, 14, DARKGRAY);
+	DrawText("Q/E: Rotar camara horizontal", 10, 170, 14, DARKGRAY);
+	DrawText("R/F: Rotar camara vertical", 10, 190, 14, DARKGRAY);
+	DrawText("W/S: Zoom acercar/alejar", 10, 210, 14, DARKGRAY);
+	DrawText("A/D: Desplazar camara lateralmente", 10, 230, 14, DARKGRAY);
+	DrawText("Flechas: Mover/rotar personaje", 10, 250, 14, DARKGRAY);
+	DrawText("TAB: Cambiar personaje controlado", 10, 270, 14, DARKGRAY);
+	DrawText("", 10, 290, 14, DARKGRAY);
+	DrawText("=== ACCIONES ===", 10, 310, 14, DARKGREEN);
+	DrawText("J: Saltar (Jump) - SE COMPLETA", 10, 330, 14, DARKGREEN);
+	DrawText("K: Patada (Kick) - SE COMPLETA", 10, 350, 14, DARKGREEN);
+	DrawText("P: Punhetazo (Punch) - SE COMPLETA", 10, 370, 14, DARKGREEN);
 }
 
 // ============================================================================
 // MAIN
 // ============================================================================
 int main(void) {
-    InitWindow(1280, 720, "Bones3D - Animaciones Completas");
-    SetTargetFPS(60);
+	InitWindow(1280, 720, "Bones3D - Animaciones Completas");
+	SetTargetFPS(60);
 
-    GameWorld* world = CreateWorld(4);
+	GameWorld* world = CreateWorld(4);
 
-    AddCharacter(world,
-        "data/textures/zeta/bone_textures.txt",
-        "data/textures/zeta/texture_sets.txt",
-        "data/animations/idle.json",
-        "data/animations/idle.anim",
-        (Vector3){0.0f, 0.0f, 0.0f});
+	AddCharacter(world,
+			"data/textures/zeta/bone_textures.txt",
+			"data/textures/zeta/texture_sets.txt",
+			"data/animations/idle.json",
+			"data/animations/idle.anim",
+			(Vector3){0.0f, 0.0f, 0.0f});
 
-    AddCharacter(world,
-        "data/textures/hil/bone_textures.txt",
-        "data/textures/hil/texture_sets.txt",
-        "data/animations/idle.json",
-        "data/animations/idle.anim",
-        (Vector3){1.0f, 0.0f, 0.0f});
+	AddCharacter(world,
+			"data/textures/hil/bone_textures.txt",
+			"data/textures/hil/texture_sets.txt",
+			"data/animations/idle.json",
+			"data/animations/idle.anim",
+			(Vector3){1.0f, 0.0f, 0.0f});
 
-    AddCharacter(world,
-        "data/textures/eld/bone_textures.txt",
-        "data/textures/eld/texture_sets.txt",
-        "data/animations/idle.json",
-        "data/animations/idle.anim",
-        (Vector3){-1.0f, 0.0f, 0.0f});
+	AddCharacter(world,
+			"data/textures/eld/bone_textures.txt",
+			"data/textures/eld/texture_sets.txt",
+			"data/animations/idle.json",
+			"data/animations/idle.anim",
+			(Vector3){-1.0f, 0.0f, 0.0f});
 
-    world->controlled = 0;
+	world->controlled = 0;
 
-    while (!WindowShouldClose()) {
-        float dt = GetFrameTime();
+	while (!WindowShouldClose()) {
+		float dt = GetFrameTime();
 
-        if (IsKeyPressed(KEY_TAB) && world->count > 0) {
-            int next = (world->controlled + 1) % world->count;
-            world->controlled = next;
-        }
+		if (IsKeyPressed(KEY_TAB) && world->count > 0) {
+			int next = (world->controlled + 1) % world->count;
+			world->controlled = next;
+		}
 
-        ProcessInput(world, dt);
-        UpdateWorld(world, dt);
+		ProcessInput(world, dt);
+		UpdateWorld(world, dt);
 
-        BeginDrawing();
-            ClearBackground(RAYWHITE);
-            RenderWorld(world);
-            DrawUI(world);
-        EndDrawing();
-    }
+		BeginDrawing();
+		ClearBackground(RAYWHITE);
+		RenderWorld(world);
+		DrawUI(world);
+		EndDrawing();
+	}
 
-    DestroyWorld(world);
-    CloseWindow();
-    return 0;
+	DestroyWorld(world);
+	CloseWindow();
+	return 0;
 }
