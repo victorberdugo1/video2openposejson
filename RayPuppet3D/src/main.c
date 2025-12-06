@@ -1,4 +1,6 @@
 #include "bones_core.h"
+// Para la versión POSIX (opendir/readdir)
+#include <dirent.h>
 
 #define BASE_WIDTH 1920
 #define BASE_HEIGHT 1080
@@ -101,16 +103,32 @@ typedef struct {
     bool showOrientation;
 } DebugOptions;
 
+#define MAX_ANIMATIONS 100
+
+typedef struct {
+    char name[64];
+    char jsonPath[256];
+    char metaPath[256];
+} AnimationInfo;
+
+typedef struct {
+    AnimationInfo animations[MAX_ANIMATIONS];
+    int animationCount;
+    int currentAnimationIndex;
+} AnimationManager;
+
 typedef struct {
     AnimatedCharacter* character;
     int camMode;
     float orbitYaw, orbitPitch, orbitRadius;
     bool showUI;
-    char currentAnimation[64];
     EditorState editor;
     DebugOptions debug;
     int screenWidth;
     int screenHeight;
+	AnimationManager animManager;
+char currentAnimation[64];
+
 } AppState;
 
 typedef struct {
@@ -126,6 +144,11 @@ typedef struct {
     int currentProfileIndex;
 } CharacterManager;
 
+
+static void InitUndoHistory(UndoHistory* history);
+
+
+
 static CharacterManager g_characterManager = {0};
 
 static void RecalculateAffectedInterpolations(AppState* app, int movedKeyframe);
@@ -139,6 +162,119 @@ static void AddMultipleFramesAtEnd(AppState* app, int numFramesToAdd, BonesAnima
 static void DrawAddFramesDialog(AppState* app);  
 bool BonesDeleteFrame(AppState* app,BonesAnimation* animation, int frameIndex);
 bool BonesDuplicateFrame(AppState* app, BonesAnimation* animation, int frameIndex);
+
+// ============================================================================
+// ANIM SYSTEM
+// ============================================================================
+// ----- Utilidad para comprobar extensión -----
+static bool HasExtension(const char* filename, const char* ext) {
+    size_t len = strlen(filename);
+    size_t extLen = strlen(ext);
+    if (len < extLen) return false;
+    return strcmp(filename + len - extLen, ext) == 0;
+}
+
+// ----- Lista animaciones usando opendir/readdir (sin d_type) -----
+static bool LoadAnimationsFromDirectory(AnimationManager* manager, const char* animationsPath) {
+    DIR* dir = opendir(animationsPath);
+    if (!dir) {
+        TraceLog(LOG_WARNING, "Cannot open animations directory: %s", animationsPath);
+        if (manager) manager->animationCount = 0;
+        return false;
+    }
+
+    manager->animationCount = 0;
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != NULL && manager->animationCount < MAX_ANIMATIONS) {
+        const char* name = entry->d_name;
+        if (!name) continue;
+
+        // Solo basamos la detección en la extensión del nombre
+        if (HasExtension(name, ".anim")) {
+            char baseName[64];
+            strncpy(baseName, name, sizeof(baseName) - 1);
+            baseName[sizeof(baseName) - 1] = '\0';
+            char* dot = strrchr(baseName, '.');
+            if (dot) *dot = '\0';
+
+            char jsonPath[512];
+            char animPath[512];
+            snprintf(jsonPath, sizeof(jsonPath), "%s%s.json", animationsPath, baseName);
+            snprintf(animPath, sizeof(animPath), "%s%s.anim", animationsPath, baseName);
+
+            FILE* testFile = fopen(jsonPath, "r");
+            if (testFile) {
+                fclose(testFile);
+                AnimationInfo* info = &manager->animations[manager->animationCount];
+                strncpy(info->name, baseName, sizeof(info->name)-1);
+                info->name[sizeof(info->name)-1] = '\0';
+                strncpy(info->jsonPath, jsonPath, sizeof(info->jsonPath)-1);
+                info->jsonPath[sizeof(info->jsonPath)-1] = '\0';
+                strncpy(info->metaPath, animPath, sizeof(info->metaPath)-1);
+                info->metaPath[sizeof(info->metaPath)-1] = '\0';
+                manager->animationCount++;
+                TraceLog(LOG_INFO, "Found animation: %s", baseName);
+            } else {
+                TraceLog(LOG_DEBUG, "Skipping anim without json: %s", name);
+            }
+        }
+    }
+    closedir(dir);
+
+    if (manager->animationCount > 0) {
+        manager->currentAnimationIndex = 0;
+        TraceLog(LOG_INFO, "Loaded %d animations from %s", manager->animationCount, animationsPath);
+        return true;
+    } else {
+        manager->currentAnimationIndex = -1;
+        return false;
+    }
+}
+
+
+
+static void LoadAnimationByIndex(AppState* app, int animIndex) {
+    if (animIndex < 0 || animIndex >= app->animManager.animationCount) return;
+
+    AnimationInfo* info = &app->animManager.animations[animIndex];
+
+    bool wasPlaying = app->editor.isPlaying;
+
+    if (LoadAnimation(app->character, info->jsonPath, info->metaPath)) {
+        strncpy(app->currentAnimation, info->name, sizeof(app->currentAnimation)-1);
+        app->currentAnimation[sizeof(app->currentAnimation)-1] = '\0';
+        app->animManager.currentAnimationIndex = animIndex;
+        InitUndoHistory(&app->editor.undoHistory);
+
+        app->editor.isPlaying = wasPlaying;
+        SetCharacterAutoPlay(app->character, wasPlaying);
+
+        if (app->character->animation.frameCount > 0) {
+            SetCharacterFrame(app->character, 0);
+        }
+
+        TraceLog(LOG_INFO, "Loaded animation %d/%d: %s",
+                 animIndex + 1, app->animManager.animationCount, info->name);
+    } else {
+        TraceLog(LOG_WARNING, "Could not load animation: %s", info->name);
+    }
+}
+
+static void LoadNextAnimation(AppState* app) {
+    if (app->animManager.animationCount == 0) return;
+    int nextIndex = (app->animManager.currentAnimationIndex + 1) % app->animManager.animationCount;
+    LoadAnimationByIndex(app, nextIndex);
+}
+
+static void LoadPreviousAnimation(AppState* app) {
+    if (app->animManager.animationCount == 0) return;
+    int prevIndex = app->animManager.currentAnimationIndex - 1;
+    if (prevIndex < 0) prevIndex = app->animManager.animationCount - 1;
+    LoadAnimationByIndex(app, prevIndex);
+}
+
+
+
 // ============================================================================
 // UNDO/REDO SYSTEM
 // ============================================================================
@@ -632,6 +768,14 @@ static bool SwitchCharacterProfile(AppState* app, int profileIndex) {
         return false;
     }
     
+	if (!LoadAnimationsFromDirectory(&app->animManager, profile->animationsPath)) {
+    TraceLog(LOG_WARNING, "No animations found in %s", profile->animationsPath);
+}
+
+// Si hay animaciones, cargar la primera
+if (app->animManager.animationCount > 0) {
+    LoadAnimationByIndex(app, 0);
+}
     // Cargar animación por defecto del nuevo perfil
     char idleAnimPath[512];
     char idleMetaPath[512];
@@ -2311,6 +2455,19 @@ static void App_HandleInput(AppState* app) {
         LoadAnimationForCurrentProfile(app, "jump");
     }
     
+	// N: Siguiente animación
+if (IsKeyPressed(KEY_N)) {
+    LoadNextAnimation(app);
+    return;
+}
+
+// B: Animación anterior
+if (IsKeyPressed(KEY_B)) {
+    LoadPreviousAnimation(app);
+    return;
+}
+
+
     if (IsKeyPressed(KEY_H)) {
         SetCharacterBillboards(app->character, 
                               !app->character->renderHeadBillboards, 
