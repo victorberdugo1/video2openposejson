@@ -945,7 +945,7 @@ bool BonesInterpolateFrames(BonesAnimation* animation, int frameA, int frameB, i
 		dest->frameNumber = newFrameIndex;
 		dest->personCount = srcA->personCount > srcB->personCount ? srcA->personCount : srcB->personCount;
 		dest->valid = true;
-
+		dest->isOriginalKeyframe = false;
 		for (int p = 0; p < dest->personCount; p++) {
 			if (p < srcA->personCount && p < srcB->personCount) {
 				InterpolatePerson(&srcA->persons[p], &srcB->persons[p], &dest->persons[p], t);
