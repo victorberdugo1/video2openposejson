@@ -351,12 +351,17 @@ int main(void) {
 
 	GameWorld* world = CreateWorld(4);
 
-	AddCharacter(world,
-			"data/textures/zeta/bone_textures.txt",
-			"data/textures/zeta/texture_sets.txt",
-			"data/animations/idle.json",
-			"data/animations/idle.anim",
-			(Vector3){0.0f, 0.0f, 0.0f});
+    int char0 = AddCharacter(world,
+            "data/textures/zeta/bone_textures.txt",
+            "data/textures/zeta/texture_sets.txt",
+            "data/animations/idle.json",
+            "data/animations/idle.anim",
+            (Vector3){0.0f, 0.5f, 0.0f});
+
+    // ¡CENTRAR EL PERSONAJE!
+    if (char0 >= 0) {
+        CenterCharacterAtOrigin(world->characters[char0].character);
+    }
 
 	AddCharacter(world,
 			"data/textures/hil/bone_textures.txt",

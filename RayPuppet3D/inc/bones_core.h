@@ -366,6 +366,7 @@ typedef struct AnimatedCharacter {
 	bool forceUpdate;
 	AnimationController* animController;
 	TextureSetCollection* textureSets;
+	Vector3 worldOffset;
 } AnimatedCharacter;
 
 // ============================================================================
@@ -499,6 +500,9 @@ bool BonesCreateMissingFrames(BonesAnimation* animation);
 bool BonesInterpolateFrames(BonesAnimation* animation, int frameA, int frameB, int framesToAdd);
 bool BonesInsertEmptyFrame(BonesAnimation* animation, int position);
 bool BonesCopyFrame(BonesAnimation* animation, int sourceFrame, int targetFrame);
+void SetCharacterWorldOffset(AnimatedCharacter* character, Vector3 offset);
+void CenterCharacterAtOrigin(AnimatedCharacter* character);
+Vector3 CalculateAnimationCenter(const BonesAnimation* animation);
 
 // ============================================================================
 // TEXTURE MANAGEMENT API
@@ -2125,6 +2129,7 @@ AnimatedCharacter* CreateAnimatedCharacter(const char* textureConfigPath, const 
 	character->renderConfig.debugSphereRadius = 0.035f;
 	character->renderConfig.enableDepthSorting = true;
 	BonesSetRenderConfig(&character->renderConfig);
+	character->worldOffset = (Vector3){0, 0, 0};
 
 	return character;
 }
@@ -2500,13 +2505,16 @@ void UpdateAnimatedCharacter(AnimatedCharacter* character, float deltaTime) {
 }
 
 void DrawAnimatedCharacter(AnimatedCharacter* character, Camera camera) {
-	if (!character || !character->animation.isLoaded) return;
-	character->renderer->camera = camera;
-	BonesRenderer_RenderFrame(character->renderer,
-			character->renderBones, character->renderBonesCount,
-			character->renderHeads, character->renderHeadsCount,
-			character->renderTorsos, character->renderTorsosCount,
-			character->autoCenter, character->autoCenterCalculated);
+    if (!character || !character->animation.isLoaded) return;
+    character->renderer->camera = camera;
+    
+    Vector3 adjustedCenter = Vector3Add(character->autoCenter, character->worldOffset);
+    
+    BonesRenderer_RenderFrame(character->renderer,
+            character->renderBones, character->renderBonesCount,
+            character->renderHeads, character->renderHeadsCount,
+            character->renderTorsos, character->renderTorsosCount,
+            adjustedCenter, character->autoCenterCalculated);
 }
 
 static Vector3 RotatePointAroundPivot(Vector3 point, Vector3 pivot, Vector3 worldPos, Matrix rotY) {
@@ -2517,161 +2525,184 @@ static Vector3 RotatePointAroundPivot(Vector3 point, Vector3 pivot, Vector3 worl
 }
 
 void DrawAnimatedCharacterTransformed(AnimatedCharacter* character, Camera camera,
-		Vector3 worldPosition, float worldRotation) {
-	if (!character || !character->animation.isLoaded) return;
+        Vector3 worldPosition, float worldRotation) {
+    if (!character || !character->animation.isLoaded) return;
 
-	Camera origCam = character->renderer->camera;
-	character->renderer->camera = camera;
-	Matrix rot = MatrixRotateY(worldRotation);
-	Vector3 pivot = character->autoCenter;
+    Camera origCam = character->renderer->camera;
+    character->renderer->camera = camera;
+    
+    // APLICAR EL OFFSET AL WORLD POSITION
+    Vector3 adjustedWorldPosition = Vector3Add(worldPosition, character->worldOffset);
+    
+    Matrix rot = MatrixRotateY(worldRotation);
+    Vector3 pivot = character->autoCenter;
 
-	int bc = character->renderBonesCount;
-	int hc = character->renderHeadsCount;
-	int tc = character->renderTorsosCount;
+    int bc = character->renderBonesCount;
+    int hc = character->renderHeadsCount;
+    int tc = character->renderTorsosCount;
 
-	BoneRenderData* bonesCopy = NULL;
-	HeadRenderData* headsCopy = NULL;
-	TorsoRenderData* torsosCopy = NULL;
+    BoneRenderData* bonesCopy = NULL;
+    HeadRenderData* headsCopy = NULL;
+    TorsoRenderData* torsosCopy = NULL;
 
-	if (bc > 0) {
-		bonesCopy = (BoneRenderData*)malloc(sizeof(BoneRenderData) * bc);
-		if (bonesCopy) memcpy(bonesCopy, character->renderBones, sizeof(BoneRenderData) * bc);
-	}
-	if (hc > 0) {
-		headsCopy = (HeadRenderData*)malloc(sizeof(HeadRenderData) * hc);
-		if (headsCopy) memcpy(headsCopy, character->renderHeads, sizeof(HeadRenderData) * hc);
-	}
-	if (tc > 0) {
-		torsosCopy = (TorsoRenderData*)malloc(sizeof(TorsoRenderData) * tc);
-		if (torsosCopy) memcpy(torsosCopy, character->renderTorsos, sizeof(TorsoRenderData) * tc);
-	}
+    if (bc > 0) {
+        bonesCopy = (BoneRenderData*)malloc(sizeof(BoneRenderData) * bc);
+        if (bonesCopy) memcpy(bonesCopy, character->renderBones, sizeof(BoneRenderData) * bc);
+    }
+    if (hc > 0) {
+        headsCopy = (HeadRenderData*)malloc(sizeof(HeadRenderData) * hc);
+        if (headsCopy) memcpy(headsCopy, character->renderHeads, sizeof(HeadRenderData) * hc);
+    }
+    if (tc > 0) {
+        torsosCopy = (TorsoRenderData*)malloc(sizeof(TorsoRenderData) * tc);
+        if (torsosCopy) memcpy(torsosCopy, character->renderTorsos, sizeof(TorsoRenderData) * tc);
+    }
 
-	AnimationFrame* transformedFrame = NULL;
-	if (tc > 0 && character->animation.isLoaded && 
-			character->currentFrame >= 0 && character->currentFrame < character->animation.frameCount) {
-		transformedFrame = (AnimationFrame*)malloc(sizeof(AnimationFrame));
-		if (transformedFrame) {
-			*transformedFrame = character->animation.frames[character->currentFrame];
-			for (int p = 0; p < transformedFrame->personCount; p++) {
-				Person* person = &transformedFrame->persons[p];
-				for (int b = 0; b < person->boneCount; b++) {
-					Bone* bone = &person->bones[b];
-					if (bone->position.valid)
-						bone->position.position = RotatePointAroundPivot(bone->position.position, pivot, worldPosition, rot);
-				}
-			}
-		}
-	}
+    AnimationFrame* transformedFrame = NULL;
+    if (tc > 0 && character->animation.isLoaded && 
+            character->currentFrame >= 0 && character->currentFrame < character->animation.frameCount) {
+        transformedFrame = (AnimationFrame*)malloc(sizeof(AnimationFrame));
+        if (transformedFrame) {
+            *transformedFrame = character->animation.frames[character->currentFrame];
+            for (int p = 0; p < transformedFrame->personCount; p++) {
+                Person* person = &transformedFrame->persons[p];
+                for (int b = 0; b < person->boneCount; b++) {
+                    Bone* bone = &person->bones[b];
+                    if (bone->position.valid)
+                        bone->position.position = RotatePointAroundPivot(
+                            bone->position.position, pivot, adjustedWorldPosition, rot);
+                }
+            }
+        }
+    }
 
-	if (bonesCopy) {
-		for (int i = 0; i < bc; i++) {
-			BoneRenderData* b = &bonesCopy[i];
-			if (!b->valid) continue;
+    if (bonesCopy) {
+        for (int i = 0; i < bc; i++) {
+            BoneRenderData* b = &bonesCopy[i];
+            if (!b->valid) continue;
 
-			b->position = RotatePointAroundPivot(b->position, pivot, worldPosition, rot);
-			if (b->orientation.valid) {
-				b->orientation.forward = Vector3Transform(b->orientation.forward, rot);
-				b->orientation.up = Vector3Transform(b->orientation.up, rot);
-				b->orientation.right = Vector3Transform(b->orientation.right, rot);
+            b->position = RotatePointAroundPivot(b->position, pivot, adjustedWorldPosition, rot);
+            if (b->orientation.valid) {
+                b->orientation.forward = Vector3Transform(b->orientation.forward, rot);
+                b->orientation.up = Vector3Transform(b->orientation.up, rot);
+                b->orientation.right = Vector3Transform(b->orientation.right, rot);
 
-				b->orientation.forward = SafeNormalize(b->orientation.forward);
-				b->orientation.up = SafeNormalize(b->orientation.up);
-				b->orientation.right = SafeNormalize(b->orientation.right);
+                b->orientation.forward = SafeNormalize(b->orientation.forward);
+                b->orientation.up = SafeNormalize(b->orientation.up);
+                b->orientation.right = SafeNormalize(b->orientation.right);
 
-				b->orientation.position = b->position;
-				b->orientation.yaw += worldRotation;
-				while (b->orientation.yaw > PI) b->orientation.yaw -= 2.0f * PI;
-				while (b->orientation.yaw < -PI) b->orientation.yaw += 2.0f * PI;
-			}
+                b->orientation.position = b->position;
+                b->orientation.yaw += worldRotation;
+                while (b->orientation.yaw > PI) b->orientation.yaw -= 2.0f * PI;
+                while (b->orientation.yaw < -PI) b->orientation.yaw += 2.0f * PI;
+            }
 
-			if (IsWristBone(b->boneName)) {
-				Vector3 personRight = { -cosf(worldRotation), 0.0f, sinf(worldRotation) };
-				Vector3 charForward = Vector3Scale(personRight, -1.0f);
-				charForward = SafeNormalize(charForward);
+            if (IsWristBone(b->boneName)) {
+                Vector3 personRight = { -cosf(worldRotation), 0.0f, sinf(worldRotation) };
+                Vector3 charForward = Vector3Scale(personRight, -1.0f);
+                charForward = SafeNormalize(charForward);
 
-				Vector3 up = (Vector3){ 0.0f, 1.0f, 0.0f };
-				Vector3 right = Vector3Normalize(Vector3CrossProduct(charForward, up));
-				up = Vector3Normalize(Vector3CrossProduct(right, charForward));
+                Vector3 up = (Vector3){ 0.0f, 1.0f, 0.0f };
+                Vector3 right = Vector3Normalize(Vector3CrossProduct(charForward, up));
+                up = Vector3Normalize(Vector3CrossProduct(right, charForward));
 
-				b->orientation.forward = charForward;
-				b->orientation.right = right;
-				b->orientation.up = up;
-				b->orientation.position = b->position;
-				b->orientation.yaw = atan2f(b->orientation.forward.x, b->orientation.forward.z) + PI;
+                b->orientation.forward = charForward;
+                b->orientation.right = right;
+                b->orientation.up = up;
+                b->orientation.position = b->position;
+                b->orientation.yaw = atan2f(b->orientation.forward.x, b->orientation.forward.z) + PI;
 
-				while (b->orientation.yaw > PI) b->orientation.yaw -= 2.0f * PI;
-				while (b->orientation.yaw < -PI) b->orientation.yaw += 2.0f * PI;
-				b->orientation.valid = true;
-			}
-		}
-	}
+                while (b->orientation.yaw > PI) b->orientation.yaw -= 2.0f * PI;
+                while (b->orientation.yaw < -PI) b->orientation.yaw += 2.0f * PI;
+                b->orientation.valid = true;
+            }
+        }
+    }
 
-	if (headsCopy) {
-		for (int i = 0; i < hc; i++) {
-			HeadRenderData* h = &headsCopy[i];
-			if (!h->valid) continue;
-			h->position = RotatePointAroundPivot(h->position, pivot, worldPosition, rot);
-			if (h->orientation.valid) {
-				h->orientation.forward = Vector3Transform(h->orientation.forward, rot);
-				h->orientation.up = Vector3Transform(h->orientation.up, rot);
-				h->orientation.right = Vector3Transform(h->orientation.right, rot);
+    if (headsCopy) {
+        for (int i = 0; i < hc; i++) {
+            HeadRenderData* h = &headsCopy[i];
+            if (!h->valid) continue;
+            h->position = RotatePointAroundPivot(h->position, pivot, adjustedWorldPosition, rot);
+            if (h->orientation.valid) {
+                h->orientation.forward = Vector3Transform(h->orientation.forward, rot);
+                h->orientation.up = Vector3Transform(h->orientation.up, rot);
+                h->orientation.right = Vector3Transform(h->orientation.right, rot);
 
-				h->orientation.forward = SafeNormalize(h->orientation.forward);
-				h->orientation.up = SafeNormalize(h->orientation.up);
-				h->orientation.right = SafeNormalize(h->orientation.right);
+                h->orientation.forward = SafeNormalize(h->orientation.forward);
+                h->orientation.up = SafeNormalize(h->orientation.up);
+                h->orientation.right = SafeNormalize(h->orientation.right);
 
-				h->orientation.position = h->position;
-				h->orientation.yaw += worldRotation;
-			}
-		}
-	}
+                h->orientation.position = h->position;
+                h->orientation.yaw += worldRotation;
+            }
+        }
+    }
 
-	if (torsosCopy) {
-		for (int i = 0; i < tc; i++) {
-			TorsoRenderData* t = &torsosCopy[i];
-			if (!t->valid) continue;
+    if (torsosCopy) {
+        for (int i = 0; i < tc; i++) {
+            TorsoRenderData* t = &torsosCopy[i];
+            if (!t->valid) continue;
 
-			if (transformedFrame && t->person) {
-				for (int p = 0; p < transformedFrame->personCount; p++) {
-					if (strcmp(transformedFrame->persons[p].personId, t->personId) == 0) {
-						t->person = &transformedFrame->persons[p];
-						break;
-					}
-				}
-			}
+            if (transformedFrame && t->person) {
+                for (int p = 0; p < transformedFrame->personCount; p++) {
+                    if (strcmp(transformedFrame->persons[p].personId, t->personId) == 0) {
+                        t->person = &transformedFrame->persons[p];
+                        break;
+                    }
+                }
+            }
 
-			if (t->orientation.valid) {
-				t->orientation.forward = Vector3Transform(t->orientation.forward, rot);
-				t->orientation.up = Vector3Transform(t->orientation.up, rot);
-				t->orientation.right = Vector3Transform(t->orientation.right, rot);
+            if (t->orientation.valid) {
+                t->orientation.forward = Vector3Transform(t->orientation.forward, rot);
+                t->orientation.up = Vector3Transform(t->orientation.up, rot);
+                t->orientation.right = Vector3Transform(t->orientation.right, rot);
 
-				t->orientation.forward = SafeNormalize(t->orientation.forward);
-				t->orientation.up = SafeNormalize(t->orientation.up);
-				t->orientation.right = SafeNormalize(t->orientation.right);
+                t->orientation.forward = SafeNormalize(t->orientation.forward);
+                t->orientation.up = SafeNormalize(t->orientation.up);
+                t->orientation.right = SafeNormalize(t->orientation.right);
 
-				t->orientation.yaw += worldRotation;
-				while (t->orientation.yaw > PI) t->orientation.yaw -= 2.0f * PI;
-				while (t->orientation.yaw < -PI) t->orientation.yaw += 2.0f * PI;
-			}
+                t->orientation.yaw += worldRotation;
+                while (t->orientation.yaw > PI) t->orientation.yaw -= 2.0f * PI;
+                while (t->orientation.yaw < -PI) t->orientation.yaw += 2.0f * PI;
+            }
 
-			t->position = RotatePointAroundPivot(t->position, pivot, worldPosition, rot);
-			if (t->orientation.valid) t->orientation.position = t->position;
-			t->disableCompensation = false;
-		}
-	}
+            t->position = RotatePointAroundPivot(t->position, pivot, adjustedWorldPosition, rot);
+            if (t->orientation.valid) t->orientation.position = t->position;
+            t->disableCompensation = false;
+        }
+    }
 
-	Vector3 transformedCenter = Vector3Add(worldPosition, pivot);
-	BonesRenderer_RenderFrame(character->renderer,
-			bonesCopy ? bonesCopy : character->renderBones, bc,
-			headsCopy ? headsCopy : character->renderHeads, hc,
-			torsosCopy ? torsosCopy : character->renderTorsos, tc,
-			transformedCenter, character->autoCenterCalculated);
+    Vector3 transformedCenter = Vector3Add(adjustedWorldPosition, pivot);
+    BonesRenderer_RenderFrame(character->renderer,
+            bonesCopy ? bonesCopy : character->renderBones, bc,
+            headsCopy ? headsCopy : character->renderHeads, hc,
+            torsosCopy ? torsosCopy : character->renderTorsos, tc,
+            transformedCenter, character->autoCenterCalculated);
 
-	if (bonesCopy) free(bonesCopy);
-	if (headsCopy) free(headsCopy);
-	if (torsosCopy) free(torsosCopy);
-	if (transformedFrame) free(transformedFrame);
-	character->renderer->camera = origCam;
+    if (bonesCopy) free(bonesCopy);
+    if (headsCopy) free(headsCopy);
+    if (torsosCopy) free(torsosCopy);
+    if (transformedFrame) free(transformedFrame);
+    character->renderer->camera = origCam;
+}
+
+
+void SetCharacterWorldOffset(AnimatedCharacter* character, Vector3 offset) {
+    if (character) {
+        character->worldOffset = offset;
+        character->forceUpdate = true;
+    }
+}
+
+void CenterCharacterAtOrigin(AnimatedCharacter* character) {
+    if (!character || !character->animation.isLoaded) return;
+    
+    Vector3 center = CalculateAnimationCenter(&character->animation);
+    
+    character->worldOffset = Vector3Scale(center, -1.0f);
+    character->forceUpdate = true;
+
 }
 
 void SetCharacterFrame(AnimatedCharacter* character, int frame) {
@@ -2954,6 +2985,44 @@ Vector3 CalculateHipPosition(const Person* person) {
 
 	hipPos.y += HIP_OFFSET_Y;
 	return hipPos;
+}
+
+Vector3 CalculateAnimationCenter(const BonesAnimation* animation) {
+    if (!animation || !animation->isLoaded || animation->frameCount == 0) 
+        return (Vector3){0, 0, 0};
+    
+    Vector3 totalCenter = {0, 0, 0};
+    int validFrames = 0;
+    
+    int sampleInterval = animation->frameCount > 10 ? animation->frameCount / 10 : 1;
+    
+    for (int f = 0; f < animation->frameCount; f += sampleInterval) {
+        const AnimationFrame* frame = &animation->frames[f];
+        if (!frame->valid) continue;
+        
+        for (int p = 0; p < frame->personCount; p++) {
+            const Person* person = &frame->persons[p];
+            if (!person->active) continue;
+            
+            Vector3 chest = CalculateChestPosition(person);
+            Vector3 hip = CalculateHipPosition(person);
+            
+            if (Vector3Length(chest) > 0.001f && Vector3Length(hip) > 0.001f) {
+                Vector3 torsoCenter = {
+                    (chest.x + hip.x) * 0.5f,
+                    (chest.y + hip.y) * 0.5f,
+                    (chest.z + hip.z) * 0.5f
+                };
+                totalCenter = Vector3Add(totalCenter, torsoCenter);
+                validFrames++;
+            }
+        }
+    }
+    
+    if (validFrames == 0) return (Vector3){0, 0, 0};
+    
+    Vector3 center = Vector3Scale(totalCenter, 1.0f / validFrames);
+    return center;
 }
 
 Vector3 GetBonePositionByName(const Person* person, const char* boneName) {
