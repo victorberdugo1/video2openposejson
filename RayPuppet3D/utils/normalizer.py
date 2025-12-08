@@ -7,11 +7,11 @@ import os
 
 def normalize_to_exact_body_size(animation_file, reference_file, output_file, verbose=False):
     """
-    Normaliza una animación para que tenga EXACTAMENTE el mismo tamaño y posición que el body de referencia
+    Normaliza una animacion para que tenga EXACTAMENTE el mismo tamano y posicion que el body de referencia
     """
     
     if verbose:
-        print("🔄 Iniciando normalización a tamaño exacto del body...")
+        print("?? Iniciando normalizacion a tamano exacto del body...")
     
     # Cargar datos
     with open(animation_file, 'r') as f:
@@ -24,18 +24,18 @@ def normalize_to_exact_body_size(animation_file, reference_file, output_file, ve
     ref_frame_name = list(reference_data.keys())[0]
     reference_body = reference_data[ref_frame_name]["person_0"]
     
-    # Obtener el primer frame de la animación
+    # Obtener el primer frame de la animacion
     first_anim_frame = list(animation_data.keys())[0]
     first_body = animation_data[first_anim_frame]["person_0"]
     
     if verbose:
-        print(f"📋 Body de referencia: {ref_frame_name}")
-        print(f"📋 Primer frame animación: {first_anim_frame}")
+        print(f"?? Body de referencia: {ref_frame_name}")
+        print(f"?? Primer frame animacion: {first_anim_frame}")
     
-    # Calcular la transformación exacta
+    # Calcular la transformacion exacta
     transform = calculate_exact_transformation(first_body, reference_body, verbose)
     
-    # Aplicar transformación a todos los frames
+    # Aplicar transformacion a todos los frames
     normalized_animation = {}
     frame_count = 0
     
@@ -50,27 +50,27 @@ def normalize_to_exact_body_size(animation_file, reference_file, output_file, ve
         frame_count += 1
         
         if verbose and frame_count % 50 == 0:
-            print(f"🔄 Procesados {frame_count} frames...")
+            print(f"?? Procesados {frame_count} frames...")
     
     # Guardar resultado
     with open(output_file, 'w') as f:
         json.dump(normalized_animation, f, indent=2)
     
     if verbose:
-        print(f"✅ Normalización completada: {frame_count} frames")
-        print(f"💾 Guardado en: {output_file}")
+        print(f"? Normalizacion completada: {frame_count} frames")
+        print(f"?? Guardado en: {output_file}")
         
-        # Verificación final
+        # Verificacion final
         verify_transformation(normalized_animation, reference_body, verbose)
     
     return normalized_animation
 
 def calculate_exact_transformation(source_body, target_body, verbose=False):
     """
-    Calcula la transformación exacta para que source_body tenga el mismo tamaño y posición que target_body
+    Calcula la transformacion exacta para que source_body tenga el mismo tamano y posicion que target_body
     """
     
-    # Puntos clave para la transformación
+    # Puntos clave para la transformacion
     key_joints = ['LShoulder', 'RShoulder', 'LHip', 'RHip', 'Nose', 'LAnkle', 'RAnkle']
     
     # Extraer puntos de origen y destino
@@ -104,7 +104,7 @@ def calculate_exact_transformation(source_body, target_body, verbose=False):
     }
     
     if verbose:
-        print("🔧 Transformación calculada:")
+        print("?? Transformacion calculada:")
         print(f"   Centro origen: [{source_center[0]:.4f}, {source_center[1]:.4f}, {source_center[2]:.4f}]")
         print(f"   Centro destino: [{target_center[0]:.4f}, {target_center[1]:.4f}, {target_center[2]:.4f}]")
         print(f"   Escalas: X={scale_x:.4f}, Y={scale_y:.4f}, Z={scale_z:.4f}")
@@ -115,7 +115,7 @@ def calculate_exact_transformation(source_body, target_body, verbose=False):
     return transform
 
 def calculate_center(points_dict):
-    """Calcula el centro geométrico de un conjunto de puntos"""
+    """Calcula el centro geometrico de un conjunto de puntos"""
     if not points_dict:
         return [0.5, 0.5, 0.0]
     
@@ -130,7 +130,7 @@ def calculate_center(points_dict):
     ]
 
 def calculate_ranges(points_dict, center):
-    """Calcula los rangos (extensión máxima) desde el centro en cada eje"""
+    """Calcula los rangos (extension maxima) desde el centro en cada eje"""
     if not points_dict:
         return {'x': 0.1, 'y': 0.1, 'z': 0.1}
     
@@ -139,14 +139,14 @@ def calculate_ranges(points_dict, center):
     max_z_dist = max(abs(point[2] - center[2]) for point in points_dict.values())
     
     return {
-        'x': max_x_dist * 2,  # diámetro completo
+        'x': max_x_dist * 2,  # diametro completo
         'y': max_y_dist * 2,
         'z': max_z_dist * 2
     }
 
 def apply_exact_transformation(body_data, transform):
     """
-    Aplica la transformación exacta a un cuerpo
+    Aplica la transformacion exacta a un cuerpo
     """
     transformed_body = {}
     
@@ -181,7 +181,7 @@ def apply_exact_transformation(body_data, transform):
 
 def verify_transformation(normalized_animation, reference_body, verbose=False):
     """
-    Verifica que la transformación fue exitosa comparando el primer frame transformado con la referencia
+    Verifica que la transformacion fue exitosa comparando el primer frame transformado con la referencia
     """
     if not verbose:
         return
@@ -198,7 +198,7 @@ def verify_transformation(normalized_animation, reference_body, verbose=False):
             ref_shoulder_width = abs(reference_body['LShoulder']['x'] - reference_body['RShoulder']['x'])
             ref_center_x = (reference_body['LShoulder']['x'] + reference_body['RShoulder']['x']) / 2
             
-            print("🔍 VERIFICACIÓN FINAL:")
+            print("?? VERIFICACION FINAL:")
             print(f"   Ancho hombros referencia: {ref_shoulder_width:.6f}")
             print(f"   Ancho hombros transformado: {transformed_shoulder_width:.6f}")
             print(f"   Diferencia: {abs(ref_shoulder_width - transformed_shoulder_width):.6f}")
@@ -207,43 +207,43 @@ def verify_transformation(normalized_animation, reference_body, verbose=False):
             print(f"   Diferencia centro: {abs(ref_center_x - transformed_center_x):.6f}")
             
             if abs(ref_shoulder_width - transformed_shoulder_width) < 0.001:
-                print("✅ Ancho de hombros: CORRECTO")
+                print("? Ancho de hombros: CORRECTO")
             else:
-                print("⚠️ Ancho de hombros: DIFIERE")
+                print("?? Ancho de hombros: DIFIERE")
                 
             if abs(ref_center_x - transformed_center_x) < 0.001:
-                print("✅ Posición X: CORRECTA")  
+                print("? Posicion X: CORRECTA")  
             else:
-                print("⚠️ Posición X: DIFIERE")
+                print("?? Posicion X: DIFIERE")
 
 # Script principal
 if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(
-        description='Normaliza animación para que tenga exactamente el tamaño del body de referencia'
+        description='Normaliza animacion para que tenga exactamente el tamano del body de referencia'
     )
     
-    parser.add_argument('-a', '--animation', required=True, help='Archivo de animación JSON')
+    parser.add_argument('-a', '--animation', required=True, help='Archivo de animacion JSON')
     parser.add_argument('-r', '--reference', required=True, help='Archivo body de referencia JSON') 
     parser.add_argument('-o', '--output', default='exact_size_normalized.json', help='Archivo de salida')
-    parser.add_argument('-v', '--verbose', action='store_true', help='Mostrar información detallada')
+    parser.add_argument('-v', '--verbose', action='store_true', help='Mostrar informacion detallada')
     
     args = parser.parse_args()
     
     if not os.path.exists(args.animation):
-        print(f"❌ Error: '{args.animation}' no existe")
+        print(f"? Error: '{args.animation}' no existe")
         sys.exit(1)
         
     if not os.path.exists(args.reference):
-        print(f"❌ Error: '{args.reference}' no existe")
+        print(f"? Error: '{args.reference}' no existe")
         sys.exit(1)
     
     try:
         normalize_to_exact_body_size(args.animation, args.reference, args.output, args.verbose)
-        print(f"🎉 Normalización exitosa: {args.output}")
+        print(f"?? Normalizacion exitosa: {args.output}")
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"? Error: {e}")
         if args.verbose:
             import traceback
             traceback.print_exc()
