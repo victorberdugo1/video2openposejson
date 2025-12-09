@@ -3799,6 +3799,11 @@ void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, Bo
 void EnrichBoneRenderDataWithOrientation(BoneRenderData* renderBone, const Person* person) {
     if (!renderBone || !person) return;
 
+    if (IsWristBone(renderBone->boneName)) {
+        renderBone->orientation.valid = false;
+        return;
+    }
+	
     BoneOrientation orientation = CalculateBoneOrientation(renderBone->boneName, person, renderBone->position);
     if (orientation.valid) {
         renderBone->orientation.position = orientation.position;
