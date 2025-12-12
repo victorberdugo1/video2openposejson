@@ -1926,7 +1926,7 @@ static void RenderBoneInternal(BonesRenderer* renderer, const BoneRenderData* bo
 
     int logicalCol = chosenIndex % usedCols;
     int logicalRow = chosenIndex / usedCols;
-    bool finalMirror = isWrist ? false : mirrored;
+    bool finalMirror = mirrored;
     Rectangle src = SrcFromLogical(currentTex, logicalCol, logicalRow, usedCols, usedRows, finalMirror, &finalMirror);
 
     char conns[3][32];
@@ -4067,16 +4067,26 @@ void CalculateLimbBoneRenderData(const BoneRenderData* boneData, const Person* p
 
 void CalculateHandBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex,
                                  float* outRotation, bool* outMirrored, const char* boneName) {
-    static const int handIndices[3][8] = {
-        {23, 22, 2, 15, 16, 17, 18, 24},
-        {9, 4, 0, 5, 6, 7, 8, 14},
-        {20, 19, 1, 10, 11, 12, 13, 21}
+    // Mapeo para mano DERECHA (original)
+    static const int rightHandIndices[3][8] = {
+        {23, 22,  2, 15, 16, 17, 18, 24},
+        { 9,  4,  0,  5,  6,  7,  8, 14},
+        {20, 19,  1, 10, 11, 12, 13, 21}
+    };
+    
+    // Mapeo para mano IZQUIERDA (ajústalo como necesites)
+    static const int leftHandIndices[3][8] = {
+		{16, 15,  2, 22, 23, 24, 18, 17},
+        { 6,  5,  0,  4,  9, 14,  8,  7}, 
+        {11, 10,  1, 19, 20, 21, 13, 12}
     };
 
     Vector3 camDir = Vector3Subtract(camera.position, bonePos);
     camDir = SafeNormalize(camDir);
 
     bool isWrist = (boneName != NULL) && IsWristBone(boneName);
+    bool isLeftHand = (boneName != NULL) && (strcmp(boneName, "LWrist") == 0);
+    
     float yawOffsetRad = 0.0f, pitchOffsetRad = 0.0f;
 
     if (boneName) {
@@ -4107,7 +4117,11 @@ void CalculateHandBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenI
         }
     }
 
-    if (!isWrist) { float tmp = camDir.x; camDir.x = camDir.z; camDir.z = tmp; }
+    if (!isWrist) { 
+        float tmp = camDir.x; 
+        camDir.x = camDir.z; 
+        camDir.z = tmp; 
+    }
 
     float yaw = atan2f(camDir.x, camDir.z);
     if (yaw < 0.0f) yaw += 2.0f * PI;
@@ -4128,29 +4142,52 @@ void CalculateHandBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenI
         if (sector < 0) sector = 0;
         if (sector > 7) sector = 7;
 
-        *outChosenIndex = handIndices[pitchRow][sector];
+        // Usar el mapeo correspondiente según la mano
+        if (isLeftHand) {
+            *outChosenIndex = leftHandIndices[pitchRow][sector];
+            *outMirrored = true;
+        } else {
+            *outChosenIndex = rightHandIndices[pitchRow][sector];
+            *outMirrored = false;
+        }
+        
         *outRotation = 0.0f;
-        *outMirrored = false;
 
         if (*outChosenIndex < 0) *outChosenIndex = 0;
         if (*outChosenIndex > 24) *outChosenIndex = *outChosenIndex % 25;
+    } else {
+        *outMirrored = false;
     }
 
     if (pitchDeg >= 52.5f) {
         *outChosenIndex = 22;
         *outRotation = sector * 45.0f + 180.0f;
-        *outMirrored = false;
-    } else if (pitchDeg <= -51.0f) *outChosenIndex = 3;
+        *outMirrored = isLeftHand;
+    } else if (pitchDeg <= -51.0f) {
+        *outChosenIndex = 3;
+        *outRotation = 0.0f;
+        *outMirrored = isLeftHand;
+    }
 }
 
 void CalculateHandBoneRenderDataWithOrientation(const BoneRenderData* boneData, 
                                                 Camera camera, int* outChosenIndex, 
                                                 float* outRotation, bool* outMirrored) {
-    static const int handIndices[3][8] = {
-        {23, 22, 2, 15, 16, 17, 18, 24},
-        {9, 4, 0, 5, 6, 7, 8, 14},
-        {20, 19, 1, 10, 11, 12, 13, 21}
+    // Mapeo para mano DERECHA (original)
+    static const int rightHandIndices[3][8] = {
+        {23, 22,  2, 15, 16, 17, 18, 24},
+        { 9,  4,  0,  5,  6,  7,  8, 14},
+        {20, 19,  1, 10, 11, 12, 13, 21}
     };
+    
+    // Mapeo para mano IZQUIERDA (ajústalo como necesites)
+    static const int leftHandIndices[3][8] = {
+		{16, 15,  2, 22, 23, 24, 18, 17},
+        { 6,  5,  0,  4,  9, 14,  8,  7}, 
+        {11, 10,  1, 19, 20, 21, 13, 12}
+    };
+
+    bool isLeftHand = (strcmp(boneData->boneName, "LWrist") == 0);
 
     Vector3 camDir = Vector3Subtract(boneData->position, camera.position);
     camDir = SafeNormalize(camDir);
@@ -4177,20 +4214,27 @@ void CalculateHandBoneRenderDataWithOrientation(const BoneRenderData* boneData,
     if (localPitchDeg >= 52.5f) {
         *outChosenIndex = 22;
         *outRotation = sector * 45.0f + 180.0f;
-        *outMirrored = false;
+        *outMirrored = isLeftHand;
     } else if (localPitchDeg <= -51.0f) {
         *outChosenIndex = 3;
         *outRotation = 0.0f;
-        *outMirrored = false;
+        *outMirrored = isLeftHand;
     } else {
         int pitchRow;
         if (localPitchDeg >= 22.5f) pitchRow = 2;
         else if (localPitchDeg >= -22.5f) pitchRow = 1;
         else pitchRow = 0;
 
-        *outChosenIndex = handIndices[pitchRow][sector];
+        // Usar el mapeo correspondiente según la mano
+        if (isLeftHand) {
+            *outChosenIndex = leftHandIndices[pitchRow][sector];
+            *outMirrored = true;
+        } else {
+            *outChosenIndex = rightHandIndices[pitchRow][sector];
+            *outMirrored = false;
+        }
+        
         *outRotation = 0.0f;
-        *outMirrored = false;
     }
 }
 

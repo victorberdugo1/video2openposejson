@@ -16,8 +16,8 @@ RShoulder data/textures/eld/Arm.png 1 0.13
 Chest data/textures/eld/Chest.png 1 0.22
 LElbow data/textures/eld/Forearm.png 1 0.13
 RElbow data/textures/eld/Forearm.png 1 0.13
-LWrist data/textures/eld/HandR.png 1 0.07
-RWrist data/textures/eld/HandL.png 1 0.07
+LWrist data/textures/eld/Hand.png 1 0.07
+RWrist data/textures/eld/Hand.png 1 0.07
 Hip data/textures/eld/Hip.png 1 0.15
 LHip data/textures/eld/Leg.png 1 0.15
 RHip data/textures/eld/Leg.png 1 0.15

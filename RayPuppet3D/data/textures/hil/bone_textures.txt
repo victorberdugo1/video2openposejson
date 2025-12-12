@@ -16,8 +16,8 @@ RShoulder data/textures/hil/Arm.png 1 0.13
 Chest data/textures/hil/Chest.png 1 0.19
 LElbow data/textures/hil/Forearm.png 1 0.13
 RElbow data/textures/hil/Forearm.png 1 0.13
-LWrist data/textures/hil/HandR.png 1 0.07
-RWrist data/textures/hil/HandL.png 1 0.07
+LWrist data/textures/hil/Hand.png 1 0.07
+RWrist data/textures/hil/Hand.png 1 0.07
 Hip data/textures/hil/Hip.png 1 0.17
 LHip data/textures/hil/Leg.png 1 0.15
 RHip data/textures/hil/Leg.png 1 0.15
