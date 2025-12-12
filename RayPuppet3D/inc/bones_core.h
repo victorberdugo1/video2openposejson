@@ -4067,14 +4067,12 @@ void CalculateLimbBoneRenderData(const BoneRenderData* boneData, const Person* p
 
 void CalculateHandBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex,
                                  float* outRotation, bool* outMirrored, const char* boneName) {
-    // Mapeo para mano DERECHA (original)
     static const int rightHandIndices[3][8] = {
         {23, 22,  2, 15, 16, 17, 18, 24},
         { 9,  4,  0,  5,  6,  7,  8, 14},
         {20, 19,  1, 10, 11, 12, 13, 21}
     };
     
-    // Mapeo para mano IZQUIERDA (ajústalo como necesites)
     static const int leftHandIndices[3][8] = {
 		{16, 15,  2, 22, 23, 24, 18, 17},
         { 6,  5,  0,  4,  9, 14,  8,  7}, 
@@ -4142,7 +4140,6 @@ void CalculateHandBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenI
         if (sector < 0) sector = 0;
         if (sector > 7) sector = 7;
 
-        // Usar el mapeo correspondiente según la mano
         if (isLeftHand) {
             *outChosenIndex = leftHandIndices[pitchRow][sector];
             *outMirrored = true;
@@ -4173,14 +4170,12 @@ void CalculateHandBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenI
 void CalculateHandBoneRenderDataWithOrientation(const BoneRenderData* boneData, 
                                                 Camera camera, int* outChosenIndex, 
                                                 float* outRotation, bool* outMirrored) {
-    // Mapeo para mano DERECHA (original)
     static const int rightHandIndices[3][8] = {
         {23, 22,  2, 15, 16, 17, 18, 24},
         { 9,  4,  0,  5,  6,  7,  8, 14},
         {20, 19,  1, 10, 11, 12, 13, 21}
     };
     
-    // Mapeo para mano IZQUIERDA (ajústalo como necesites)
     static const int leftHandIndices[3][8] = {
 		{16, 15,  2, 22, 23, 24, 18, 17},
         { 6,  5,  0,  4,  9, 14,  8,  7}, 
@@ -4225,7 +4220,6 @@ void CalculateHandBoneRenderDataWithOrientation(const BoneRenderData* boneData,
         else if (localPitchDeg >= -22.5f) pitchRow = 1;
         else pitchRow = 0;
 
-        // Usar el mapeo correspondiente según la mano
         if (isLeftHand) {
             *outChosenIndex = leftHandIndices[pitchRow][sector];
             *outMirrored = true;
