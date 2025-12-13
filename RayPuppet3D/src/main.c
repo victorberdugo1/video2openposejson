@@ -2225,7 +2225,7 @@ static void App_DrawUI(AppState* app) {
 		DrawText(profileText, 10, 35, 14, ORANGE);
 	}
 
-	DrawText("Ctrl+1/2/3/4: Switch Character | 3-6: Load Anims | H/T: Billboards", 10, 52, 14, DARKGRAY);
+	DrawText("1/2/3/4: Switch Character | 5-8: Load Anims | H/T: Billboards", 10, 52, 14, DARKGRAY);
 	DrawText("LEFT CLICK: Select | RIGHT CLICK: Move | CTRL+LEFT (timeline): Drag keyframe", 10, 69, 14, DARKGRAY);
 
 	char frameText[128];
@@ -2299,24 +2299,25 @@ static void App_HandleInput(AppState* app) {
 			app->editor.showExportDialog = true;
 			return;
 		}
-		if (IsKeyPressed(KEY_ONE) && g_characterManager.profileCount > 0) {
-			SwitchCharacterProfile(app, 0);
-			return;
-		}
-		if (IsKeyPressed(KEY_TWO) && g_characterManager.profileCount > 1) {
-			SwitchCharacterProfile(app, 1);
-			return;
-		}
-		if (IsKeyPressed(KEY_THREE) && g_characterManager.profileCount > 2) {
-			SwitchCharacterProfile(app, 2);
-			return;
-		}
-		if (IsKeyPressed(KEY_FOUR) && g_characterManager.profileCount > 3) {
-			SwitchCharacterProfile(app, 3);
-			return;
-		}
-		return;    }
+		return;    
+	}
 
+	if (IsKeyPressed(KEY_ONE) && g_characterManager.profileCount > 0) {
+		SwitchCharacterProfile(app, 0);
+		return;
+	}
+	if (IsKeyPressed(KEY_TWO) && g_characterManager.profileCount > 1) {
+		SwitchCharacterProfile(app, 1);
+		return;
+	}
+	if (IsKeyPressed(KEY_THREE) && g_characterManager.profileCount > 2) {
+		SwitchCharacterProfile(app, 2);
+		return;
+	}
+	if (IsKeyPressed(KEY_FOUR) && g_characterManager.profileCount > 3) {
+		SwitchCharacterProfile(app, 3);
+		return;
+	}
 
 	if (IsKeyPressed(KEY_SPACE)) {
 		app->editor.isPlaying = !app->editor.isPlaying;
@@ -2371,25 +2372,48 @@ static void App_HandleInput(AppState* app) {
 		}
 	}
 
-	if (IsKeyPressed(KEY_ONE)) {
-		app->camMode = 1;
-		EnableCursor();
-	}
-	if (IsKeyPressed(KEY_TWO)) {
-		app->camMode = 2;
-		DisableCursor();
+	if (IsKeyPressed(KEY_C)) {
+		Vector3 cameraTarget = app->character->autoCenterCalculated ? 
+			app->character->autoCenter : (Vector3){0, 0.6f, 0};
+
+		if (app->camMode == 1) {
+			// Switching to FPS mode - position camera to the right-front of character
+			app->character->renderer->camera.position = (Vector3){
+				cameraTarget.x + 1.5f,  // Move to the right
+					cameraTarget.y + 0.1f,
+					cameraTarget.z + 1.5f   // And a bit forward
+			};
+
+			// Calculate direction to look at character
+			Vector3 direction = Vector3Subtract(cameraTarget, app->character->renderer->camera.position);
+			direction = Vector3Normalize(direction);
+
+			// Set yaw and pitch based on direction
+			app->orbitYaw = atan2f(direction.x, direction.z);
+			app->orbitPitch = asinf(direction.y);
+
+			app->character->renderer->camera.target = cameraTarget;
+			app->camMode = 2;
+			DisableCursor();
+		} else {
+			app->camMode = 1;
+			app->orbitRadius = 2.5f;
+			app->orbitYaw = 0.0f;
+			app->orbitPitch = 0.0f;
+			EnableCursor();
+		}
 	}
 
-	if (IsKeyPressed(KEY_THREE)) {
+	if (IsKeyPressed(KEY_FIVE)) {
 		LoadAnimationForCurrentProfile(app, "idle");
 	}
-	if (IsKeyPressed(KEY_FOUR)) {
+	if (IsKeyPressed(KEY_SIX)) {
 		LoadAnimationForCurrentProfile(app, "talk");
 	}
-	if (IsKeyPressed(KEY_FIVE)) {
+	if (IsKeyPressed(KEY_SEVEN)) {
 		LoadAnimationForCurrentProfile(app, "walk");
 	}
-	if (IsKeyPressed(KEY_SIX)) {
+	if (IsKeyPressed(KEY_EIGHT)) {
 		LoadAnimationForCurrentProfile(app, "jump");
 	}
 
@@ -2552,7 +2576,7 @@ static bool App_Init(AppState* app) {
 	if (!app) return false;
 	memset(app, 0, sizeof(*app));
 
-	InitWindow(BASE_WIDTH, BASE_HEIGHT, "Bones3D - Animation Editor with Multiple Characters");
+	InitWindow(BASE_WIDTH, BASE_HEIGHT, "Bones3D - Animation Editor");
 	SetWindowState(FLAG_WINDOW_RESIZABLE);
 #if defined(__linux__)
 	for (int i = 0; i < 5; i++) PollInputEvents();
@@ -2575,7 +2599,7 @@ static bool App_Init(AppState* app) {
 	app->editor.framesToAdd = 10;
 	app->camMode = 1;
 	app->orbitRadius = 2.5f;
-	app->orbitPitch = -0.2f;
+	app->orbitPitch = 0.0f;
 	app->showUI = true;
 	app->editor.showTimeline = true;
 	app->editor.isPlaying = true; 
@@ -2629,6 +2653,7 @@ int main(void) {
 		app.screenHeight = GetScreenHeight();
 		App_HandleInput(&app);
 		App_UpdateCamera(&app, dt);
+		DrawGrid(10, 1.0f);
 		UpdateAnimatedCharacter(app.character, dt);
 		App_Draw(&app);
 	}
