@@ -18,7 +18,7 @@ LElbow data/textures/zeta/forearm.png 1 0.13
 RElbow data/textures/zeta/forearm.png 1 0.13
 LWrist data/textures/zeta/hand.png 1 0.07
 RWrist data/textures/zeta/hand.png 1 0.07
-Hip data/textures/zeta/hip.png 1 0.15
+Hip data/textures/zeta/hip.png 1 0.2
 LHip data/textures/zeta/leg.png 1 0.15
 RHip data/textures/zeta/leg.png 1 0.15
 LKnee data/textures/zeta/shin.png 1 0.13

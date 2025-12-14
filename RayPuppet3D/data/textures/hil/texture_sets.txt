@@ -4,12 +4,11 @@ Head idle data/textures/hil/Head.png
 Head blink data/textures/hil/Head_Blink.png
 Head talk_open data/textures/hil/Head_Talk1.png
 Head talk_closed data/textures/hil/Head_Talk2.png
-Chest idle data/textures/hil/Chest.png
-Chest blink data/textures/hil/Chest_Blink.png
 Head happy data/textures/hil/Head_Happy.png
 Head sad data/textures/hil/Head_Sad.png
 Head angry data/textures/hil/Head_Angry.png
 
 # Puedes añadir variantes de otras partes
-
+Chest idle data/textures/hil/Chest.png
+Chest blink data/textures/hil/Chest_Blink.png
 # LWrist fist hil/HandR_Fist.png
