@@ -95,8 +95,4 @@ DEACTIVATE THE ENVIRONMENT
 ```
 deactivate
 ```
-NOTES
------
-- Make sure Python is up-to-date.
-- On Linux/macOS you might need to install ffmpeg via your system:
-    sudo apt install ffmpeg
+
