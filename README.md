@@ -3,12 +3,20 @@ PROJECT video2openpose json
 
 
 <p align="center">
+<div style="display: flex; justify-content: center; gap: 20px;">
   <video src="https://github.com/user-attachments/assets/20879ed8-2fce-4060-957a-5d7e2de1ff65"
          width="480"
          autoplay
          loop
          muted
          playsinline></video>
+  <video src="https://github.com/user-attachments/assets/c151cf15-85b6-429e-bd41-7a18e9b8ba23"
+         width="480"
+         autoplay
+         loop
+         muted
+         playsinline></video>
+</div>
 </p>
 
 This project uses Python to process videos and extract keypoints.
