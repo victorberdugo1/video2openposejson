@@ -1,4 +1,4 @@
-PROJECT video2openpose json
+PROJECT video2openposejson + RayPuppet3D
 ===========
 
 
