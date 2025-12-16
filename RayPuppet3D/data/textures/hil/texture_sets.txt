@@ -10,5 +10,5 @@ Head angry data/textures/hil/Head_Angry.png
 
 # Puedes añadir variantes de otras partes
 Chest idle data/textures/hil/Chest.png
-Chest blink data/textures/hil/Chest_Blink.png
+# Chest blink data/textures/hil/Chest_Blink.png
 # LWrist fist hil/HandR_Fist.png

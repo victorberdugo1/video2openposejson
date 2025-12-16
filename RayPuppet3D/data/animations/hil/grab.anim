@@ -9,7 +9,5 @@
     {"time": 1.2, "type": "texture", "bone": "Head", "variant": "blink"},
     {"time": 1.6, "type": "texture", "bone": "Head", "variant": "idle"},
     {"time": 0.2, "type": "texture", "bone": "Chest", "variant": "idle"},
-    {"time": 1.2, "type": "texture", "bone": "Chest", "variant": "blink"}
-    {"time": 1.3, "type": "texture", "bone": "Chest", "variant": "idle"}
   ]
 }

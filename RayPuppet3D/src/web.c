@@ -1,4 +1,5 @@
 #include "bones_core.h"
+#include <emscripten/emscripten.h>
 
 typedef struct {
 	Vector3 centerPosition;
@@ -345,6 +346,12 @@ void ProcessCharacterInput(GameWorld* w, float dt) {
 
 void ProcessInput(GameWorld* w, float dt) {
 	if (!w) return;
+	
+	if (IsKeyPressed(KEY_T)) {
+		w->controlled = (w->controlled + 1) % w->count;
+		if (w->controlled < 0) w->controlled = 0;
+	}
+	
 	ProcessCameraInput(w, dt);
 	ProcessActionInput(w);
 	ProcessCharacterInput(w, dt);
@@ -439,7 +446,7 @@ void DrawUI(GameWorld* w) {
 	DrawText("W/S: Zoom in/out", 10, 160, 14, DARKGRAY);
 	DrawText("A/D: Move camera laterally", 10, 180, 14, DARKGRAY);
 	DrawText("Arrows: Move/rotate character", 10, 200, 14, DARKGRAY);
-	DrawText("TAB: Switch controlled character", 10, 220, 14, DARKGRAY);
+	DrawText("T: Switch controlled character", 10, 220, 14, DARKGRAY);
 	DrawText("F11: Toggle fullscreen", 10, 240, 14, DARKGRAY);
 
 	DrawText("=== ACTIONS ===", 10, 270, 14, DARKGREEN);
@@ -463,64 +470,75 @@ void DrawUI(GameWorld* w) {
 	}
 }
 
-int main(void) {
-	// Inicializar ventana con flags para redimensionable
-	SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
-	InitWindow(1280, 720, "Bones3D - Showcase");
-	
-	// Maximizar la ventana al inicio
-	MaximizeWindow();
-	
-	SetTargetFPS(60);
+static GameWorld world;
+static bool resourcesLoaded = false;
 
-	GameWorld* world = CreateWorld(4);
-
-	AddCharacter(world,
+static void UpdateDrawFrame(void)
+{
+	if (!resourcesLoaded) {
+		printf("[INFO] Loading resources...\n");
+		
+		AddCharacter(&world,
 			"data/textures/zeta/bone_textures.txt",
 			"data/textures/zeta/texture_sets.txt",
 			"data/animations/idle.json",
 			"data/animations/idle.anim",
 			(Vector3){0.0f, 0.0f, 0.0f});
 
-	AddCharacter(world,
-			"data/textures/hil/bone_textures.txt",
-			"data/textures/hil/texture_sets.txt",
-			"data/animations/hil/idle.json",
-			"data/animations/hil/idle.anim",
+		AddCharacter(&world,
+			"data/textures/zeta/bone_textures.txt",
+			"data/textures/zeta/texture_sets.txt",
+			"data/animations/idle.json",
+			"data/animations/idle.anim",
 			(Vector3){1.0f, 0.0f, 0.0f});
 
-	AddCharacter(world,
-			"data/textures/eld/bone_textures.txt",
-			"data/textures/eld/texture_sets.txt",
+		AddCharacter(&world,
+			"data/textures/zeta/bone_textures.txt",
+			"data/textures/zeta/texture_sets.txt",
 			"data/animations/idle.json",
 			"data/animations/idle.anim",
 			(Vector3){-1.0f, 0.0f, 0.0f});
-
-	world->controlled = 0;
-
-	while (!WindowShouldClose()) {
-		float dt = GetFrameTime();
-
-		// Toggle fullscreen con F11
-		if (IsKeyPressed(KEY_F11)) {
-			ToggleFullscreen();
-		}
-
-		if (IsKeyPressed(KEY_TAB) && world->count > 0) {
-			world->controlled = (world->controlled + 1) % world->count;
-		}
-
-		ProcessInput(world, dt);
-		UpdateWorld(world, dt);
-
-		BeginDrawing();
-		ClearBackground(RAYWHITE);
-		RenderWorld(world);
-		DrawUI(world);
-		EndDrawing();
+		
+		resourcesLoaded = true;
+		printf("[INFO] Resources loaded successfully!\n");
+		return;
 	}
 
-	DestroyWorld(world);
-	CloseWindow();
+	float dt = GetFrameTime();
+
+	ProcessInput(&world, dt);
+	UpdateWorld(&world, dt);
+
+	BeginDrawing();
+	ClearBackground(RAYWHITE);
+	
+	if (resourcesLoaded) {
+		RenderWorld(&world);
+		DrawUI(&world);
+	} else {
+		DrawText("Loading...", 400, 350, 40, DARKGRAY);
+	}
+	
+	EndDrawing();
+}
+
+int main(void)
+{
+	InitWindow(1280, 720, "Bones3D - Web");
+	SetTargetFPS(60);
+
+	GameWorld* worldPtr = CreateWorld(4);
+	if (!worldPtr) {
+		printf("[ERROR] Failed to create world\n");
+		return -1;
+	}
+	
+	world = *worldPtr;
+	free(worldPtr);
+	
+	world.controlled = 0;
+	resourcesLoaded = false;
+
+	emscripten_set_main_loop(UpdateDrawFrame, 0, 1);
 	return 0;
 }
