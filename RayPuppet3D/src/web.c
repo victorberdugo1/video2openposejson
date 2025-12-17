@@ -1,3 +1,7 @@
+// .\emsdk_env.ps1
+// python -m http.server
+// http://localhost:8000
+
 #include "bones_core.h"
 #include <emscripten/emscripten.h>
 
@@ -488,15 +492,15 @@ static void UpdateDrawFrame(void)
 		AddCharacter(&world,
 			"data/textures/zeta/bone_textures.txt",
 			"data/textures/zeta/texture_sets.txt",
-			"data/animations/idle.json",
-			"data/animations/idle.anim",
+			"data/animations/kick.json",
+			"data/animations/kick.anim",
 			(Vector3){1.0f, 0.0f, 0.0f});
 
 		AddCharacter(&world,
 			"data/textures/zeta/bone_textures.txt",
 			"data/textures/zeta/texture_sets.txt",
-			"data/animations/idle.json",
-			"data/animations/idle.anim",
+			"data/animations/punch.json",
+			"data/animations/punch.anim",
 			(Vector3){-1.0f, 0.0f, 0.0f});
 		
 		resourcesLoaded = true;
