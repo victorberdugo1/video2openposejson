@@ -1456,11 +1456,28 @@ static void MoveBoneWithMouse(AppState* app) {
 	Vector3 newPosition;
 	if (RayPlaneIntersection(mouseRay, app->editor.selectedBonePosition, planeNormal, &newPosition)) {
 		int currentFrameNumber = GetCurrentFrameNumber(app);
-		MoveBoneInFrame(app, currentFrameNumber, app->editor.selectedBoneName, newPosition);
-		app->editor.selectedBonePosition = newPosition;
-		if (IsCurrentFrameKeyframe(app)) {
-			RecalculateAffectedInterpolations(app, currentFrameNumber);
+		bool hasMultiSelection = (app->editor.selectionStart != -1 && 
+		                          app->editor.selectionEnd != -1 && 
+		                          app->editor.selectionStart != app->editor.selectionEnd);
+		
+		if (hasMultiSelection) {
+			for (int frameNum = app->editor.selectionStart; frameNum <= app->editor.selectionEnd; frameNum++) {
+				if (FrameExists(app, frameNum)) {
+					MoveBoneInFrame(app, frameNum, app->editor.selectedBoneName, newPosition);
+					int frameIndex = FindFrameIndexByNumber(app, frameNum);
+					if (frameIndex != -1 && app->character->animation.frames[frameIndex].isOriginalKeyframe) {
+						RecalculateAffectedInterpolations(app, frameNum);
+					}
+				}
+			}
+		} else {
+			MoveBoneInFrame(app, currentFrameNumber, app->editor.selectedBoneName, newPosition);
+			if (IsCurrentFrameKeyframe(app)) {
+				RecalculateAffectedInterpolations(app, currentFrameNumber);
+			}
 		}
+		
+		app->editor.selectedBonePosition = newPosition;
 	}
 }
 
@@ -1658,6 +1675,11 @@ static void DrawBoneSelectionFeedback(AppState* app) {
 	if (currentFrame < 0 || currentFrame >= app->character->animation.frameCount) return;
 	const AnimationFrame* frame = &app->character->animation.frames[currentFrame];
 	Camera camera = app->character->renderer->camera;
+	
+	bool hasMultiSelection = (app->editor.selectionStart != -1 && 
+	                          app->editor.selectionEnd != -1 && 
+	                          app->editor.selectionStart != app->editor.selectionEnd);
+	
 	for (int p = 0; p < frame->personCount; p++) {
 		const Person* person = &frame->persons[p];
 		if (!person->active) continue;
@@ -1672,8 +1694,16 @@ static void DrawBoneSelectionFeedback(AppState* app) {
 					highlightColor = PURPLE;
 					modeText = "[DRAGGING KEYFRAME]";
 				} else if (app->editor.isDraggingBone) {
-					highlightColor = RED;
-					modeText = "[DRAGGING BONE]";
+					if (hasMultiSelection) {
+						highlightColor = ORANGE;
+						int frameCount = app->editor.selectionEnd - app->editor.selectionStart + 1;
+						static char multiText[64];
+						snprintf(multiText, sizeof(multiText), "[MOVING %d FRAMES]", frameCount);
+						modeText = multiText;
+					} else {
+						highlightColor = RED;
+						modeText = "[DRAGGING BONE]";
+					}
 				} else if (IsCurrentFrameKeyframe(app)) {
 					highlightColor = GREEN;
 					modeText = "[KEYFRAME]";
