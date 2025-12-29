@@ -23,5 +23,12 @@ LHip data/textures/hil/Leg.png 1 0.15
 RHip data/textures/hil/Leg.png 1 0.15
 LKnee data/textures/hil/Shin.png 1 0.13
 RKnee data/textures/hil/Shin.png 1 0.13
-LAnkle data/textures/hil/Foot.png 1 0.13
-RAnkle data/textures/hil/Foot.png 1 0.13
+LAnkle data/textures/hil/Foot.png 1 0.13 
+RAnkle data/textures/hil/Foot.png 1 0.13 
+
+# ORNAMENTOS - Nueva
+@HairBack Head 0.0,0.05,-0.08 data/textures/hil/HairBack.png 1 0.20 - soft
+@HairTip HairBack 0.0,-0.15,0.0 data/textures/hil/HairTip.png 1 0.18 @HairBack soft 
+# @TailBase Hip 0.0,-0.05,-0.1 data/textures/hil/Tail.png 1 0.15 - medium
+# @TailMid TailBase 0.0,-0.12,0.0 data/textures/hil/Tail.png 1 0.14 @TailBase soft
+# @TailTip TailMid 0.0,-0.12,0.0 data/textures/hil/TailTip.png 1 0.12 @TailMid verysoft

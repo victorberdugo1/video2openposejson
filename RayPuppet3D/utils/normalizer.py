@@ -1,5 +1,5 @@
 # Básico (con valores óptimos por defecto)
-# python normalizer.py -a animation.json -r body.json -o suavizada.json -v
+# python normalizer.py -a output_openpose.json -r body.json -o suavizada.json -v
 
 # Ajustar suavidad (más suave)
 #python normalizer.py -a animation.json -r body.json -o suavizada.json --process-noise 0.001 --measurement-noise 0.1 -v
