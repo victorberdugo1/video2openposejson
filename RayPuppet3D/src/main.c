@@ -1457,9 +1457,9 @@ static void MoveBoneWithMouse(AppState* app) {
 	if (RayPlaneIntersection(mouseRay, app->editor.selectedBonePosition, planeNormal, &newPosition)) {
 		int currentFrameNumber = GetCurrentFrameNumber(app);
 		bool hasMultiSelection = (app->editor.selectionStart != -1 && 
-		                          app->editor.selectionEnd != -1 && 
-		                          app->editor.selectionStart != app->editor.selectionEnd);
-		
+				app->editor.selectionEnd != -1 && 
+				app->editor.selectionStart != app->editor.selectionEnd);
+
 		if (hasMultiSelection) {
 			for (int frameNum = app->editor.selectionStart; frameNum <= app->editor.selectionEnd; frameNum++) {
 				if (FrameExists(app, frameNum)) {
@@ -1476,7 +1476,7 @@ static void MoveBoneWithMouse(AppState* app) {
 				RecalculateAffectedInterpolations(app, currentFrameNumber);
 			}
 		}
-		
+
 		app->editor.selectedBonePosition = newPosition;
 	}
 }
@@ -1675,11 +1675,11 @@ static void DrawBoneSelectionFeedback(AppState* app) {
 	if (currentFrame < 0 || currentFrame >= app->character->animation.frameCount) return;
 	const AnimationFrame* frame = &app->character->animation.frames[currentFrame];
 	Camera camera = app->character->renderer->camera;
-	
+
 	bool hasMultiSelection = (app->editor.selectionStart != -1 && 
-	                          app->editor.selectionEnd != -1 && 
-	                          app->editor.selectionStart != app->editor.selectionEnd);
-	
+			app->editor.selectionEnd != -1 && 
+			app->editor.selectionStart != app->editor.selectionEnd);
+
 	for (int p = 0; p < frame->personCount; p++) {
 		const Person* person = &frame->persons[p];
 		if (!person->active) continue;

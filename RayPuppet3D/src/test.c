@@ -467,10 +467,10 @@ int main(void) {
 	// Inicializar ventana con flags para redimensionable
 	SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
 	InitWindow(1280, 720, "Bones3D - Showcase");
-	
+
 	// Maximizar la ventana al inicio
 	MaximizeWindow();
-	
+
 	SetTargetFPS(60);
 
 	GameWorld* world = CreateWorld(4);
