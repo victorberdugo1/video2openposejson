@@ -16,19 +16,18 @@ fbx_path = argv[0]
 output_path = argv[1]
 
 # --------------------------------------------------
-# AJUSTES (mantén/ajusta según necesites)
+# AJUSTES
 # --------------------------------------------------
 scale_x_factor = 0.18
 scale_y_factor = 0.7
 scale_z_factor = 0.08
 
-# Offsets faciales (SE APLICAN AL FINAL en espacio OpenPose puro)
-facial_y_offset = -0.025  # desplazamiento "- arriba/ + abajo"
-facial_z_offset = 0.015   # desplazamiento "+ adelante/ - atrás"
+# Offsets finales (aplicados en espacio OpenPose)
+facial_y_offset = 0.0
+facial_z_offset = 0.01
 
-# Offsets hombros (SE APLICAN AL FINAL en espacio OpenPose puro)
-shoulder_x_offset = 0.01   # ancho (X)
-shoulder_z_offset = 0.0    # profundidad (Z) opcional
+shoulder_x_offset = 0.01
+shoulder_z_offset = 0.0
 
 # --------------------------------------------------
 # LIMPIAR ESCENA
@@ -60,7 +59,7 @@ if not armature:
 scene = bpy.context.scene
 
 # --------------------------------------------------
-# MAPEO MIXAMO → OPENPOSE (INVERTIDO - NO TOCAR)
+# MAPEO MIXAMO → OPENPOSE (SIN HEAD - solo Neck y faciales)
 # --------------------------------------------------
 bone_map = {
     "mixamorig:Neck": "Neck",
@@ -76,11 +75,10 @@ bone_map = {
     "mixamorig:RightLeg": "LKnee",
     "mixamorig:LeftFoot": "RAnkle",
     "mixamorig:RightFoot": "LAnkle",
-    "mixamorig:Head": "Head",
 }
 
 # --------------------------------------------------
-# MATRIZ DE CONVERSIÓN (Mixamo -> OpenPose)
+# MATRIZ DE CONVERSIÓN
 # --------------------------------------------------
 rot = Matrix.Rotation(math.radians(180), 4, 'Y') @ Matrix.Rotation(math.radians(90), 4, 'X')
 rot3 = rot.to_3x3()
@@ -106,7 +104,6 @@ def bone_point_world(bone, factor):
 
 def factor_for(name):
     return {
-        "Head": 0.3,
         "Neck": 0.0,
         "LShoulder": 0.6,
         "RShoulder": 0.6,
@@ -124,28 +121,47 @@ def factor_for(name):
 
 
 def transform_world_to_openpose(p_world):
-    """Centrado, rotación de ejes y escalado -> Vector en espacio OpenPose normalizado."""
+    """Transforma de mundo a OpenPose normalizado."""
     v = rot3 @ (p_world - center)
     return Vector((0.5 + v.x * scale_x, 0.5 + v.y * scale_y, 0.5 + v.z * scale_z))
 
 
-def facial_points_world(head_pos_world, head_rot3_world):
-    """Genera puntos faciales en ESPACIO MUNDO (sin offsets)."""
-    fw = head_rot3_world @ Vector((0, 0, 1))
-    up = head_rot3_world @ Vector((0, 1, 0))
-    rt = head_rot3_world @ Vector((1, 0, 0))
-    s = 0.1
-
-    return {
-        "Nose": head_pos_world + fw * s,
-        "LEye": head_pos_world + fw * 0.8 * s + up * 0.4 * s - rt * 0.6 * s,
-        "REye": head_pos_world + fw * 0.8 * s + up * 0.4 * s + rt * 0.6 * s,
-        "LEar": head_pos_world - fw * 0.2 * s - rt * 1.2 * s,
-        "REar": head_pos_world - fw * 0.2 * s + rt * 1.2 * s,
+def facial_points_from_head_bone(head_bone):
+    """
+    Genera puntos faciales basados en el hueso Head,
+    con proporciones realistas según el JSON de referencia.
+    """
+    # Posición del Head en mundo
+    head_matrix = armature.matrix_world @ head_bone.matrix
+    head_pos = head_matrix @ Vector((0, head_bone.length * 0.7, 0))  # Punto medio-alto del head
+    head_rot3 = head_matrix.to_3x3()
+    
+    # Vectores de orientación
+    forward = head_rot3 @ Vector((0, 0, 1))
+    up = head_rot3 @ Vector((0, 1, 0))
+    right = head_rot3 @ Vector((1, 0, 0))
+    
+    # Escala base (ajustada según referencia)
+    scale = head_bone.length * 0.8
+    
+    # Posiciones faciales en MUNDO (basadas en proporciones del JSON referencia)
+    face_points_world = {
+        # Nariz: adelante del centro, ligeramente abajo
+        "Nose": head_pos + forward * (1.0 * scale) - up * (0.2 * scale),
+        
+        # Ojos: adelante, arriba, separados horizontalmente
+        "REye": head_pos + forward * (0.8 * scale) + up * (0.1 * scale) + right * (0.3 * scale),
+        "LEye": head_pos + forward * (0.8 * scale) + up * (0.1 * scale) - right * (0.3 * scale),
+        
+        # Orejas: a los lados, ligeramente atrás y al nivel de los ojos
+        "REar": head_pos - forward * (0.5 * scale) - up * (0.05 * scale) + right * (0.35 * scale),
+        "LEar": head_pos - forward * (0.5 * scale) - up * (0.05 * scale) - right * (0.35 * scale),
     }
+    
+    return face_points_world
 
 # --------------------------------------------------
-# CALCULO BASE (center, escalas)
+# CÁLCULO BASE (center, escalas)
 # --------------------------------------------------
 scene.frame_set(frame_start)
 bpy.context.view_layer.update()
@@ -185,10 +201,8 @@ for f in range(frame_start, frame_end + 1):
     bpy.context.view_layer.update()
 
     person = {}
-    head_world_pos = None
-    head_rot3_world = None
 
-    # 1) Joints principales (SIN OFFSETS)
+    # 1) Joints principales del cuerpo (sin Head)
     for mixa, opname in bone_map.items():
         b = armature.pose.bones.get(mixa)
         if not b:
@@ -199,44 +213,34 @@ for f in range(frame_start, frame_end + 1):
 
         person[opname] = {"x": float(p_open.x), "y": float(p_open.y), "z": float(p_open.z)}
 
-        if opname == "Head":
-            head_world_pos = p_world
-            head_rot3_world = (armature.matrix_world @ b.matrix).to_3x3()
-
-    # 2) Puntos faciales (SIN OFFSETS)
-    if head_world_pos is not None and head_rot3_world is not None:
-        face_world = facial_points_world(head_world_pos, head_rot3_world)
-        for name, p_w in face_world.items():
-            p_open = transform_world_to_openpose(p_w)
+    # 2) Puntos faciales desde el hueso Head
+    head_bone = armature.pose.bones.get("mixamorig:Head")
+    if head_bone:
+        face_world = facial_points_from_head_bone(head_bone)
+        
+        for name, p_world in face_world.items():
+            p_open = transform_world_to_openpose(p_world)
             person[name] = {"x": float(p_open.x), "y": float(p_open.y), "z": float(p_open.z)}
 
-    # 3) APLICAR OFFSETS DINÁMICOS según orientación del cuerpo
-    
-    # Detectar orientación: usar vector forward del cuello/spine
+    # 3) Detectar orientación del cuerpo
     neck_bone = armature.pose.bones.get("mixamorig:Neck")
     if neck_bone:
-        # Vector forward del cuello en mundo
         neck_forward_world = (armature.matrix_world @ neck_bone.matrix).to_3x3() @ Vector((0, 0, 1))
-        # Convertir a espacio OpenPose
         neck_forward_open = rot3 @ neck_forward_world
-        
-        # Si Z es negativo, el personaje está girado (mirando atrás)
         facing_back = neck_forward_open.z < 0
     else:
         facing_back = False
-    
-    # Aplicar offsets con signo correcto según orientación
-    
-    # Hombros: si mira atrás, invertir el offset
+
+    # 4) Aplicar offsets finales
     shoulder_sign = -1 if facing_back else 1
+    
     if "LShoulder" in person:
         person["LShoulder"]["x"] += shoulder_x_offset * shoulder_sign
         person["LShoulder"]["z"] += shoulder_z_offset
     if "RShoulder" in person:
         person["RShoulder"]["x"] -= shoulder_x_offset * shoulder_sign
         person["RShoulder"]["z"] += shoulder_z_offset
-    
-    # Puntos faciales: si mira atrás, invertir Z
+
     facial_z_sign = -1 if facing_back else 1
     for name in ["Nose", "LEye", "REye", "LEar", "REar"]:
         if name in person:
@@ -253,4 +257,6 @@ with open(output_path, "w") as f:
 
 print("✓ Export complete")
 print(f"✓ Frames: {frame_end - frame_start + 1}")
-print("✓ Offsets applied dynamically based on body orientation")
+print(f"✓ Body joints: {len(bone_map)}")
+print("✓ Facial points: 5 (Nose, LEye, REye, LEar, REar)")
+print("✓ No 'Head' joint exported (only facial features)")

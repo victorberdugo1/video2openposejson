@@ -1691,28 +1691,28 @@ static void DrawBoneSelectionFeedback(AppState* app) {
 				Color highlightColor;
 				const char* modeText;
 				if (app->editor.isDraggingKeyframe) {
-					highlightColor = PURPLE;
+					highlightColor = (Color){128, 0, 128, 140};
 					modeText = "[DRAGGING KEYFRAME]";
 				} else if (app->editor.isDraggingBone) {
 					if (hasMultiSelection) {
-						highlightColor = ORANGE;
+						highlightColor = (Color){255, 165, 0, 140};
 						int frameCount = app->editor.selectionEnd - app->editor.selectionStart + 1;
 						static char multiText[64];
 						snprintf(multiText, sizeof(multiText), "[MOVING %d FRAMES]", frameCount);
 						modeText = multiText;
 					} else {
-						highlightColor = RED;
+						highlightColor = (Color){255, 0, 0, 140};
 						modeText = "[DRAGGING BONE]";
 					}
 				} else if (IsCurrentFrameKeyframe(app)) {
-					highlightColor = GREEN;
+					highlightColor = (Color){0, 255, 0, 140};
 					modeText = "[KEYFRAME]";
 				} else {
-					highlightColor = ORANGE;
+					highlightColor = (Color){255, 165, 0, 140};
 					modeText = "[INTERPOLATED]";
 				}
-				DrawSphere(bone->position.position, 0.04f, highlightColor);
-				DrawSphereWires(bone->position.position, 0.042f, 8, 8, WHITE);
+				DrawSphere(bone->position.position, 0.030f, highlightColor);
+				DrawSphereWires(bone->position.position, 0.033f, 8, 8, WHITE);
 				EndMode3D();
 				float scale = fminf(app->screenWidth / 1920.0f, app->screenHeight / 1080.0f);
 				int fontSize = (int)(12 * scale);
