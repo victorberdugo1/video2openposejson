@@ -1,9 +1,9 @@
-diffusers==0.14.0
-opencv-python
-ffmpeg-python
+mediapipe==0.10.31
+opencv-python==4.8.1.78
 moviepy==1.0.3
-imageio
-imageio-ffmpeg
-controlnet_aux
-mediapipe
-gradio
+imageio==2.31.1
+imageio-ffmpeg==0.4.9
+gradio==3.41.2
+numpy==1.25.0
+Pillow==10.0.0
+
