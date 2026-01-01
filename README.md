@@ -26,7 +26,6 @@ REQUIREMENTS
 - Python 3.10 or higher
 - pip
 
-Tested on Python 3.12.3
 
 CREATE VIRTUAL ENVIRONMENT
 --------------------------
