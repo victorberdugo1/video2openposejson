@@ -3,7 +3,7 @@
   "fps": 30,
   "start_frame": 0,
   "end_frame": 270,
-  "loop": true,
+  "loop": false,
   "events": [
     {"time": 0.2, "type": "texture", "bone": "Head", "variant": "idle"},
     {"time": 1.2, "type": "texture", "bone": "Head", "variant": "blink"},

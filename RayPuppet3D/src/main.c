@@ -60,6 +60,30 @@ typedef struct {
 	int currentIndex;
 } UndoHistory;
 
+// ============================================================================
+// CLIPBOARD SYSTEM
+// ============================================================================
+
+typedef struct {
+	char boneName[MAX_BONE_NAME_LENGTH];
+	Vector3 position;
+	bool valid;
+} ClipboardBone;
+
+typedef struct {
+	ClipboardBone bones[MAX_BONES_PER_PERSON];
+	int boneCount;
+	bool hasCopiedData;
+	char sourceAnimation[64];
+	int sourceFrame;
+} PoseClipboard;
+
+static PoseClipboard g_clipboard = {0};
+
+// ============================================================================
+// EDITOR STATE
+// ============================================================================
+
 typedef struct {
 	bool isPlaying;
 	bool showTimeline;
@@ -154,6 +178,150 @@ static void AddMultipleFramesAtEnd(AppState* app, int numFramesToAdd, BonesAnima
 static void DrawAddFramesDialog(AppState* app);
 bool BonesDeleteFrame(AppState* app, BonesAnimation* animation, int frameIndex);
 bool BonesDuplicateFrame(AppState* app, BonesAnimation* animation, int frameIndex);
+
+// ============================================================================
+// CLIPBOARD FUNCTIONS
+// ============================================================================
+
+static void CopyPoseToClipboard(AppState* app) {
+	if (!app->character->animation.isLoaded) {
+		TraceLog(LOG_WARNING, "No animation loaded to copy from");
+		return;
+	}
+
+	int currentFrame = app->character->currentFrame;
+	if (currentFrame < 0 || currentFrame >= app->character->animation.frameCount) {
+		TraceLog(LOG_WARNING, "Invalid current frame");
+		return;
+	}
+
+	const AnimationFrame* frame = &app->character->animation.frames[currentFrame];
+	
+	// Clear clipboard
+	memset(&g_clipboard, 0, sizeof(PoseClipboard));
+	
+	// Find the first active person
+	const Person* person = NULL;
+	for (int p = 0; p < frame->personCount; p++) {
+		if (frame->persons[p].active) {
+			person = &frame->persons[p];
+			break;
+		}
+	}
+	
+	if (!person) {
+		TraceLog(LOG_WARNING, "No active person found in frame");
+		return;
+	}
+
+	// Copy all bones
+	g_clipboard.boneCount = 0;
+	for (int b = 0; b < person->boneCount && g_clipboard.boneCount < MAX_BONES_PER_PERSON; b++) {
+		const Bone* bone = &person->bones[b];
+		if (bone->position.valid) {
+			ClipboardBone* clipBone = &g_clipboard.bones[g_clipboard.boneCount];
+			strncpy(clipBone->boneName, bone->name, MAX_BONE_NAME_LENGTH - 1);
+			clipBone->boneName[MAX_BONE_NAME_LENGTH - 1] = '\0';
+			clipBone->position = bone->position.position;
+			clipBone->valid = true;
+			g_clipboard.boneCount++;
+		}
+	}
+
+	g_clipboard.hasCopiedData = true;
+	strncpy(g_clipboard.sourceAnimation, app->currentAnimation, 63);
+	g_clipboard.sourceAnimation[63] = '\0';
+	g_clipboard.sourceFrame = frame->frameNumber;
+
+	TraceLog(LOG_INFO, "Copied %d bones from %s frame %d", 
+		g_clipboard.boneCount, 
+		g_clipboard.sourceAnimation, 
+		g_clipboard.sourceFrame);
+}
+
+static void PastePoseFromClipboard(AppState* app) {
+	if (!g_clipboard.hasCopiedData) {
+		TraceLog(LOG_WARNING, "No pose data in clipboard");
+		return;
+	}
+
+	if (!app->character->animation.isLoaded) {
+		TraceLog(LOG_WARNING, "No animation loaded to paste to");
+		return;
+	}
+
+	int currentFrame = app->character->currentFrame;
+	if (currentFrame < 0 || currentFrame >= app->character->animation.frameCount) {
+		TraceLog(LOG_WARNING, "Invalid current frame");
+		return;
+	}
+
+	AnimationFrame* frame = &app->character->animation.frames[currentFrame];
+	
+	// Convert to keyframe if not already
+	if (!frame->isOriginalKeyframe) {
+		frame->isOriginalKeyframe = true;
+		TraceLog(LOG_INFO, "Converted frame to keyframe for paste operation");
+	}
+
+	// Find the first active person
+	Person* person = NULL;
+	for (int p = 0; p < frame->personCount; p++) {
+		if (frame->persons[p].active) {
+			person = &frame->persons[p];
+			break;
+		}
+	}
+	
+	if (!person) {
+		TraceLog(LOG_WARNING, "No active person found in target frame");
+		return;
+	}
+
+	// Paste all bones
+	int pastedCount = 0;
+	for (int c = 0; c < g_clipboard.boneCount; c++) {
+		const ClipboardBone* clipBone = &g_clipboard.bones[c];
+		if (!clipBone->valid) continue;
+
+		// Find matching bone in current frame
+		bool found = false;
+		for (int b = 0; b < person->boneCount; b++) {
+			Bone* bone = &person->bones[b];
+			if (strcmp(bone->name, clipBone->boneName) == 0) {
+				bone->position.position = clipBone->position;
+				bone->position.valid = true;
+				bone->position.confidence = 1.0f;
+				found = true;
+				pastedCount++;
+				break;
+			}
+		}
+
+		if (!found) {
+			TraceLog(LOG_DEBUG, "Bone %s not found in target frame", clipBone->boneName);
+		}
+	}
+
+	if (pastedCount > 0) {
+		// Force visual update
+		app->character->forceUpdate = true;
+		app->editor.needsSave = true;
+
+		// Recalculate interpolations if this is a keyframe
+		int currentFrameNumber = frame->frameNumber;
+		RecalculateAffectedInterpolations(app, currentFrameNumber);
+
+		TraceLog(LOG_INFO, "Pasted %d bones from %s frame %d to %s frame %d", 
+			pastedCount,
+			g_clipboard.sourceAnimation,
+			g_clipboard.sourceFrame,
+			app->currentAnimation,
+			frame->frameNumber);
+	} else {
+		TraceLog(LOG_WARNING, "No bones were pasted");
+	}
+}
 
 // ============================================================================
 // ANIM SYSTEM
@@ -2535,6 +2703,14 @@ static void App_HandleInput(AppState* app) {
 			app->editor.showExportDialog = true;
 			return;
 		}
+		if (IsKeyPressed(KEY_C)) {
+			CopyPoseToClipboard(app);
+			return;
+		}
+		if (IsKeyPressed(KEY_V)) {
+			PastePoseFromClipboard(app);
+			return;
+		}
 		return;
 	}
 
@@ -2800,7 +2976,7 @@ static void App_UpdateCamera(AppState* app, float dt) {
 				Vector3Subtract(app->character->renderer->camera.position, Vector3Scale(forward, speed));
 		if (IsKeyDown(KEY_D))
 			app->character->renderer->camera.position =
-				Vector3Add(app->character->renderer->camera.position, Vector3Scale(right_dir, speed));
+					Vector3Add(app->character->renderer->camera.position, Vector3Scale(right_dir, speed));
 		if (IsKeyDown(KEY_A))
 			app->character->renderer->camera.position =
 				Vector3Subtract(app->character->renderer->camera.position, Vector3Scale(right_dir, speed));
