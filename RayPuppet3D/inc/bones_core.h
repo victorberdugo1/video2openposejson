@@ -4696,6 +4696,7 @@ static Vector3 Ornaments_GetAnchorPosition(const AnimationFrame* frame, const ch
 		const Person* person = &frame->persons[p];
 		if (!person->active) continue;
 
+		// Primero intentar buscar el bone directamente
 		for (int b = 0; b < person->boneCount; b++) {
 			const Bone* bone = &person->bones[b];
 			if (strcmp(bone->name, anchorName) == 0 && bone->position.valid) {
@@ -4703,6 +4704,7 @@ static Vector3 Ornaments_GetAnchorPosition(const AnimationFrame* frame, const ch
 			}
 		}
 
+		// Si no se encontró, verificar si es un bone calculado especial
 		if (strcmp(anchorName, "Head") == 0) {
 			return CalculateHeadPosition(person);
 		}
@@ -4711,6 +4713,12 @@ static Vector3 Ornaments_GetAnchorPosition(const AnimationFrame* frame, const ch
 		}
 		if (strcmp(anchorName, "Hip") == 0) {
 			return CalculateHipPosition(person);
+		}
+		
+		// Si aún no se encontró, intentar calcular el midpoint del bone
+		Vector3 midpoint = CalculateBoneMidpoint(anchorName, person);
+		if (Vector3Length(midpoint) > 0.001f) {
+			return midpoint;
 		}
 	}
 
@@ -4725,6 +4733,7 @@ static BoneOrientation Ornaments_GetAnchorOrientation(const AnimationFrame* fram
 		const Person* person = &frame->persons[p];
 		if (!person->active) continue;
 
+		// Buscar cualquier bone por nombre
 		for (int b = 0; b < person->boneCount; b++) {
 			const Bone* bone = &person->bones[b];
 			if (strcmp(bone->name, anchorName) == 0 && bone->position.valid) {
@@ -4732,9 +4741,59 @@ static BoneOrientation Ornaments_GetAnchorOrientation(const AnimationFrame* fram
 			}
 		}
 
+		// Casos especiales para bones calculados
 		if (strcmp(anchorName, "Head") == 0) {
-			Vector3 headPos = CalculateHeadPosition(person);
-			return CalculateBoneOrientation("Head", person, headPos);
+			HeadOrientation headOrient = CalculateHeadOrientation(person);
+			
+			// Convertir HeadOrientation a BoneOrientation
+			BoneOrientation boneOrient;
+			boneOrient.position = headOrient.position;
+			boneOrient.forward = headOrient.forward;
+			boneOrient.up = headOrient.up;
+			boneOrient.right = headOrient.right;
+			boneOrient.yaw = headOrient.yaw;
+			boneOrient.pitch = headOrient.pitch;
+			boneOrient.roll = headOrient.roll;
+			boneOrient.valid = headOrient.valid;
+			return boneOrient;
+		}
+		
+		if (strcmp(anchorName, "Chest") == 0) {
+			TorsoOrientation torsoOrient = CalculateChestOrientation(person);
+			
+			// Convertir TorsoOrientation a BoneOrientation
+			BoneOrientation boneOrient;
+			boneOrient.position = torsoOrient.position;
+			boneOrient.forward = torsoOrient.forward;
+			boneOrient.up = torsoOrient.up;
+			boneOrient.right = torsoOrient.right;
+			boneOrient.yaw = torsoOrient.yaw;
+			boneOrient.pitch = torsoOrient.pitch;
+			boneOrient.roll = torsoOrient.roll;
+			boneOrient.valid = torsoOrient.valid;
+			return boneOrient;
+		}
+		
+		if (strcmp(anchorName, "Hip") == 0) {
+			TorsoOrientation torsoOrient = CalculateHipOrientation(person);
+			
+			// Convertir TorsoOrientation a BoneOrientation
+			BoneOrientation boneOrient;
+			boneOrient.position = torsoOrient.position;
+			boneOrient.forward = torsoOrient.forward;
+			boneOrient.up = torsoOrient.up;
+			boneOrient.right = torsoOrient.right;
+			boneOrient.yaw = torsoOrient.yaw;
+			boneOrient.pitch = torsoOrient.pitch;
+			boneOrient.roll = torsoOrient.roll;
+			boneOrient.valid = torsoOrient.valid;
+			return boneOrient;
+		}
+		
+		// Para cualquier otro bone, calcular su orientación usando la posición del midpoint
+		Vector3 bonePos = CalculateBoneMidpoint(anchorName, person);
+		if (Vector3Length(bonePos) > 0.001f) {
+			return CalculateBoneOrientation(anchorName, person, bonePos);
 		}
 	}
 
