@@ -18,7 +18,7 @@
 
 #define ATLAS_COLS 4
 #define ATLAS_ROWS 4
-#define MAX_BONE_NAME_LENGTH 32
+#define MAX_BONE_NAME_LENGTH 64
 #define MAX_FILE_PATH_LENGTH 512
 #define MAX_BONES_PER_PERSON 32
 #define MAX_FRAMES 10000
@@ -4620,7 +4620,7 @@ bool Ornaments_LoadFromConfig(OrnamentSystem* system, const char* configPath) {
 				BoneOrnament* orn = &system->ornaments[system->ornamentCount];
 				memset(orn, 0, sizeof(BoneOrnament));
 
-				char presetStr[32];
+				char presetStr[64];
 				char parentStr[MAX_BONE_NAME_LENGTH];
 				int visible;
 				float offsetX, offsetY, offsetZ;
