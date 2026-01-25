@@ -606,107 +606,173 @@ def process_image(image_path, margin=20, head_offset=30, foot_offset=30, use_sam
     landmarks = None
     
     if not results or not results.pose_landmarks:
-print("⚠ No se detectó pose humana - usando detección SAM pura para personaje no humano")    if not use_sam or sam_predictor is None:
-        raise ValueError("❌ SAM es requerido para personajes no humanos. Activa la opción SAM.")    # Modo SAM puro para personajes no humanos
-    body_mask, landmarks = segment_full_body_sam_only(rgb, W, H)
-    use_pose_detection = False
-else:
-    # Modo normal con pose detection
-    print("✓ Pose humana detectada - usando landmarks")
-    landmarks = results.pose_landmarks[0]
-    use_pose_detection = True    # Segmentar cuerpo con SAM o método alternativo
-    if use_sam and sam_predictor is not None:
-        body_mask = segment_body_with_sam(rgb, landmarks, W, H, head_offset, foot_offset)
+        print("⚠ No se detectó pose humana - usando detección SAM pura para personaje no humano")
+        if not use_sam or sam_predictor is None:
+            raise ValueError("❌ SAM es requerido para personajes no humanos. Activa la opción SAM.")
+        # Modo SAM puro para personajes no humanos
+        body_mask, landmarks = segment_full_body_sam_only(rgb, W, H)
+        use_pose_detection = False
     else:
-        body_mask = segment_body_fallback(rgb, landmarks, W, H, head_offset, foot_offset)output_dir = "body_layers"
-os.makedirs(output_dir, exist_ok=True)parts_info = {}
-failed_parts = []# Determinar qué partes procesar según el modo
-if use_pose_detection:
-    # Modo normal con landmarks
-    parts_to_process = BODY_PARTS    for part_name, config in parts_to_process.items():
-        print(f"[🔧] Procesando: {part_name}")        pts = []
-        for idx in config["landmarks"]:
-            if idx < len(landmarks):
-                lm = landmarks[idx]
-                pts.append([int(lm.x * W), int(lm.y * H)])        if not pts:
-            print(f"  └─ ⚠ No hay landmarks disponibles")
-            failed_parts.append(part_name)
-            continue        # Intentar segmentar con sinónimos y múltiples estrategias
+        # Modo normal con pose detection
+        print("✓ Pose humana detectada - usando landmarks")
+        landmarks = results.pose_landmarks[0]
+        use_pose_detection = True
+        # Segmentar cuerpo con SAM o método alternativo
         if use_sam and sam_predictor is not None:
-            part_mask = try_segment_with_synonyms(rgb, body_mask, pts, W, H, margin, 
-                                                 part_name, config["type"], head_offset, foot_offset)
+            body_mask = segment_body_with_sam(rgb, landmarks, W, H, head_offset, foot_offset)
         else:
-            part_mask = create_part_mask_fallback(body_mask, pts, W, H, margin, 
-                                                 config["type"], head_offset, foot_offset)        if part_mask.max() == 0:
-            print(f"  └─ ⚠ Máscara vacía después de todos los intentos")
-            failed_parts.append(part_name)
-            continue        rgba = cv2.cvtColor(img, cv2.COLOR_BGR2BGRA)
-        rgba[:, :, 3] = part_mask        out_path = os.path.join(output_dir, f"{part_name}.png")
-        cv2.imwrite(out_path, rgba)        parts_info[part_name] = {
-            "file": out_path,
-            "size": [W, H],
-            "type": config["type"]
-        }
-        print(f"  └─ ✓ Guardado: {out_path}")else:
-    # Modo SAM puro - estimar regiones
-    print("[📍] Modo personaje no humano - estimando regiones corporales...")
-    estimated_regions = estimate_body_parts_from_mask(body_mask, W, H)    for part_name, region_info in estimated_regions.items():
-        print(f"[🔧] Procesando: {part_name}")        part_mask = segment_part_sam_boxed(rgb, body_mask, region_info["box"], 
-                                          W, H, region_info["type"])        if part_mask is None or part_mask.max() == 0:
-            print(f"  └─ ⚠ No se pudo segmentar")
-            failed_parts.append(part_name)
-            continue        rgba = cv2.cvtColor(img, cv2.COLOR_BGR2BGRA)
-        rgba[:, :, 3] = part_mask        out_path = os.path.join(output_dir, f"{part_name}.png")
-        cv2.imwrite(out_path, rgba)        parts_info[part_name] = {
-            "file": out_path,
-            "size": [W, H],
-            "type": region_info["type"]
-        }
-        print(f"  └─ ✓ Guardado: {out_path}")# Crear archivo PSD (pasando body_mask e img)
-psd_path = create_psd_from_layers(output_dir, parts_info, W, H, body_mask, img)# Guardar JSON de información
-json_path = os.path.join(output_dir, "layers_info.json")
-with open(json_path, "w", encoding="utf-8") as f:
-    json.dump({
-        "original_size": [W, H],
-        "head_offset": head_offset,
-        "foot_offset": foot_offset,
-        "sam_used": use_sam and sam_predictor is not None,
-        "pose_detection_used": use_pose_detection,
-        "character_type": "human" if use_pose_detection else "non-human",
-        "parts": parts_info,
-        "total_detected": len(parts_info),
-        "total_failed": len(failed_parts),
-        "failed_parts": failed_parts,
-        "psd_file": psd_path
-    }, f, indent=2, ensure_ascii=False)# Crear imagen de referencia
-ref_img = img.copy()
-for i, name in enumerate(parts_info.keys()):
-    cv2.putText(ref_img, name, (10, 30 + i * 20),
-               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)# Agregar partes fallidas en rojo
-for i, name in enumerate(failed_parts):
-    cv2.putText(ref_img, f"FALLO: {name}", (10, 30 + (len(parts_info) + i) * 20),
-               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)ref_path = os.path.join(output_dir, "_reference.jpg")
-cv2.imwrite(ref_path, ref_img)# Guardar body_full
-body_rgba = cv2.cvtColor(img, cv2.COLOR_BGR2BGRA)
-body_rgba[:, :, 3] = body_mask
-cv2.imwrite(os.path.join(output_dir, "_body_full.png"), body_rgba)print(f"\n[✅] ¡Listo!")
-print(f"    🎭 Tipo: {'Humano (con pose)' if use_pose_detection else 'No-humano (SAM puro)'}")
-print(f"    ✓ Partes detectadas: {len(parts_info)}")
-print(f"    ✗ Partes fallidas: {len(failed_parts)}")
-if failed_parts:
-    print(f"    Fallidas: {', '.join(failed_parts)}")return output_dir, psd_path, len(parts_info), failed_partsdef gradio_process(image, margin, head_offset, foot_offset, use_sam):
-if image is None:
-return None, None, "❌ Sube una imagen primero"try:
-    output_dir, psd_file, num_parts, failed = process_image(
-        image, int(margin), int(head_offset), int(foot_offset), use_sam
-    )    sam_status = "✓ SAM activado" if (use_sam and sam_predictor is not None) else "○ Método tradicional"    failed_text = ""
-    if failed:
-        failed_text = f"\n⚠ **Partes no detectadas:** {', '.join(failed)}"    status = f"""✅ **¡ÉXITO!**📁 Carpeta: {output_dir}/
+            body_mask = segment_body_fallback(rgb, landmarks, W, H, head_offset, foot_offset)
+    
+    output_dir = "body_layers"
+    os.makedirs(output_dir, exist_ok=True)
+    
+    parts_info = {}
+    failed_parts = []
+    
+    # Determinar qué partes procesar según el modo
+    if use_pose_detection:
+        # Modo normal con landmarks
+        parts_to_process = BODY_PARTS
+        
+        for part_name, config in parts_to_process.items():
+            print(f"[🔧] Procesando: {part_name}")
+            
+            pts = []
+            for idx in config["landmarks"]:
+                if idx < len(landmarks):
+                    lm = landmarks[idx]
+                    pts.append([int(lm.x * W), int(lm.y * H)])
+            
+            if not pts:
+                print(f"  └─ ⚠ No hay landmarks disponibles")
+                failed_parts.append(part_name)
+                continue
+            
+            # Intentar segmentar con sinónimos y múltiples estrategias
+            if use_sam and sam_predictor is not None:
+                part_mask = try_segment_with_synonyms(rgb, body_mask, pts, W, H, margin, 
+                                                     part_name, config["type"], head_offset, foot_offset)
+            else:
+                part_mask = create_part_mask_fallback(body_mask, pts, W, H, margin, 
+                                                     config["type"], head_offset, foot_offset)
+            
+            if part_mask.max() == 0:
+                print(f"  └─ ⚠ Máscara vacía después de todos los intentos")
+                failed_parts.append(part_name)
+                continue
+            
+            rgba = cv2.cvtColor(img, cv2.COLOR_BGR2BGRA)
+            rgba[:, :, 3] = part_mask
+            
+            out_path = os.path.join(output_dir, f"{part_name}.png")
+            cv2.imwrite(out_path, rgba)
+            
+            parts_info[part_name] = {
+                "file": out_path,
+                "size": [W, H],
+                "type": config["type"]
+            }
+            print(f"  └─ ✓ Guardado: {out_path}")
+    else:
+        # Modo SAM puro - estimar regiones
+        print("[📍] Modo personaje no humano - estimando regiones corporales...")
+        estimated_regions = estimate_body_parts_from_mask(body_mask, W, H)
+        
+        for part_name, region_info in estimated_regions.items():
+            print(f"[🔧] Procesando: {part_name}")
+            
+            part_mask = segment_part_sam_boxed(rgb, body_mask, region_info["box"], 
+                                              W, H, region_info["type"])
+            
+            if part_mask is None or part_mask.max() == 0:
+                print(f"  └─ ⚠ No se pudo segmentar")
+                failed_parts.append(part_name)
+                continue
+            
+            rgba = cv2.cvtColor(img, cv2.COLOR_BGR2BGRA)
+            rgba[:, :, 3] = part_mask
+            
+            out_path = os.path.join(output_dir, f"{part_name}.png")
+            cv2.imwrite(out_path, rgba)
+            
+            parts_info[part_name] = {
+                "file": out_path,
+                "size": [W, H],
+                "type": region_info["type"]
+            }
+            print(f"  └─ ✓ Guardado: {out_path}")
+    
+    # Crear archivo PSD (pasando body_mask e img)
+    psd_path = create_psd_from_layers(output_dir, parts_info, W, H, body_mask, img)
+    
+    # Guardar JSON de información
+    json_path = os.path.join(output_dir, "layers_info.json")
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump({
+            "original_size": [W, H],
+            "head_offset": head_offset,
+            "foot_offset": foot_offset,
+            "sam_used": use_sam and sam_predictor is not None,
+            "pose_detection_used": use_pose_detection,
+            "character_type": "human" if use_pose_detection else "non-human",
+            "parts": parts_info,
+            "total_detected": len(parts_info),
+            "total_failed": len(failed_parts),
+            "failed_parts": failed_parts,
+            "psd_file": psd_path
+        }, f, indent=2, ensure_ascii=False)
+    
+    # Crear imagen de referencia
+    ref_img = img.copy()
+    for i, name in enumerate(parts_info.keys()):
+        cv2.putText(ref_img, name, (10, 30 + i * 20),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+    
+    # Agregar partes fallidas en rojo
+    for i, name in enumerate(failed_parts):
+        cv2.putText(ref_img, f"FALLO: {name}", (10, 30 + (len(parts_info) + i) * 20),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+    
+    ref_path = os.path.join(output_dir, "_reference.jpg")
+    cv2.imwrite(ref_path, ref_img)
+    
+    # Guardar body_full
+    body_rgba = cv2.cvtColor(img, cv2.COLOR_BGR2BGRA)
+    body_rgba[:, :, 3] = body_mask
+    cv2.imwrite(os.path.join(output_dir, "_body_full.png"), body_rgba)
+    
+    print(f"\n[✅] ¡Listo!")
+    print(f"    🎭 Tipo: {'Humano (con pose)' if use_pose_detection else 'No-humano (SAM puro)'}")
+    print(f"    ✓ Partes detectadas: {len(parts_info)}")
+    print(f"    ✗ Partes fallidas: {len(failed_parts)}")
+    if failed_parts:
+        print(f"    Fallidas: {', '.join(failed_parts)}")
+    
+    return output_dir, psd_path, len(parts_info), failed_parts
+
+def gradio_process(image, margin, head_offset, foot_offset, use_sam):
+    if image is None:
+        return None, None, "❌ Sube una imagen primero"
+    
+    try:
+        output_dir, psd_file, num_parts, failed = process_image(
+            image, int(margin), int(head_offset), int(foot_offset), use_sam
+        )
+        
+        sam_status = "✓ SAM activado" if (use_sam and sam_predictor is not None) else "○ Método tradicional"
+        
+        failed_text = ""
+        if failed:
+            failed_text = f"\n⚠ **Partes no detectadas:** {', '.join(failed)}"
+        
+        status = f"""✅ **¡ÉXITO!**
+📁 Carpeta: {output_dir}/
 🎯 Partes detectadas: {num_parts}
 🤖 Segmentación: {sam_status}
 ⬆ Offset cabeza: {head_offset}px
 ⬇ Offset pies: {foot_offset}px
-{failed_text}📦 Archivos generados:
+{failed_text}
+📦 Archivos generados:
 
 body_layers.psd → Archivo Photoshop con todas las capas
 *.png → Cada parte separada
@@ -714,33 +780,44 @@ _body_full.png → Cuerpo completo
 _reference.jpg → Referencia visual
 layers_info.json → Información de las capas
 """
-    ref_path = os.path.join(output_dir, "_reference.jpg")
-    return ref_path, psd_file, statusexcept Exception as e:
-    import traceback
-    return None, None, f"❌ Error: {str(e)}\n\n{traceback.format_exc()}"with gr.Blocks(title="Extractor Capas Corporales", theme=gr.themes.Soft()) as app:
-gr.Markdown("# 🎭 Extractor de Capas Corporales")with gr.Row():
-    with gr.Column():
-        img_input = gr.Image(type="filepath", label="📸 Imagen")
-        use_sam_input = gr.Checkbox(
-            value=True, 
-            label="🤖 Usar SAM (Recomendado)",
-            info="Segmentación de alta precisión con IA"
-        )
-        margin_input = gr.Slider(10, 50, value=20, step=5, 
-                                label="📏 Margen (píxeles)",
-                                info="Espacio extra alrededor de cada parte")
-        head_input = gr.Slider(0, 200, value=30, step=10,
-                              label="⬆ Offset cabeza (píxeles)",
-                              info="Extensión superior para capturar toda la cabeza")
-        foot_input = gr.Slider(0, 200, value=30, step=10,
-                              label="⬇ Offset pies (píxeles)",
-                              info="Extensión inferior para capturar todos los pies")
-        btn = gr.Button("🚀 Extraer Capas", variant="primary", size="lg")    with gr.Column():
-        ref_output = gr.Image(label="📋 Referencia")
-        psd_output = gr.File(label="📄 Archivo PSD")
-        status_output = gr.Markdown()btn.click(
-    gradio_process, 
-    [img_input, margin_input, head_input, foot_input, use_sam_input], 
-    [ref_output, psd_output, status_output]
-)if name == "main":
-app.launch()
+        ref_path = os.path.join(output_dir, "_reference.jpg")
+        return ref_path, psd_file, status
+    except Exception as e:
+        import traceback
+        return None, None, f"❌ Error: {str(e)}\n\n{traceback.format_exc()}"
+
+with gr.Blocks(title="Extractor Capas Corporales", theme=gr.themes.Soft()) as app:
+    gr.Markdown("# 🎭 Extractor de Capas Corporales")
+    
+    with gr.Row():
+        with gr.Column():
+            img_input = gr.Image(type="filepath", label="📸 Imagen")
+            use_sam_input = gr.Checkbox(
+                value=True, 
+                label="🤖 Usar SAM (Recomendado)",
+                info="Segmentación de alta precisión con IA"
+            )
+            margin_input = gr.Slider(10, 50, value=20, step=5, 
+                                    label="📏 Margen (píxeles)",
+                                    info="Espacio extra alrededor de cada parte")
+            head_input = gr.Slider(0, 200, value=30, step=10,
+                                  label="⬆ Offset cabeza (píxeles)",
+                                  info="Extensión superior para capturar toda la cabeza")
+            foot_input = gr.Slider(0, 200, value=30, step=10,
+                                  label="⬇ Offset pies (píxeles)",
+                                  info="Extensión inferior para capturar todos los pies")
+            btn = gr.Button("🚀 Extraer Capas", variant="primary", size="lg")
+        
+        with gr.Column():
+            ref_output = gr.Image(label="📋 Referencia")
+            psd_output = gr.File(label="📄 Archivo PSD")
+            status_output = gr.Markdown()
+    
+    btn.click(
+        gradio_process, 
+        [img_input, margin_input, head_input, foot_input, use_sam_input], 
+        [ref_output, psd_output, status_output]
+    )
+
+if __name__ == "__main__":
+    app.launch()
