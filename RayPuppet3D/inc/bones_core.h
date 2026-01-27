@@ -5015,9 +5015,9 @@ void Ornaments_CollectForRendering(
         // Orientación por defecto para ornamentos (como si fueran parte del cuerpo)
         // Esto asegura que sigan las reglas de orientación normales de los huesos
         renderData->orientation.position = renderData->position;
-        renderData->orientation.forward = (Vector3){0, 0, 1};
+        renderData->orientation.forward = (Vector3){0, 0, -1};
         renderData->orientation.up = (Vector3){0, 1, 0};
-        renderData->orientation.right = (Vector3){1, 0, 0};
+        renderData->orientation.right = (Vector3){-1, 0, 0};
         
         // Calcular un yaw simple basado en la dirección hacia la cámara
         // pero mantener pitch y roll a 0 para consistencia
