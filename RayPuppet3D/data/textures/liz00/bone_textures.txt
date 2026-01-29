@@ -1,0 +1,34 @@
+# Configuración simple de hilturas por bone
+# Formato: BoneName hiltureIndex Visible Size
+# Path a la hiltura
+# Visible: 1=si, 0=no
+# Size: tamaño del billboard (0.1-1.0)
+
+Nose NULL 0 0.25
+Head data/textures/liz00/head.png 1 0.14
+LEye NULL 0 0.20
+REye NULL 0 0.20
+LEar NULLg 0 0.15
+REar NULLg 0 0.15
+Neck data/textures/liz00/neck.png 1 0.15
+LShoulder data/textures/liz00/arm.png 1 0.13
+RShoulder data/textures/liz00/arm.png 1 0.13
+Chest data/textures/liz00/chest.png 1 0.24
+LElbow data/textures/liz00/Forearm.png 1 0.13
+RElbow data/textures/liz00/Forearm.png 1 0.13
+LWrist data/textures/liz00/Hand.png 1 0.1
+RWrist data/textures/liz00/Hand.png 1 0.1
+Hip data/textures/liz00/Hip.png 1 0.17
+LHip data/textures/liz00/Leg.png 1 0.15
+RHip data/textures/liz00/Leg.png 1 0.15
+LKnee data/textures/liz00/Shin.png 1 0.13
+RKnee data/textures/liz00/Shin.png 1 0.13
+LAnkle data/textures/liz00/Foot.png 1 0.13 
+RAnkle data/textures/liz00/Foot.png 1 0.13 
+
+# ORNAMENTOS - Nueva
+# @HairBack Head 0.0,-0.01,-0.1 data/textures/hil/HairBack.png 1 0.20 - stiff
+# @HairTip HairBack 0.0,-0.08,-0.03 data/textures/hil/HairTip.png 1 0.18 @HairBack medium 
+@TailBase Hip 0.0,-0.05,0.1 data/textures/liz00/Tail.png 1 0.15 - medium
+@TailMid TailBase 0.0,-0.08,-0.08 data/textures/liz00/Tail.png 1 0.14 @TailBase soft
+@TailTip TailMid 0.0,-0.12,-0.15 data/textures/liz00/TailTip.png 1 0.12 @TailMid verysoft

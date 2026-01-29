@@ -1,0 +1,14 @@
+# Bone Variant TexturePath
+# Expresiones de cabeza
+Head idle data/textures/liz00/Head.png
+# Head blink data/textures/liz00/Head_Blink.png
+# Head talk_open data/textures/liz00/Head_Talk1.png
+# Head talk_closed data/textures/liz00/Head_Talk2.png
+# Head happy data/textures/liz00/Head_Happy.png
+# Head sad data/textures/liz00/Head_Sad.png
+# Head angry data/textures/liz00/Head_Angry.png
+
+# Puedes añadir variantes de otras partes
+# Chest idle data/textures/liz00/Chest.png
+# Chest blink data/textures/liz00/Chest_Blink.png
+# LWrist fist hil/HandR_Fist.png

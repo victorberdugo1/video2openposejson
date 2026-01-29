@@ -1,4 +1,4 @@
-# Básico (con valores óptimos por defecto)
+# Básico (con valores óptimos por defecto + posicionamiento en suelo)
 # python normalizer.py -a output_openpose.json -r body.json -o suavizada.json -v
 
 # Ajustar suavidad (más suave)
@@ -9,6 +9,9 @@
 
 # Kalman estándar (no adaptativo)
 # python normalizer.py -a animation.json -r body.json -o suavizada.json --no-adaptive -v
+
+# Sin posicionamiento en suelo (mantener posición original)
+# python normalizer.py -a animation.json -r body.json -o suavizada.json --no-ground -v
 
 #!/usr/bin/env python3
 """
@@ -209,10 +212,22 @@ def calculate_jitter_metrics(animation_data, verbose=False):
 
 def normalize_to_body_with_uniform_scale(animation_file, reference_file, output_file, 
                                          apply_kalman=True, process_noise=0.005, 
-                                         measurement_noise=0.05, adaptive=True, verbose=False):
+                                         measurement_noise=0.05, adaptive=True, 
+                                         ground_position=True, verbose=False):
     """
     Normaliza animación al body de referencia usando ESCALA UNIFORME
     Esto mantiene las proporciones del movimiento original
+    
+    Args:
+        animation_file: Archivo JSON de animación de entrada
+        reference_file: Archivo JSON de body de referencia
+        output_file: Archivo JSON de salida
+        apply_kalman: Si True, aplica filtro Kalman
+        process_noise: Ruido del proceso para Kalman
+        measurement_noise: Ruido de medición para Kalman
+        adaptive: Si True, usa Kalman adaptativo
+        ground_position: Si True, posiciona tobillos en el suelo y centra
+        verbose: Si True, muestra información detallada
     """
     
     if verbose:
@@ -265,6 +280,12 @@ def normalize_to_body_with_uniform_scale(animation_file, reference_file, output_
             adaptive=adaptive,
             verbose=verbose
         )
+    
+    # Aplicar posicionamiento en suelo y centrado
+    if ground_position:
+        if verbose:
+            print()
+        normalized_animation = ground_and_center_animation(normalized_animation, verbose)
     
     # Métricas después
     if verbose:
@@ -375,6 +396,99 @@ def apply_uniform_transformation(body_data, transform):
     
     return transformed_body
 
+def ground_and_center_animation(animation_data, verbose=False):
+    """
+    Posiciona la animación con los tobillos en el suelo y centrada.
+    Aplica a todos los frames manteniendo la forma original.
+    """
+    if verbose:
+        print("🎯 Aplicando posicionamiento en suelo y centrado...")
+    
+    grounded_animation = {}
+    
+    for frame_name, frame_data in animation_data.items():
+        grounded_frame = {}
+        
+        for person_id, person_data in frame_data.items():
+            # Encontrar la Y más alta de los tobillos (que será el suelo)
+            ankle_y_values = []
+            if 'LAnkle' in person_data:
+                ankle_y_values.append(person_data['LAnkle']['y'])
+            if 'RAnkle' in person_data:
+                ankle_y_values.append(person_data['RAnkle']['y'])
+            
+            if not ankle_y_values:
+                if verbose:
+                    print(f"   ⚠️  No se encontraron tobillos en {frame_name}/{person_id}")
+                grounded_frame[person_id] = person_data
+                continue
+            
+            # En el sistema, Y está invertido (0=arriba, 1=abajo)
+            # Queremos que el tobillo más bajo (mayor Y) esté en y=1.0
+            max_ankle_y = max(ankle_y_values)
+            
+            # Calcular el offset necesario para poner los tobillos en y=1.0
+            y_offset = 1.0 - max_ankle_y
+            
+            # Encontrar el centro en X y Z
+            x_values = []
+            z_values = []
+            for joint_name, joint_data in person_data.items():
+                if isinstance(joint_data, dict) and 'x' in joint_data:
+                    x_values.append(joint_data['x'])
+                    z_values.append(joint_data['z'])
+            
+            if not x_values:
+                grounded_frame[person_id] = person_data
+                continue
+            
+            # Calcular centro
+            center_x = (min(x_values) + max(x_values)) / 2.0
+            center_z = (min(z_values) + max(z_values)) / 2.0
+            
+            # Calcular offsets para centrar en (0.5, 0.5)
+            x_offset = 0.5 - center_x
+            z_offset = 0.5 - center_z
+            
+            # Aplicar offsets a todos los huesos
+            grounded_person = {}
+            for joint_name, joint_data in person_data.items():
+                grounded_joint = {}
+                
+                if isinstance(joint_data, dict) and 'x' in joint_data:
+                    grounded_joint['x'] = joint_data['x'] + x_offset
+                    grounded_joint['y'] = joint_data['y'] + y_offset
+                    grounded_joint['z'] = joint_data['z'] + z_offset
+                    
+                    # Preservar otros campos
+                    for key, value in joint_data.items():
+                        if key not in ['x', 'y', 'z']:
+                            grounded_joint[key] = value
+                else:
+                    grounded_joint = joint_data
+                
+                grounded_person[joint_name] = grounded_joint
+            
+            grounded_frame[person_id] = grounded_person
+            
+            if verbose and frame_name == list(animation_data.keys())[0]:
+                print(f"   Primer frame ({frame_name}/{person_id}):")
+                print(f"     Y offset: {y_offset:+.6f} (tobillos al suelo)")
+                print(f"     X offset: {x_offset:+.6f} (centrado)")
+                print(f"     Z offset: {z_offset:+.6f} (centrado)")
+                if 'LAnkle' in grounded_person:
+                    print(f"     LAnkle Y final: {grounded_person['LAnkle']['y']:.6f}")
+                if 'RAnkle' in grounded_person:
+                    print(f"     RAnkle Y final: {grounded_person['RAnkle']['y']:.6f}")
+        
+        grounded_animation[frame_name] = grounded_frame
+    
+    if verbose:
+        print("   ✅ Posicionamiento completado")
+        print()
+    
+    return grounded_animation
+
 def verify_proportions(normalized_animation, original_body, verbose=False):
     """Verifica que las proporciones se mantuvieron"""
     if not verbose:
@@ -429,6 +543,8 @@ if __name__ == "__main__":
                        help='Ruido de medición (default: 0.05)')
     parser.add_argument('--no-adaptive', action='store_true',
                        help='Usar Kalman estándar')
+    parser.add_argument('--no-ground', action='store_true',
+                       help='No posicionar tobillos en suelo ni centrar')
     
     args = parser.parse_args()
     
@@ -449,6 +565,7 @@ if __name__ == "__main__":
             process_noise=args.process_noise,
             measurement_noise=args.measurement_noise,
             adaptive=not args.no_adaptive,
+            ground_position=not args.no_ground,
             verbose=args.verbose
         )
         print(f"✅ Proceso completado: {args.output}")
