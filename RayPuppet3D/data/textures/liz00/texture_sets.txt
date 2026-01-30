@@ -1,6 +1,6 @@
 # Bone Variant TexturePath
 # Expresiones de cabeza
-Head idle data/textures/liz00/Head.png
+Head idle data/textures/liz00/head.png
 # Head blink data/textures/liz00/Head_Blink.png
 # Head talk_open data/textures/liz00/Head_Talk1.png
 # Head talk_closed data/textures/liz00/Head_Talk2.png
