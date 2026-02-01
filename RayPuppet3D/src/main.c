@@ -17,6 +17,8 @@
 static const float ORBIT_SENSITIVITY = 0.01f;
 static const float FPS_SENSITIVITY = 0.003f;
 static const float ZOOM_SENSITIVITY = 0.5f;
+static const float TARGET_MOVE_SENSITIVITY = 0.02f;
+static const float MAX_TARGET_OFFSET = 0.6f;
 static const float MIN_ORBIT_RADIUS = 0.5f;
 static const float MAX_ORBIT_RADIUS = 20.0f;
 static const float MIN_PITCH = -85.0f * PI / 180.0f;
@@ -143,6 +145,7 @@ typedef struct {
 	AnimatedCharacter* character;
 	int camMode;
 	float orbitYaw, orbitPitch, orbitRadius;
+	Vector3 targetOffset; // Offset del punto objetivo en relación a la cámara
 	bool showUI;
 	EditorState editor;
 	DebugOptions debug;
@@ -2906,11 +2909,51 @@ static void App_HandleInput(AppState* app) {
 static void App_UpdateCamera(AppState* app, float dt) {
 	if (!app || !app->character) return;
 
-	Vector3 cameraTarget = app->character->autoCenterCalculated ?
+	Vector3 baseCameraTarget = app->character->autoCenterCalculated ?
 		app->character->autoCenter : (Vector3){0, 0.6f, 0};
 
 	if (app->camMode == 1) {
 		UpdateCameraGizmo(app);
+
+		// Mover el target con las flechas del teclado
+		float moveSpeed = TARGET_MOVE_SENSITIVITY;
+		if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
+			moveSpeed *= 3.0f; // Más rápido con Shift
+		
+		// Calcular vectores de la cámara
+		Vector3 cameraPos = app->character->renderer->camera.position;
+		Vector3 currentTarget = Vector3Add(baseCameraTarget, app->targetOffset);
+		Vector3 forward = Vector3Normalize(Vector3Subtract(currentTarget, cameraPos));
+		Vector3 right = Vector3Normalize(Vector3CrossProduct(forward, (Vector3){0, 1, 0}));
+		Vector3 up = Vector3Normalize(Vector3CrossProduct(right, forward));
+
+		// Movimiento con flechas en relación a la orientación de la cámara
+		if (IsKeyDown(KEY_UP)) {
+			app->targetOffset = Vector3Add(app->targetOffset, Vector3Scale(up, moveSpeed));
+		}
+		if (IsKeyDown(KEY_DOWN)) {
+			app->targetOffset = Vector3Subtract(app->targetOffset, Vector3Scale(up, moveSpeed));
+		}
+		if (IsKeyDown(KEY_LEFT)) {
+			app->targetOffset = Vector3Subtract(app->targetOffset, Vector3Scale(right, moveSpeed));
+		}
+		if (IsKeyDown(KEY_RIGHT)) {
+			app->targetOffset = Vector3Add(app->targetOffset, Vector3Scale(right, moveSpeed));
+		}
+
+		// Limitar el offset para evitar que la cámara se vuelva inestable
+		float offsetLength = Vector3Length(app->targetOffset);
+		if (offsetLength > MAX_TARGET_OFFSET) {
+			app->targetOffset = Vector3Scale(Vector3Normalize(app->targetOffset), MAX_TARGET_OFFSET);
+		}
+
+		// Reset del offset con la tecla R
+		if (IsKeyPressed(KEY_R)) {
+			app->targetOffset = (Vector3){0, 0, 0};
+		}
+
+		// Aplicar el offset al target
+		Vector3 cameraTarget = Vector3Add(baseCameraTarget, app->targetOffset);
 
 		if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) &&
 				!app->editor.isDraggingSlider &&
@@ -3021,6 +3064,7 @@ static bool App_Init(AppState* app) {
 	app->camMode = 1;
 	app->orbitRadius = 2.5f;
 	app->orbitPitch = 0.0f;
+	app->targetOffset = (Vector3){0, 0, 0};
 	app->showUI = true;
 	app->editor.showTimeline = true;
 	app->editor.isPlaying = true;
