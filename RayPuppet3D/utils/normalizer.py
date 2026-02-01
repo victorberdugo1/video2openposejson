@@ -254,20 +254,13 @@ def normalize_to_body_with_uniform_scale(animation_file, reference_file, output_
     first_anim_frame = list(animation_data.keys())[0]
     first_body = animation_data[first_anim_frame]["person_0"]
     
-    # Calcular transformación con escala UNIFORME
+    # Calcular ratio de escala para los deltas
     transform = calculate_uniform_transformation(first_body, reference_body, verbose)
     
-    # Aplicar transformación
-    if verbose:
-        print("🔧 Aplicando transformación con escala uniforme...")
-    
-    normalized_animation = {}
-    for frame_name, frame_data in animation_data.items():
-        normalized_frame = {}
-        for person_id, person_data in frame_data.items():
-            normalized_person = apply_uniform_transformation(person_data, transform)
-            normalized_frame[person_id] = normalized_person
-        normalized_animation[frame_name] = normalized_frame
+    # Aplicar normalización por deltas: body como base + deltas de la animación
+    normalized_animation = apply_delta_normalization(
+        animation_data, reference_body, transform, verbose
+    )
     
     # Aplicar Kalman
     if apply_kalman:
@@ -304,7 +297,8 @@ def normalize_to_body_with_uniform_scale(animation_file, reference_file, output_
 
 def calculate_uniform_transformation(source_body, target_body, verbose=False):
     """
-    Calcula transformación con ESCALA UNIFORME basada en altura
+    Calcula el ratio de escala entre la animación y el body de referencia.
+    Usado para re-escalar los deltas de la animación al espacio del body.
     """
     key_joints = ['LShoulder', 'RShoulder', 'LHip', 'RHip', 'Nose', 'LAnkle', 'RAnkle', 'Head', 'Neck']
     
@@ -318,36 +312,102 @@ def calculate_uniform_transformation(source_body, target_body, verbose=False):
             target_points[joint] = [target_body[joint]['x'], target_body[joint]['y'], 
                                    target_body[joint]['z']]
     
-    # Calcular centros
-    source_center = calculate_center(source_points)
-    target_center = calculate_center(target_points)
+    # Altura total Neck->Ankles como referencia de escala
+    def mid_y(j1, j2, pts):
+        return (pts[j1][1] + pts[j2][1]) / 2.0
     
-    # Calcular altura (rango en Y)
-    source_y_coords = [p[1] for p in source_points.values()]
-    target_y_coords = [p[1] for p in target_points.values()]
+    source_height = abs(mid_y('LAnkle','RAnkle', source_points) - source_points['Neck'][1]) if 'Neck' in source_points else 1.0
+    target_height = abs(mid_y('LAnkle','RAnkle', target_points) - target_points['Neck'][1]) if 'Neck' in target_points else 1.0
     
-    source_height = max(source_y_coords) - min(source_y_coords)
-    target_height = max(target_y_coords) - min(target_y_coords)
-    
-    # ESCALA UNIFORME basada en altura
-    uniform_scale = target_height / source_height if source_height > 0 else 1.0
-    
-    transform = {
-        'source_center': source_center,
-        'target_center': target_center,
-        'uniform_scale': uniform_scale
-    }
+    delta_scale = target_height / source_height if source_height > 0 else 1.0
     
     if verbose:
-        print("🎯 Transformación calculada:")
-        print(f"   Centro origen: [{source_center[0]:.4f}, {source_center[1]:.4f}, {source_center[2]:.4f}]")
-        print(f"   Centro destino: [{target_center[0]:.4f}, {target_center[1]:.4f}, {target_center[2]:.4f}]")
-        print(f"   Altura origen: {source_height:.4f}")
-        print(f"   Altura destino: {target_height:.4f}")
-        print(f"   Escala UNIFORME: {uniform_scale:.4f}")
+        print("🎯 Escala de deltas calculada:")
+        print(f"   Altura animación (Neck->Ankle): {source_height:.4f}")
+        print(f"   Altura body ref  (Neck->Ankle): {target_height:.4f}")
+        print(f"   Ratio (escala de deltas):       {delta_scale:.4f}")
         print()
     
-    return transform
+    return {'delta_scale': delta_scale}
+
+def apply_delta_normalization(animation_data, reference_body, transform, verbose=False):
+    """
+    Aplica normalización por deltas:
+    
+        resultado[frame_N][joint] = body[joint] + (anim[frame_N][joint] - anim[frame_0][joint]) * delta_scale
+    
+    • El frame 0 queda EXACTO al body de referencia
+    • Frames siguientes solo suman los movimientos relativos de la animación,
+      re-escalados al tamaño del body
+    • Las proporciones del body se preservan siempre como base
+    """
+    delta_scale = transform['delta_scale']
+    
+    frame_names = sorted(animation_data.keys())
+    if not frame_names:
+        return animation_data
+    
+    # frame 0 de la animación = base para calcular deltas
+    base_frame_name = frame_names[0]
+    base_person = animation_data[base_frame_name].get("person_0", {})
+    
+    if verbose:
+        print("🔧 Aplicando normalización por deltas...")
+        print(f"   Base: {base_frame_name}")
+        print(f"   Delta scale: {delta_scale:.4f}")
+    
+    normalized_animation = {}
+    
+    for frame_name in frame_names:
+        frame_data = animation_data[frame_name]
+        normalized_frame = {}
+        
+        for person_id, person_data in frame_data.items():
+            normalized_person = {}
+            base = base_person  # usar siempre person_0 del frame base
+            
+            for joint_name, joint_data in person_data.items():
+                if not isinstance(joint_data, dict) or 'x' not in joint_data:
+                    normalized_person[joint_name] = joint_data
+                    continue
+                
+                # Si el joint existe en el body de referencia, usar body como base
+                if joint_name in reference_body and joint_name in base:
+                    # Delta = movimiento relativo respecto al frame 0 de la animación
+                    dx = (joint_data['x'] - base[joint_name]['x']) * delta_scale
+                    dy = (joint_data['y'] - base[joint_name]['y']) * delta_scale
+                    dz = (joint_data['z'] - base[joint_name]['z']) * delta_scale
+                    
+                    # Aplicar delta sobre el body de referencia
+                    normalized_joint = {
+                        'x': reference_body[joint_name]['x'] + dx,
+                        'y': reference_body[joint_name]['y'] + dy,
+                        'z': reference_body[joint_name]['z'] + dz,
+                    }
+                else:
+                    # Joint no existe en la ref: usar posición original
+                    normalized_joint = {
+                        'x': joint_data['x'],
+                        'y': joint_data['y'],
+                        'z': joint_data['z'],
+                    }
+                
+                # Preservar otros campos
+                for key, value in joint_data.items():
+                    if key not in ['x', 'y', 'z']:
+                        normalized_joint[key] = value
+                
+                normalized_person[joint_name] = normalized_joint
+            
+            normalized_frame[person_id] = normalized_person
+        
+        normalized_animation[frame_name] = normalized_frame
+    
+    if verbose:
+        print("   ✅ Normalización por deltas completada")
+        print()
+    
+    return normalized_animation
 
 def calculate_center(points_dict):
     """Calcula centro geométrico"""
@@ -363,38 +423,6 @@ def calculate_center(points_dict):
         sum(y_coords) / len(y_coords), 
         sum(z_coords) / len(z_coords)
     ]
-
-def apply_uniform_transformation(body_data, transform):
-    """Aplica transformación con escala uniforme"""
-    transformed_body = {}
-    
-    for joint_name, joint_data in body_data.items():
-        transformed_joint = {}
-        
-        if 'x' in joint_data and 'y' in joint_data and 'z' in joint_data:
-            # Centrar
-            centered_x = joint_data['x'] - transform['source_center'][0]
-            centered_y = joint_data['y'] - transform['source_center'][1]
-            centered_z = joint_data['z'] - transform['source_center'][2]
-            
-            # Escalar UNIFORMEMENTE
-            scaled_x = centered_x * transform['uniform_scale']
-            scaled_y = centered_y * transform['uniform_scale']
-            scaled_z = centered_z * transform['uniform_scale']
-            
-            # Reposicionar
-            transformed_joint['x'] = scaled_x + transform['target_center'][0]
-            transformed_joint['y'] = scaled_y + transform['target_center'][1]
-            transformed_joint['z'] = scaled_z + transform['target_center'][2]
-        
-        # Preservar otros campos
-        for key, value in joint_data.items():
-            if key not in ['x', 'y', 'z']:
-                transformed_joint[key] = value
-        
-        transformed_body[joint_name] = transformed_joint
-    
-    return transformed_body
 
 def ground_and_center_animation(animation_data, verbose=False):
     """
