@@ -30,10 +30,10 @@ RAnkle data/textures/liz00/Foot.png 1 0.13
 # @HairBack Head 0.0,-0.01,-0.1 data/textures/hil/HairBack.png 1 0.20 - stiff
 # @HairTip HairBack 0.0,-0.08,-0.03 data/textures/hil/HairTip.png 1 0.18 @HairBack medium 
 @TailBase Hip 0.0,-0.05,0.08 data/textures/liz00/tail.png 1 0.15 - medium
-@TailMid TailBase 0.0,-0.07,-0.07 data/textures/liz00/tail.png 1 0.14 @TailBase soft
-@TailLower TailMid 0.0,-0.10,-0.14 data/textures/liz00/tailmid.png 1 0.13 @TailMid soft
-@TailUpper TailLower 0.0,0.0,-0.18 data/textures/liz00/tailup.png 1 0.125 @TailLower verysoft
-@TailTip TailUpper 0.0,0.05,-0.19 data/textures/liz00/tailtip.png 1 0.12 @TailUpper verysoft
+@TailMid TailBase 0.0,-0.01,-0.12 data/textures/liz00/tail.png 1 0.14 @TailBase soft
+@TailLower TailMid 0.0,-0.04,-0.22 data/textures/liz00/tailmid.png 1 0.13 @TailMid soft
+@TailUpper TailLower 0.0,0.03,-0.27 data/textures/liz00/tailup.png 1 0.125 @TailLower verysoft
+@TailTip TailUpper 0.0,0.11,-0.32 data/textures/liz00/tailtip.png 1 0.12 @TailUpper verysoft
 
 
 
