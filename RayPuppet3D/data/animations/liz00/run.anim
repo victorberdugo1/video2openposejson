@@ -1,0 +1,10 @@
+{
+  "name": "run",
+  "fps": 60,
+  "start_frame": 0,
+  "end_frame": 52,
+  "loop": true,
+  "events": [
+    {"time": 0.00, "type": "texture", "bone": "Head", "variant": "idle"}
+  ]
+}
