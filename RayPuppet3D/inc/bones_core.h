@@ -638,6 +638,7 @@ void DrawAnimatedCharacter(AnimatedCharacter* character, Camera camera);
 void DrawAnimatedCharacterTransformed(AnimatedCharacter* character, Camera camera, Vector3 worldPosition, float worldRotation);
 void SetCharacterFrame(AnimatedCharacter* character, int frame);
 void SetCharacterAutoPlay(AnimatedCharacter* character, bool autoPlay);
+void RestartAnimation(AnimatedCharacter* character);
 void SetCharacterBillboards(AnimatedCharacter* character, bool heads, bool torsos);
 void SetAnimationTransitionDuration(float duration);
 
@@ -2786,7 +2787,50 @@ void SetCharacterFrame(AnimatedCharacter* character, int frame) {
 }
 
 void SetCharacterAutoPlay(AnimatedCharacter* character, bool autoPlay) {
-	if (character) character->autoPlay = autoPlay;
+	if (!character) return;
+	
+	character->autoPlay = autoPlay;
+	
+	// Si estamos activando el autoPlay y tenemos un AnimationController
+	if (autoPlay && character->animController) {
+		// Verificar si la animación ha terminado (no tiene loop y está al final)
+		if (character->animController->currentClipIndex >= 0) {
+			AnimationClipMetadata* clip = &character->animController->clips[character->animController->currentClipIndex];
+			if (!clip->loop && !character->animController->playing) {
+				// La animación había terminado, reiniciarla
+				RestartAnimation(character);
+			} else {
+				// Solo reactivar la reproducción
+				character->animController->playing = true;
+			}
+		}
+	}
+}
+
+void RestartAnimation(AnimatedCharacter* character) {
+	if (!character) return;
+	
+	// Reiniciar al primer frame
+	if (character->animation.isLoaded && character->animation.frameCount > 0) {
+		SetCharacterFrame(character, 0);
+	}
+	
+	// Reiniciar el controlador de animación
+	if (character->animController) {
+		character->animController->localTime = 0.0f;
+		character->animController->playing = true;
+		
+		// Resetear eventos procesados
+		if (character->animController->currentClipIndex >= 0) {
+			AnimationClipMetadata* clip = &character->animController->clips[character->animController->currentClipIndex];
+			for (int i = 0; i < clip->eventCount; i++) {
+				clip->events[i].processed = false;
+			}
+		}
+	}
+	
+	// Asegurar que autoPlay esté activo
+	character->autoPlay = true;
 }
 
 void SetCharacterBillboards(AnimatedCharacter* character, bool heads, bool torsos) {
@@ -5007,20 +5051,12 @@ void Ornaments_CollectForRendering(
         renderData->size = orn->size;
         renderData->visible = true;
         renderData->valid = true;
-
-        // EN LUGAR DE CREAR UNA ORIENTACIÓN DE BILLBOARD,
-        // USAMOS LA MISMA ORIENTACIÓN QUE EL ANCHOR ORIGINAL
-        // O UNA ORIENTACIÓN POR DEFECTO APROPIADA
         
-        // Orientación por defecto para ornamentos (como si fueran parte del cuerpo)
-        // Esto asegura que sigan las reglas de orientación normales de los huesos
         renderData->orientation.position = renderData->position;
         renderData->orientation.forward = (Vector3){0, 0, -1};
         renderData->orientation.up = (Vector3){0, 1, 0};
         renderData->orientation.right = (Vector3){-1, 0, 0};
         
-        // Calcular un yaw simple basado en la dirección hacia la cámara
-        // pero mantener pitch y roll a 0 para consistencia
         Vector3 toCamera = Vector3Subtract(camera.position, renderData->position);
         if (Vector3Length(toCamera) > 0.001f) {
             toCamera = Vector3Normalize(toCamera);

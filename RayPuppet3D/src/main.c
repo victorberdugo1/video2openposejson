@@ -2085,8 +2085,28 @@ static void DrawControlPanel(AppState* app) {
 	const char* playIcon = app->editor.isPlaying ? "||" : ">";
 	if (IconButton((Rectangle){(float)buttonX, (float)panelY, (float)buttonSize, (float)buttonSize},
 				playIcon, app->editor.isPlaying ? DARKGREEN : GREEN)) {
-		app->editor.isPlaying = !app->editor.isPlaying;
-		SetCharacterAutoPlay(app->character, app->editor.isPlaying);
+		// Detectar si la animación terminó automáticamente (sin loop)
+		bool animationFinished = false;
+		if (app->character && app->character->animController && 
+		    app->character->animController->currentClipIndex >= 0) {
+			AnimationClipMetadata* clip = &app->character->animController->clips[app->character->animController->currentClipIndex];
+			// La animación terminó si: no tiene loop, isPlaying está true pero controller->playing está false
+			if (!clip->loop && app->editor.isPlaying && !app->character->animController->playing) {
+				animationFinished = true;
+			}
+		}
+		
+		// Si la animación terminó automáticamente, no cambiar isPlaying, solo reiniciar
+		if (animationFinished) {
+			TraceLog(LOG_INFO, "Animation finished, restarting...");
+			RestartAnimation(app->character);
+			app->editor.isPlaying = true;
+			SetCharacterAutoPlay(app->character, true);
+		} else {
+			// Comportamiento normal: toggle play/pause
+			app->editor.isPlaying = !app->editor.isPlaying;
+			SetCharacterAutoPlay(app->character, app->editor.isPlaying);
+		}
 	}
 	buttonX += buttonSize + spacing;
 
@@ -2735,8 +2755,28 @@ static void App_HandleInput(AppState* app) {
 	}
 
 	if (IsKeyPressed(KEY_SPACE)) {
-		app->editor.isPlaying = !app->editor.isPlaying;
-		SetCharacterAutoPlay(app->character, app->editor.isPlaying);
+		// Detectar si la animación terminó automáticamente (sin loop)
+		bool animationFinished = false;
+		if (app->character && app->character->animController && 
+		    app->character->animController->currentClipIndex >= 0) {
+			AnimationClipMetadata* clip = &app->character->animController->clips[app->character->animController->currentClipIndex];
+			// La animación terminó si: no tiene loop, isPlaying está true pero controller->playing está false
+			if (!clip->loop && app->editor.isPlaying && !app->character->animController->playing) {
+				animationFinished = true;
+			}
+		}
+		
+		// Si la animación terminó automáticamente, no cambiar isPlaying, solo reiniciar
+		if (animationFinished) {
+			TraceLog(LOG_INFO, "Animation finished, restarting...");
+			RestartAnimation(app->character);
+			app->editor.isPlaying = true;
+			SetCharacterAutoPlay(app->character, true);
+		} else {
+			// Comportamiento normal: toggle play/pause
+			app->editor.isPlaying = !app->editor.isPlaying;
+			SetCharacterAutoPlay(app->character, app->editor.isPlaying);
+		}
 	}
 
 	if (IsKeyPressed(KEY_LEFT)) {

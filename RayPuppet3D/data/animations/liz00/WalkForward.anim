@@ -1,5 +1,5 @@
 {
-  "name": "walk",
+  "name": "WalkForward",
   "fps": 75,
   "start_frame": 0,
   "end_frame": 84,

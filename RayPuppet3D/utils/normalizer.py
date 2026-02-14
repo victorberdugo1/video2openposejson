@@ -2,16 +2,19 @@
 # python normalizer.py -a output_openpose.json -r body.json -o suavizada.json -v
 
 # Ajustar suavidad (más suave)
-# python normalizer.py -a animation.json -r body.json -o suavizada.json --process-noise 0.001 --measurement-noise 0.1 -v
+# python normalizer.py -a output_openpose.json -r body.json -o suavizada.json --process-noise 0.001 --measurement-noise 0.1 -v
 
 # Solo normalizar, sin Kalman
-# python normalizer.py -a animation.json -r body.json -o solo_norm.json --no-kalman -v
+# python normalizer.py -a output_openpose.json -r body.json -o solo_norm.json --no-kalman -v
 
 # Kalman estándar (no adaptativo)
-# python normalizer.py -a animation.json -r body.json -o suavizada.json --no-adaptive -v
+# python normalizer.py -a output_openpose.json -r body.json -o suavizada.json --no-adaptive -v
 
 # Sin posicionamiento en suelo (mantener posición original)
-# python normalizer.py -a animation.json -r body.json -o suavizada.json --no-ground -v
+# python normalizer.py -a output_openpose.json -r body.json -o suavizada.json --no-ground -v
+
+# Sin ground + offset manual
+# python normalizer.py -a output_openpose.json -r body.json -o out.json --no-ground --y-offset -0.05 --z-offset 0.05 -v
 
 #!/usr/bin/env python3
 """
@@ -210,10 +213,70 @@ def calculate_jitter_metrics(animation_data, verbose=False):
     avg_jitter = total_acceleration / joint_count if joint_count > 0 else 0
     print(f"📊 Jitter promedio: {avg_jitter:.6f}")
 
+def apply_manual_offset(animation_data, y_offset=0.0, x_offset=0.0, z_offset=0.0, verbose=False):
+    """
+    Aplica un offset manual a toda la animación.
+    Útil cuando --no-ground está activo y se necesita ajustar la posición manualmente.
+    
+    Args:
+        animation_data: Datos de animación
+        y_offset: Offset en Y (positivo=subir, negativo=bajar)
+        x_offset: Offset en X (positivo=derecha, negativo=izquierda)
+        z_offset: Offset en Z (positivo=adelante, negativo=atrás)
+        verbose: Mostrar información
+    """
+    if abs(y_offset) < 0.0001 and abs(x_offset) < 0.0001 and abs(z_offset) < 0.0001:
+        return animation_data
+    
+    if verbose:
+        print("📐 Aplicando offset manual:")
+        if abs(y_offset) > 0.0001:
+            print(f"   Y: {y_offset:+.6f} ({'subir' if y_offset > 0 else 'bajar'})")
+        if abs(x_offset) > 0.0001:
+            print(f"   X: {x_offset:+.6f}")
+        if abs(z_offset) > 0.0001:
+            print(f"   Z: {z_offset:+.6f}")
+    
+    offset_animation = {}
+    
+    for frame_name, frame_data in animation_data.items():
+        offset_frame = {}
+        
+        for person_id, person_data in frame_data.items():
+            offset_person = {}
+            
+            for joint_name, joint_data in person_data.items():
+                if isinstance(joint_data, dict) and 'x' in joint_data:
+                    offset_joint = {
+                        'x': joint_data['x'] + x_offset,
+                        'y': joint_data['y'] + y_offset,
+                        'z': joint_data['z'] + z_offset,
+                    }
+                    
+                    # Preservar otros campos
+                    for key, value in joint_data.items():
+                        if key not in ['x', 'y', 'z']:
+                            offset_joint[key] = value
+                    
+                    offset_person[joint_name] = offset_joint
+                else:
+                    offset_person[joint_name] = joint_data
+            
+            offset_frame[person_id] = offset_person
+        
+        offset_animation[frame_name] = offset_frame
+    
+    if verbose:
+        print("   ✅ Offset aplicado")
+        print()
+    
+    return offset_animation
+
 def normalize_to_body_with_uniform_scale(animation_file, reference_file, output_file, 
                                          apply_kalman=True, process_noise=0.005, 
                                          measurement_noise=0.05, adaptive=True, 
-                                         ground_position=True, verbose=False):
+                                         ground_position=True, y_offset=0.0,
+                                         x_offset=0.0, z_offset=0.0, verbose=False):
     """
     Normaliza animación al body de referencia usando ESCALA UNIFORME
     Esto mantiene las proporciones del movimiento original
@@ -227,6 +290,9 @@ def normalize_to_body_with_uniform_scale(animation_file, reference_file, output_
         measurement_noise: Ruido de medición para Kalman
         adaptive: Si True, usa Kalman adaptativo
         ground_position: Si True, posiciona tobillos en el suelo y centra
+        y_offset: Offset manual en Y (solo si ground_position=False)
+        x_offset: Offset manual en X (solo si ground_position=False)
+        z_offset: Offset manual en Z (solo si ground_position=False)
         verbose: Si True, muestra información detallada
     """
     
@@ -274,11 +340,19 @@ def normalize_to_body_with_uniform_scale(animation_file, reference_file, output_
             verbose=verbose
         )
     
-    # Aplicar posicionamiento en suelo y centrado
+    # Aplicar posicionamiento en suelo y centrado O offset manual
     if ground_position:
         if verbose:
             print()
         normalized_animation = ground_and_center_animation(normalized_animation, verbose)
+    else:
+        # Si no se usa ground_position, aplicar offset manual si se especificó
+        if abs(y_offset) > 0.0001 or abs(x_offset) > 0.0001 or abs(z_offset) > 0.0001:
+            if verbose:
+                print()
+            normalized_animation = apply_manual_offset(
+                normalized_animation, y_offset, x_offset, z_offset, verbose
+            )
     
     # Métricas después
     if verbose:
@@ -552,7 +626,32 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(
-        description='Normaliza animación con escala uniforme y Kalman'
+        description='Normaliza animación con escala uniforme y Kalman',
+        epilog='''
+Ejemplos de uso:
+
+  # Básico (con valores óptimos por defecto + posicionamiento en suelo)
+  python normalizer.py -a output_openpose.json -r body.json -o suavizada.json -v
+
+  # Ajustar suavidad (más suave)
+  python normalizer.py -a output_openpose.json -r body.json -o suavizada.json --process-noise 0.001 --measurement-noise 0.1 -v
+
+  # Solo normalizar, sin Kalman
+  python normalizer.py -a output_openpose.json -r body.json -o solo_norm.json --no-kalman -v
+
+  # Kalman estándar (no adaptativo)
+  python normalizer.py -a output_openpose.json -r body.json -o suavizada.json --no-adaptive -v
+
+  # Sin posicionamiento en suelo (mantener posición original)
+  python normalizer.py -a output_openpose.json -r body.json -o suavizada.json --no-ground -v
+
+  # Sin posicionamiento en suelo + offset manual (ideal para saltos)
+  python normalizer.py -a output_openpose.json -r body.json -o suavizada.json --no-ground --y-offset -0.2 -v
+  
+  # Con offsets en múltiples ejes
+  python normalizer.py -a output_openpose.json -r body.json -o suavizada.json --no-ground --y-offset -0.15 --x-offset 0.05 -v
+        ''',
+        formatter_class=argparse.RawDescriptionHelpFormatter
     )
     
     parser.add_argument('-a', '--animation', required=True, 
@@ -573,8 +672,22 @@ if __name__ == "__main__":
                        help='Usar Kalman estándar')
     parser.add_argument('--no-ground', action='store_true',
                        help='No posicionar tobillos en suelo ni centrar')
+    parser.add_argument('--y-offset', type=float, default=0.0,
+                       help='Offset manual en Y (positivo=subir, negativo=bajar). Usar con --no-ground')
+    parser.add_argument('--x-offset', type=float, default=0.0,
+                       help='Offset manual en X. Usar con --no-ground')
+    parser.add_argument('--z-offset', type=float, default=0.0,
+                       help='Offset manual en Z. Usar con --no-ground')
     
     args = parser.parse_args()
+    
+    # Validar que los offsets solo se usen con --no-ground
+    if not args.no_ground and (abs(args.y_offset) > 0.0001 or 
+                                abs(args.x_offset) > 0.0001 or 
+                                abs(args.z_offset) > 0.0001):
+        print("⚠️  Advertencia: Los offsets (--y-offset, --x-offset, --z-offset) solo tienen efecto con --no-ground")
+        print("   Se ignorarán porque el posicionamiento automático está activo.")
+        print()
     
     if not os.path.exists(args.animation):
         print(f"❌ Error: '{args.animation}' no existe")
@@ -594,6 +707,9 @@ if __name__ == "__main__":
             measurement_noise=args.measurement_noise,
             adaptive=not args.no_adaptive,
             ground_position=not args.no_ground,
+            y_offset=args.y_offset,
+            x_offset=args.x_offset,
+            z_offset=args.z_offset,
             verbose=args.verbose
         )
         print(f"✅ Proceso completado: {args.output}")
