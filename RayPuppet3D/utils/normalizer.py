@@ -16,10 +16,12 @@
 # Sin ground + offset manual
 # python normalizer.py -a output_openpose.json -r body.json -o out.json --no-ground --y-offset -0.05 --z-offset 0.05 -v
 
+# Sin normalización, solo ajustar posición con offsets
+# python normalizer.py -a output_openpose.json -o out.json --no-ground --y-offset 0.4 --z-offset 0.1 -v
+
 #!/usr/bin/env python3
 """
-Normalizer con escala uniforme - Adapta animación a body de referencia
-manteniendo proporciones del movimiento
+Normalizer - Procesa animaciones con normalización opcional, suavizado y posicionamiento
 """
 
 import json
@@ -111,8 +113,7 @@ def smooth_animation_with_kalman(animation_data, process_noise=0.005, measuremen
                                  adaptive=True, verbose=False):
     """Aplica filtro de Kalman a toda la animación"""
     if verbose:
-        print("🔄 Aplicando suavizado Kalman...")
-        print(f"   Modo: {'Adaptativo' if adaptive else 'Estándar'}")
+        print(f"🔄 Suavizado Kalman ({'adaptativo' if adaptive else 'estándar'})...")
     
     smoothed_animation = {}
     persons_data = {}
@@ -139,9 +140,6 @@ def smooth_animation_with_kalman(animation_data, process_noise=0.005, measuremen
                 })
     
     for person_id, joints_data in persons_data.items():
-        if verbose:
-            print(f"   Procesando {person_id}...")
-        
         for joint_name, joint_trajectory in joints_data.items():
             if adaptive:
                 kalman = AdaptiveKalmanFilter3D(process_noise, measurement_noise)
@@ -176,9 +174,6 @@ def smooth_animation_with_kalman(animation_data, process_noise=0.005, measuremen
                 smoothed_joint.update(point['other_data'])
                 
                 smoothed_animation[frame_name][person_id][joint_name] = smoothed_joint
-    
-    if verbose:
-        print("✅ Suavizado completado")
     
     return smoothed_animation
 
@@ -278,12 +273,11 @@ def normalize_to_body_with_uniform_scale(animation_file, reference_file, output_
                                          ground_position=True, y_offset=0.0,
                                          x_offset=0.0, z_offset=0.0, verbose=False):
     """
-    Normaliza animación al body de referencia usando ESCALA UNIFORME
-    Esto mantiene las proporciones del movimiento original
+    Procesa animación con opciones de normalización, suavizado y posicionamiento
     
     Args:
         animation_file: Archivo JSON de animación de entrada
-        reference_file: Archivo JSON de body de referencia
+        reference_file: Archivo JSON de body de referencia (None = mantener escala original)
         output_file: Archivo JSON de salida
         apply_kalman: Si True, aplica filtro Kalman
         process_noise: Ruido del proceso para Kalman
@@ -297,15 +291,15 @@ def normalize_to_body_with_uniform_scale(animation_file, reference_file, output_
     """
     
     if verbose:
-        print("🎯 Normalizando con escala uniforme...")
+        if reference_file:
+            print("🎯 Normalizando con escala uniforme...")
+        else:
+            print("🎯 Procesando animación (sin normalizar escala)...")
         print()
     
-    # Cargar datos
+    # Cargar animación
     with open(animation_file, 'r') as f:
         animation_data = json.load(f)
-    
-    with open(reference_file, 'r') as f:
-        reference_data = json.load(f)
     
     # Métricas antes
     if verbose:
@@ -313,20 +307,27 @@ def normalize_to_body_with_uniform_scale(animation_file, reference_file, output_
         calculate_jitter_metrics(animation_data, verbose)
         print()
     
-    # Obtener referencia
-    ref_frame_name = list(reference_data.keys())[0]
-    reference_body = reference_data[ref_frame_name]["person_0"]
+    normalized_animation = animation_data
     
-    first_anim_frame = list(animation_data.keys())[0]
-    first_body = animation_data[first_anim_frame]["person_0"]
-    
-    # Calcular ratio de escala para los deltas
-    transform = calculate_uniform_transformation(first_body, reference_body, verbose)
-    
-    # Aplicar normalización por deltas: body como base + deltas de la animación
-    normalized_animation = apply_delta_normalization(
-        animation_data, reference_body, transform, verbose
-    )
+    # Solo normalizar si se proporciona referencia
+    if reference_file:
+        with open(reference_file, 'r') as f:
+            reference_data = json.load(f)
+        
+        # Obtener referencia
+        ref_frame_name = list(reference_data.keys())[0]
+        reference_body = reference_data[ref_frame_name]["person_0"]
+        
+        first_anim_frame = list(animation_data.keys())[0]
+        first_body = animation_data[first_anim_frame]["person_0"]
+        
+        # Calcular ratio de escala para los deltas
+        transform = calculate_uniform_transformation(first_body, reference_body, verbose)
+        
+        # Aplicar normalización por deltas: body como base + deltas de la animación
+        normalized_animation = apply_delta_normalization(
+            animation_data, reference_body, transform, verbose
+        )
     
     # Aplicar Kalman
     if apply_kalman:
@@ -367,7 +368,10 @@ def normalize_to_body_with_uniform_scale(animation_file, reference_file, output_
     
     if verbose:
         print(f"💾 Guardado en: {output_file}")
-        verify_proportions(normalized_animation, first_body, verbose)
+        if reference_file:
+            first_anim_frame = list(animation_data.keys())[0]
+            first_body = animation_data[first_anim_frame]["person_0"]
+            verify_proportions(normalized_animation, first_body, verbose)
 
 def calculate_uniform_transformation(source_body, target_body, verbose=False):
     """
@@ -426,9 +430,7 @@ def apply_delta_normalization(animation_data, reference_body, transform, verbose
     base_person = animation_data[base_frame_name].get("person_0", {})
     
     if verbose:
-        print("🔧 Aplicando normalización por deltas...")
-        print(f"   Base: {base_frame_name}")
-        print(f"   Delta scale: {delta_scale:.4f}")
+        print(f"🔧 Normalizando (escala: {delta_scale:.4f})...")
     
     normalized_animation = {}
     
@@ -477,10 +479,6 @@ def apply_delta_normalization(animation_data, reference_body, transform, verbose
         
         normalized_animation[frame_name] = normalized_frame
     
-    if verbose:
-        print("   ✅ Normalización por deltas completada")
-        print()
-    
     return normalized_animation
 
 def calculate_center(points_dict):
@@ -504,7 +502,7 @@ def ground_and_center_animation(animation_data, verbose=False):
     Aplica a todos los frames manteniendo la forma original.
     """
     if verbose:
-        print("🎯 Aplicando posicionamiento en suelo y centrado...")
+        print("📍 Posicionando en suelo y centrando...")
     
     grounded_animation = {}
     
@@ -585,10 +583,6 @@ def ground_and_center_animation(animation_data, verbose=False):
         
         grounded_animation[frame_name] = grounded_frame
     
-    if verbose:
-        print("   ✅ Posicionamiento completado")
-        print()
-    
     return grounded_animation
 
 def verify_proportions(normalized_animation, original_body, verbose=False):
@@ -626,38 +620,32 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(
-        description='Normaliza animación con escala uniforme y Kalman',
+        description='Procesa animación con normalización opcional, suavizado Kalman y posicionamiento',
         epilog='''
 Ejemplos de uso:
 
-  # Básico (con valores óptimos por defecto + posicionamiento en suelo)
-  python normalizer.py -a output_openpose.json -r body.json -o suavizada.json -v
+  # Con normalización al body de referencia
+  python normalizer.py -a anim.json -r body.json -o out.json -v
 
-  # Ajustar suavidad (más suave)
-  python normalizer.py -a output_openpose.json -r body.json -o suavizada.json --process-noise 0.001 --measurement-noise 0.1 -v
-
-  # Solo normalizar, sin Kalman
-  python normalizer.py -a output_openpose.json -r body.json -o solo_norm.json --no-kalman -v
-
-  # Kalman estándar (no adaptativo)
-  python normalizer.py -a output_openpose.json -r body.json -o suavizada.json --no-adaptive -v
-
-  # Sin posicionamiento en suelo (mantener posición original)
-  python normalizer.py -a output_openpose.json -r body.json -o suavizada.json --no-ground -v
-
-  # Sin posicionamiento en suelo + offset manual (ideal para saltos)
-  python normalizer.py -a output_openpose.json -r body.json -o suavizada.json --no-ground --y-offset -0.2 -v
+  # Sin normalización (mantener escala), solo suavizar y posicionar
+  python normalizer.py -a anim.json -o out.json -v
   
-  # Con offsets en múltiples ejes
-  python normalizer.py -a output_openpose.json -r body.json -o suavizada.json --no-ground --y-offset -0.15 --x-offset 0.05 -v
+  # Sin normalización, con offsets manuales (para ajustar posición)
+  python normalizer.py -a anim.json -o out.json --no-ground --y-offset -0.05 --z-offset 0.05 -v
+
+  # Normalización + offsets manuales
+  python normalizer.py -a anim.json -r body.json -o out.json --no-ground --y-offset -0.2 -v
+  
+  # Solo normalizar, sin Kalman ni posicionamiento
+  python normalizer.py -a anim.json -r body.json -o out.json --no-kalman --no-ground -v
         ''',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     
     parser.add_argument('-a', '--animation', required=True, 
                        help='Archivo de animación JSON')
-    parser.add_argument('-r', '--reference', required=True, 
-                       help='Archivo body de referencia JSON')
+    parser.add_argument('-r', '--reference', required=False, default=None,
+                       help='Archivo body de referencia JSON (opcional - omitir para mantener escala original)')
     parser.add_argument('-o', '--output', default='normalized.json', 
                        help='Archivo de salida')
     parser.add_argument('-v', '--verbose', action='store_true', 
@@ -693,7 +681,7 @@ Ejemplos de uso:
         print(f"❌ Error: '{args.animation}' no existe")
         sys.exit(1)
         
-    if not os.path.exists(args.reference):
+    if args.reference and not os.path.exists(args.reference):
         print(f"❌ Error: '{args.reference}' no existe")
         sys.exit(1)
     
@@ -712,7 +700,7 @@ Ejemplos de uso:
             z_offset=args.z_offset,
             verbose=args.verbose
         )
-        print(f"✅ Proceso completado: {args.output}")
+        print(f"✅ Completado: {args.output}")
     except Exception as e:
         print(f"❌ Error: {e}")
         if args.verbose:

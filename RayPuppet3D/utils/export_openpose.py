@@ -1,5 +1,5 @@
 # Set-Alias blender "C:\Program Files\Blender Foundation\Blender 5.0\blender.exe"
-# blender --background --python export_openpose.py -- Talking.fbx output_openpose.json
+# blender --background --python export_openpose.py -- Animation.fbx output_openpose.json
 
 import bpy
 import sys
@@ -20,7 +20,7 @@ output_path = argv[1]
 # --------------------------------------------------
 scale_x_factor = 0.18
 scale_y_factor = 0.7
-scale_z_factor = 0.08
+scale_z_factor = 0.15
 
 # Offsets finales (aplicados en espacio OpenPose)
 facial_y_offset = 0.0
