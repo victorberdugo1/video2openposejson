@@ -20,7 +20,8 @@ output_path = argv[1]
 # --------------------------------------------------
 scale_x_factor = 0.18
 scale_y_factor = 0.7
-scale_z_factor = 0.15
+scale_z_factor = 0.06
+# scale_z_factor = 0.15
 
 # Offsets finales (aplicados en espacio OpenPose)
 facial_y_offset = 0.0

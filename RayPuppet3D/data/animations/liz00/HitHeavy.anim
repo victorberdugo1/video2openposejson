@@ -1,9 +1,9 @@
 {
-  "name": "AttackCombo2",
-  "fps": 60,
+  "name": "HitHeavy",
+  "fps": 120,
   "start_frame": 0,
-  "end_frame": 160,
-  "loop": false,
+  "end_frame": 62,
+  "loop": true,
   "events": [
     {"time": 0.2, "type": "texture", "bone": "Head", "variant": "idle"}
   ]
