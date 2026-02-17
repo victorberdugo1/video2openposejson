@@ -1,0 +1,10 @@
+{
+  "name": "AttackCombo2",
+  "fps": 60,
+  "start_frame": 0,
+  "end_frame": 160,
+  "loop": false,
+  "events": [
+    {"time": 0.2, "type": "texture", "bone": "Head", "variant": "idle"}
+  ]
+}
