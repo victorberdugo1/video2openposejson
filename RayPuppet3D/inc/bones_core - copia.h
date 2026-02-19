@@ -2528,10 +2528,9 @@ bool LoadAnimation(AnimatedCharacter* character, const char* animationPath, cons
 		character->animController = NULL;
 	}
 
-	// Parar la emision de trails del clip anterior pero dejar morir los puntos vivos
-	// No hacer FreeSystem aqui — se hara despues si la nueva anim tiene sus propios slashes
-	for (int _ti = 0; _ti < SLASH_TRAIL_MAX_ACTIVE; _ti++)
-		SlashTrail_Deactivate(&character->slashTrails, character->slashTrails.trails[_ti].slashIndex);
+	// Limpiar trails del clip anterior
+	SlashTrail_FreeSystem(&character->slashTrails);
+	SlashTrail_InitSystem(&character->slashTrails);
 	character->hasWorldTransform = false;
 
 	if (BonesLoadFromJSON(&character->animation, animationPath) != BONES_SUCCESS) {
@@ -2552,23 +2551,6 @@ bool LoadAnimation(AnimatedCharacter* character, const char* animationPath, cons
 		const char* clipName = "default";
 		if (character->animController->clipCount > 0) clipName = character->animController->clips[0].name;
 		AnimController_PlayClip(character->animController, clipName);
-	}
-
-	// Si la nueva animacion tiene slash events propios, limpiar trails viejos ahora
-	// Si no tiene (hit, death, idle...), los trails viejos se desvanecen solos
-	{
-		bool newAnimHasSlash = false;
-		if (character->animController && character->animController->clipCount > 0) {
-			for (int _ci = 0; _ci < character->animController->clipCount; _ci++) {
-				if (character->animController->clips[_ci].slashEventCount > 0) {
-					newAnimHasSlash = true; break;
-				}
-			}
-		}
-		if (newAnimHasSlash) {
-			SlashTrail_FreeSystem(&character->slashTrails);
-			SlashTrail_InitSystem(&character->slashTrails);
-		}
 	}
 
 	character->forceUpdate = true;
@@ -2726,37 +2708,24 @@ void UpdateAnimatedCharacter(AnimatedCharacter* character, float deltaTime) {
 	// --- *** FIN NUEVA LÓGICA *** ---
 
 	// --- Slash Trail Tick ---
-	// Nunca correr durante transicion: el transitionFrame mezcla dos animaciones
-	// y la posicion del bone es invalida. Usar siempre el frame real del JSON,
-	// no el interpolado, para que el bone este exactamente donde debe estar.
-	if (!usingTransition &&
-	    character->animController && character->animController->currentClipIndex >= 0) {
+	if (character->animController && character->animController->currentClipIndex >= 0 && frameToUse) {
 		AnimationClipMetadata* activeClip = &character->animController->clips[character->animController->currentClipIndex];
-		if (activeClip->slashEventCount > 0 && character->animation.isLoaded) {
-			int jsonFrame = character->animController->currentFrameInJSON;
-			const AnimationFrame* realFrame = NULL;
-			for (int _f = 0; _f < character->animation.frameCount; _f++) {
-				if (character->animation.frames[_f].frameNumber == jsonFrame) {
-					realFrame = &character->animation.frames[_f];
-					break;
-				}
-			}
-			if (realFrame && realFrame->valid) {
-				const char* personId = "";
-				if (realFrame->personCount > 0) personId = realFrame->persons[0].personId;
-				SlashTrail_Tick(
-					&character->slashTrails,
-					deltaTime,
-					jsonFrame,
-					activeClip->slashEvents,
-					activeClip->slashEventCount,
-					realFrame,
-					personId,
-					character->worldPosition,
-					character->worldPivot,
-					MatrixRotateY(character->worldRotation),
-					character->hasWorldTransform);
-			}
+		if (activeClip->slashEventCount > 0) {
+			// Obtener el personId del primer person activo del frame
+			const char* personId = "";
+			if (frameToUse->personCount > 0) personId = frameToUse->persons[0].personId;
+			SlashTrail_Tick(
+				&character->slashTrails,
+				deltaTime,
+				character->animController->currentFrameInJSON,
+				activeClip->slashEvents,
+				activeClip->slashEventCount,
+				frameToUse,
+				personId,
+				character->worldPosition,
+				character->worldPivot,
+				MatrixRotateY(character->worldRotation),
+				character->hasWorldTransform);
 		}
 	}
 
@@ -5508,7 +5477,13 @@ void SlashTrail_Draw(SlashTrailSystem* sys, Camera camera) {
             }
         }
 
-        if (lc < 2) continue;
+        if (lc < 2) {
+            // Con un solo punto, dibujar al menos una esfera de debug para confirmar que el sistema funciona
+            if (lc == 1) {
+                DrawSphere(live[0]->position, 0.02f, trail->config.colorStart);
+            }
+            continue;
+        }
 
         // Ordenar por age ascendente (más joven = punta del slash)
         for (int a = 0; a < lc - 1; a++) {
@@ -5655,113 +5630,20 @@ void SlashTrail_Tick(
             SlashTrail_Deactivate(sys, e);
         }
 
-        if (inRange) {
-            // Dentro del rango: actualizar con posicion real del bone
+        // Actualizar con la posición actual del bone — convertida a espacio mundo
+        if (inRange || exists) {
             Vector3 bonePos = SlashTrail__GetBonePos(frame, personId, ev->boneName);
             if (applyWorldTransform) {
+                // Misma operación que RotatePointAroundPivot:
+                // relativo al pivot → rotar → trasladar al mundo
                 Vector3 rel = Vector3Subtract(bonePos, pivot);
                 Vector3 rotated = Vector3Transform(rel, rot);
                 Vector3 pivotWorld = Vector3Add(worldPos, pivot);
                 bonePos = Vector3Add(pivotWorld, rotated);
             }
             SlashTrail_UpdateTrail(sys, deltaTime, e, bonePos);
-        } else if (exists) {
-            // Fuera del rango: envejecer puntos directamente sin pasar posicion
-            // Evita completamente spawnear nada en (0,0,0)
-            for (int _ti = 0; _ti < SLASH_TRAIL_MAX_ACTIVE; _ti++) {
-                SlashTrail* _tr = &sys->trails[_ti];
-                if (!_tr->alive || _tr->slashIndex != e) continue;
-                _tr->active = false;
-                _tr->spawnTimer = 0.0f;
-                bool _anyAlive = false;
-                for (int _p = 0; _p < _tr->config.segments; _p++) {
-                    SlashTrailPoint* _pt = &_tr->points[_p];
-                    if (!_pt->active) continue;
-                    _pt->age += deltaTime;
-                    if (_pt->age >= _pt->lifetime) _pt->active = false;
-                    else _anyAlive = true;
-                }
-                if (!_anyAlive) {
-                    if (_tr->hasTexture) { UnloadTexture(_tr->texture); _tr->hasTexture = false; }
-                    memset(_tr, 0, sizeof(SlashTrail));
-                } else {
-                    _tr->alive = true;
-                }
-            }
         }
     }
-}
-
-// ============================================================================
-// SLASH HITBOX QUERY
-// ============================================================================
-
-// Resultado de consultar qué slash está activo en el frame actual.
-// Usar para construir la hitbox de impacto perfectamente sincronizada con el trail.
-typedef struct {
-    bool        active;                         // true = hay un slash activo ahora mismo
-    char        boneName[BONES_AE_MAX_NAME];    // bone que genera el slash (RWrist, LAnkle, Head...)
-    Vector3     bonePosition;                   // posición del bone en espacio mundo (ya transformada)
-    int         frameStart;                     // rango del slash (para debug / lógica externa)
-    int         frameEnd;
-    int         slashIndex;                     // índice dentro de slashEvents[]
-} SlashHitboxInfo;
-
-// Devuelve el primer slash activo en el frame actual del controller.
-// Si hay varios activos simultáneamente (combo multi-hit), llama con slashIndexHint
-// incremental (0, 1, 2...) para iterar sobre todos. Devuelve active=false cuando no hay más.
-//
-//   frame          — AnimationFrame actual (necesario para leer la posición del bone)
-//   personId       — ID de la persona en el frame (igual que en SlashTrail_Tick)
-//   worldPos/pivot/rot/applyWorldTransform — mismo transform que en SlashTrail_Tick
-//   slashIndexHint — 0 para el primero activo; incrementar para obtener el siguiente
-//
-static inline SlashHitboxInfo AnimController_GetActiveSlashHitbox(
-    const AnimationController* controller,
-    const AnimationFrame*      frame,
-    const char*                personId,
-    Vector3                    worldPos,
-    Vector3                    pivot,
-    Matrix                     rot,
-    bool                       applyWorldTransform,
-    int                        slashIndexHint)
-{
-    SlashHitboxInfo result = {0};
-    if (!controller || !frame || controller->currentClipIndex < 0) return result;
-
-    const AnimationClipMetadata* clip = &controller->clips[controller->currentClipIndex];
-    if (!clip->valid || clip->slashEventCount == 0) return result;
-
-    int currentFrame = controller->currentFrameInJSON;
-    int found = 0;
-
-    for (int s = 0; s < clip->slashEventCount; s++) {
-        const SlashEventConfig* se = &clip->slashEvents[s];
-        if (currentFrame < se->frameStart || currentFrame > se->frameEnd) continue;
-
-        // Es un slash activo — ¿es el que nos piden?
-        if (found < slashIndexHint) { found++; continue; }
-
-        // Leer posición del bone y aplicar transform mundo (igual que SlashTrail_Tick)
-        Vector3 bonePos = SlashTrail__GetBonePos(frame, personId, se->boneName);
-        if (applyWorldTransform) {
-            Vector3 rel      = Vector3Subtract(bonePos, pivot);
-            Vector3 rotated  = Vector3Transform(rel, rot);
-            Vector3 pivotW   = Vector3Add(worldPos, pivot);
-            bonePos          = Vector3Add(pivotW, rotated);
-        }
-
-        result.active       = true;
-        result.bonePosition = bonePos;
-        result.frameStart   = se->frameStart;
-        result.frameEnd     = se->frameEnd;
-        result.slashIndex   = s;
-        strncpy(result.boneName, se->boneName, BONES_AE_MAX_NAME - 1);
-        result.boneName[BONES_AE_MAX_NAME - 1] = '\0';
-        return result;
-    }
-
-    return result; // active = false
 }
 
 #endif // BONES_CORE_H

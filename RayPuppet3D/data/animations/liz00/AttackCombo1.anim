@@ -13,50 +13,18 @@
     },
     {
       "type": "slash",
-      "frame_start": 18,
-      "frame_end": 32,
+      "frame_start": 67,
+      "frame_end": 87,
       "bone": "RWrist",
-      "texture": "data/vfx/slash_01.png",
-      "trail": {
-        "enabled": true,
-        "width_start": 0.12,
-        "width_end": 0.0,
-        "color_start": [255, 220, 80, 220],
-        "color_end": [255, 80, 20, 0],
-        "lifetime": 0.18,
-        "segments": 24
-      }
-    },
-    {
-      "type": "slash",
-      "frame_start": 70,
-      "frame_end": 90,
-      "bone": "LWrist",
       "texture": "data/vfx/slash_01.png",
       "trail": {
         "enabled": true,
         "width_start": 0.10,
         "width_end": 0.0,
-        "color_start": [120, 200, 255, 200],
-        "color_end": [80, 120, 255, 0],
-        "lifetime": 0.20,
-        "segments": 24
-      }
-    },
-    {
-      "type": "slash",
-      "frame_start": 120,
-      "frame_end": 148,
-      "bone": "RWrist",
-      "texture": "data/vfx/slash_01.png",
-      "trail": {
-        "enabled": true,
-        "width_start": 0.18,
-        "width_end": 0.0,
-        "color_start": [255, 60, 60, 255],
-        "color_end": [255, 20, 20, 0],
-        "lifetime": 0.28,
-        "segments": 32
+        "color_start": [255, 220, 80, 220],
+        "color_end": [255, 80, 20, 0],
+        "lifetime": 0.10,
+        "segments": 12
       }
     }
   ]
