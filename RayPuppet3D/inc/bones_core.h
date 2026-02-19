@@ -49,6 +49,10 @@
 #define CHEST_FALLBACK_Y -0.08f
 #define HIP_OFFSET_Y -0.02f
 
+// Slash Trail System
+#define SLASH_TRAIL_MAX_SEGMENTS   64
+#define SLASH_TRAIL_MAX_ACTIVE      8
+
 // ============================================================================
 // ENUMS
 // ============================================================================
@@ -76,6 +80,7 @@ typedef enum {
 	ANIM_EVENT_TEXTURE,
 	ANIM_EVENT_SOUND,
 	ANIM_EVENT_PARTICLE,
+	ANIM_EVENT_SLASH,
 	ANIM_EVENT_CUSTOM
 } AnimEventType;
 
@@ -297,6 +302,53 @@ typedef struct {
 } TextureSetCollection;
 
 // ============================================================================
+// SLASH TRAIL STRUCTURES
+// ============================================================================
+
+// Configuración de un evento slash (leída del .anim)
+typedef struct {
+	int   frameStart;               // Frame donde comienza el slash
+	int   frameEnd;                 // Frame donde termina el slash
+	char  boneName[BONES_AE_MAX_NAME];   // Bone emisor del trail (ej: "RWrist")
+	char  texturePath[BONES_AE_MAX_PATH]; // Textura del slash sprite
+	// Trail config
+	bool  trailEnabled;
+	float widthStart;               // Ancho en la punta (más joven)
+	float widthEnd;                 // Ancho en la cola (desaparece)
+	Color colorStart;               // Color RGBA en la punta
+	Color colorEnd;                 // Color RGBA en la cola
+	float lifetime;                 // Cuánto dura cada punto antes de desvanecerse
+	int   segments;                 // Número de puntos máximos del trail
+} SlashEventConfig;
+
+// Un punto temporal del trail
+typedef struct {
+	Vector3 position;
+	float   age;
+	float   lifetime;
+	bool    active;
+} SlashTrailPoint;
+
+// Un trail activo en el sistema
+typedef struct {
+	bool            active;         // ¿Está emitiendo nuevos puntos?
+	bool            alive;          // ¿Hay puntos vivos? (para saber cuándo destruir)
+	int             slashIndex;     // Índice del SlashEventConfig que lo creó
+	SlashEventConfig config;
+	SlashTrailPoint points[SLASH_TRAIL_MAX_SEGMENTS];
+	int             pointCount;
+	float           spawnTimer;
+	float           spawnRate;
+	Texture2D       texture;
+	bool            hasTexture;
+} SlashTrail;
+
+// Sistema completo de trails
+typedef struct {
+	SlashTrail   trails[SLASH_TRAIL_MAX_ACTIVE];
+} SlashTrailSystem;
+
+// ============================================================================
 // ANIMATION SYSTEM STRUCTURES
 // ============================================================================
 
@@ -319,6 +371,8 @@ typedef struct {
 	bool loop;
 	AnimationEvent events[BONES_MAX_ANIM_EVENTS];
 	int eventCount;
+	SlashEventConfig slashEvents[16];
+	int slashEventCount;
 	bool valid;
 } AnimationClipMetadata;
 
@@ -430,6 +484,7 @@ typedef struct AnimatedCharacter {
 	AnimationController* animController;
 	TextureSetCollection* textureSets;
 	OrnamentSystem* ornaments;
+	SlashTrailSystem slashTrails;
 } AnimatedCharacter;
 
 // ============================================================================
@@ -598,10 +653,22 @@ static BoneOrientation Ornaments_GetAnchorOrientation(const AnimationFrame* fram
 static void Ornaments_SolveChainConstraint(BoneOrnament* child, BoneOrnament* parent);
 
 // ============================================================================
-// ANIMATION CONTROLLER API
+// SLASH TRAIL API
 // ============================================================================
 
-AnimationController* AnimController_Create(void* bonesAnimation, TextureSetCollection* textureSets);
+void SlashTrail_InitSystem(SlashTrailSystem* sys);
+void SlashTrail_FreeSystem(SlashTrailSystem* sys);
+void SlashTrail_Activate(SlashTrailSystem* sys, int slashIndex, const SlashEventConfig* config);
+void SlashTrail_Deactivate(SlashTrailSystem* sys, int slashIndex);
+void SlashTrail_UpdateTrail(SlashTrailSystem* sys, float deltaTime, int slashIndex, Vector3 bonePosition);
+void SlashTrail_Draw(SlashTrailSystem* sys, Camera camera);
+void SlashTrail_Tick(SlashTrailSystem* sys, float deltaTime, int currentFrame,
+                     const SlashEventConfig* events, int eventCount,
+                     const AnimationFrame* frame, const char* personId);
+
+// ============================================================================
+// ANIMATION CONTROLLER API
+// ============================================================================
 void AnimController_Free(AnimationController* controller);
 bool AnimController_LoadClipMetadata(AnimationController* controller, const char* jsonPath);
 bool AnimController_PlayClip(AnimationController* controller, const char* clipName);
@@ -1525,11 +1592,79 @@ bool AnimController_LoadClipMetadata(AnimationController* controller, const char
 				memset(event, 0, sizeof(AnimationEvent));
 
 				float eventTime;
-				if (!ParseJSONFloat(eventPos, "time", &eventTime)) continue;
-				event->time = eventTime;
-
 				char eventType[32];
 				if (!ParseJSONString(eventPos, "type", eventType, sizeof(eventType))) continue;
+
+				// — Slash event: parsed into slashEvents, NOT into the general events array —
+				if (strcmp(eventType, "slash") == 0 && clip->slashEventCount < 16) {
+					SlashEventConfig* se = &clip->slashEvents[clip->slashEventCount];
+					memset(se, 0, sizeof(SlashEventConfig));
+
+					// Defaults
+					se->trailEnabled = true;
+					se->widthStart   = 0.10f;
+					se->widthEnd     = 0.0f;
+					se->colorStart   = (Color){255, 200, 80, 220};
+					se->colorEnd     = (Color){255, 60,  10, 0  };
+					se->lifetime     = 0.20f;
+					se->segments     = 24;
+
+					ParseJSONInt(eventPos, "frame_start", &se->frameStart);
+					ParseJSONInt(eventPos, "frame_end",   &se->frameEnd);
+					ParseJSONString(eventPos, "bone",    se->boneName,    BONES_AE_MAX_NAME);
+					ParseJSONString(eventPos, "texture", se->texturePath, BONES_AE_MAX_PATH);
+
+					// Parse trail sub-object
+					const char* trailTag = strstr(eventPos, "\"trail\"");
+					const char* nextBrace = strstr(eventPos + 1, "{");
+					if (trailTag && nextBrace && trailTag < nextBrace + 64) {
+						const char* ts = strchr(trailTag, '{');
+						if (ts) {
+							float fw = 0; int iv = 0;
+							if (ParseJSONFloat(ts, "width_start",  &fw)) se->widthStart = fw;
+							if (ParseJSONFloat(ts, "width_end",    &fw)) se->widthEnd   = fw;
+							if (ParseJSONFloat(ts, "lifetime",     &fw)) se->lifetime   = fw;
+							if (ParseJSONInt  (ts, "segments",     &iv)) se->segments   = iv;
+
+							// color arrays [r,g,b,a]
+							const char* cs = strstr(ts, "\"color_start\"");
+							if (cs) {
+								const char* arr = strchr(cs, '[');
+								if (arr) {
+									se->colorStart.r = (unsigned char)atoi(arr+1);
+									const char* p2 = strchr(arr+1,','); if(p2) {
+									se->colorStart.g = (unsigned char)atoi(p2+1);
+									const char* p3 = strchr(p2+1,','); if(p3) {
+									se->colorStart.b = (unsigned char)atoi(p3+1);
+									const char* p4 = strchr(p3+1,','); if(p4)
+									se->colorStart.a = (unsigned char)atoi(p4+1); }}
+								}
+							}
+							const char* ce = strstr(ts, "\"color_end\"");
+							if (ce) {
+								const char* arr = strchr(ce, '[');
+								if (arr) {
+									se->colorEnd.r = (unsigned char)atoi(arr+1);
+									const char* p2 = strchr(arr+1,','); if(p2) {
+									se->colorEnd.g = (unsigned char)atoi(p2+1);
+									const char* p3 = strchr(p2+1,','); if(p3) {
+									se->colorEnd.b = (unsigned char)atoi(p3+1);
+									const char* p4 = strchr(p3+1,','); if(p4)
+									se->colorEnd.a = (unsigned char)atoi(p4+1); }}
+								}
+							}
+						}
+					}
+
+					if (se->segments > SLASH_TRAIL_MAX_SEGMENTS) se->segments = SLASH_TRAIL_MAX_SEGMENTS;
+					if (se->segments < 2) se->segments = 2;
+					clip->slashEventCount++;
+					continue; // No añadir al array de eventos general
+				}
+
+				// — Eventos generales (texture, sound, custom) —
+				if (!ParseJSONFloat(eventPos, "time", &eventTime)) continue;
+				event->time = eventTime;
 
 				if (strcmp(eventType, "texture") == 0) event->type = ANIM_EVENT_TEXTURE;
 				else if (strcmp(eventType, "sound") == 0) event->type = ANIM_EVENT_SOUND;
@@ -2204,12 +2339,15 @@ AnimatedCharacter* CreateAnimatedCharacter(const char* textureConfigPath, const 
 		Ornaments_LoadFromConfig(character->ornaments, textureConfigPath);
 	}
 
+	SlashTrail_InitSystem(&character->slashTrails);
+
 	return character;
 }
 
 void DestroyAnimatedCharacter(AnimatedCharacter* character) {
 	if (!character) return;
 
+	SlashTrail_FreeSystem(&character->slashTrails);
 	AnimController_Free(character->animController);
 	BonesTextureSets_Free(character->textureSets);
 	BonesRenderer_Free(character->renderer);
@@ -2382,6 +2520,10 @@ bool LoadAnimation(AnimatedCharacter* character, const char* animationPath, cons
 		AnimController_Free(character->animController);
 		character->animController = NULL;
 	}
+
+	// Limpiar trails del clip anterior
+	SlashTrail_FreeSystem(&character->slashTrails);
+	SlashTrail_InitSystem(&character->slashTrails);
 
 	if (BonesLoadFromJSON(&character->animation, animationPath) != BONES_SUCCESS) {
 		g_hasValidFromFrame = false;
@@ -2557,6 +2699,24 @@ void UpdateAnimatedCharacter(AnimatedCharacter* character, float deltaTime) {
 	}
 	// --- *** FIN NUEVA LÓGICA *** ---
 
+	// --- Slash Trail Tick ---
+	if (character->animController && character->animController->currentClipIndex >= 0 && frameToUse) {
+		AnimationClipMetadata* activeClip = &character->animController->clips[character->animController->currentClipIndex];
+		if (activeClip->slashEventCount > 0) {
+			// Obtener el personId del primer person activo del frame
+			const char* personId = "";
+			if (frameToUse->personCount > 0) personId = frameToUse->persons[0].personId;
+			SlashTrail_Tick(
+				&character->slashTrails,
+				deltaTime,
+				character->animController->currentFrameInJSON,
+				activeClip->slashEvents,
+				activeClip->slashEventCount,
+				frameToUse,
+				personId);
+		}
+	}
+
 	// --- Collect render data if needed ---
 	if (character->forceUpdate || character->currentFrame != character->lastProcessedFrame || 
 			usingInterpolation || usingTransition) {
@@ -2609,6 +2769,11 @@ void DrawAnimatedCharacter(AnimatedCharacter* character, Camera camera) {
 			character->renderHeads, character->renderHeadsCount,
 			character->renderTorsos, character->renderTorsosCount,
 			character->autoCenter, character->autoCenterCalculated);
+
+	// Trail se dibuja en su propio BeginMode3D
+	BeginMode3D(camera);
+	SlashTrail_Draw(&character->slashTrails, camera);
+	EndMode3D();
 }
 
 static Vector3 RotatePointAroundPivot(Vector3 point, Vector3 pivot, Vector3 worldPos, Matrix rotY) {
@@ -5072,6 +5237,368 @@ void Ornaments_CollectForRendering(
         }
 
         (*renderBonesCount)++;
+    }
+}
+
+// ============================================================================
+// SLASH TRAIL SYSTEM IMPLEMENTATION
+// ============================================================================
+
+// Helper: interpolar colores
+static Color SlashTrail__LerpColor(Color a, Color b, float t) {
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    return (Color){
+        (unsigned char)(a.r + (int)((b.r - a.r) * t)),
+        (unsigned char)(a.g + (int)((b.g - a.g) * t)),
+        (unsigned char)(a.b + (int)((b.b - a.b) * t)),
+        (unsigned char)(a.a + (int)((b.a - a.a) * t)),
+    };
+}
+
+static float SlashTrail__LerpF(float a, float b, float t) {
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    return a + (b - a) * t;
+}
+
+// Obtener posición de un bone por nombre desde un AnimationFrame
+static Vector3 SlashTrail__GetBonePos(const AnimationFrame* frame, const char* personId, const char* boneName) {
+    if (!frame || !boneName) return (Vector3){0,0,0};
+    for (int p = 0; p < frame->personCount; p++) {
+        const Person* person = &frame->persons[p];
+        if (personId && personId[0] != '\0' && strcmp(person->personId, personId) != 0) continue;
+        for (int b = 0; b < person->boneCount; b++) {
+            const Bone* bone = &person->bones[b];
+            if (strcmp(bone->name, boneName) == 0 && bone->position.valid)
+                return bone->position.position;
+        }
+        // También calcular bones virtuales (Wrist → mano, Head, etc.)
+        if (strcmp(boneName, "RightHand") == 0 || strcmp(boneName, "RWrist") == 0)
+            return GetBonePositionByName(person, "RWrist");
+        if (strcmp(boneName, "LeftHand") == 0 || strcmp(boneName, "LWrist") == 0)
+            return GetBonePositionByName(person, "LWrist");
+        if (strcmp(boneName, "Head") == 0)
+            return CalculateHeadPosition(person);
+    }
+    return (Vector3){0,0,0};
+}
+
+// Inicializar el sistema
+void SlashTrail_InitSystem(SlashTrailSystem* sys) {
+    if (!sys) return;
+    memset(sys, 0, sizeof(SlashTrailSystem));
+}
+
+// Liberar texturas y limpiar
+void SlashTrail_FreeSystem(SlashTrailSystem* sys) {
+    if (!sys) return;
+    for (int i = 0; i < SLASH_TRAIL_MAX_ACTIVE; i++) {
+        SlashTrail* t = &sys->trails[i];
+        if (t->hasTexture) {
+            UnloadTexture(t->texture);
+            t->hasTexture = false;
+        }
+    }
+    memset(sys, 0, sizeof(SlashTrailSystem));
+}
+
+// Activar un trail para un evento slash específico
+void SlashTrail_Activate(SlashTrailSystem* sys, int slashIndex, const SlashEventConfig* config) {
+    if (!sys || !config) return;
+
+    // Buscar si ya existe uno para este slashIndex (evitar duplicados)
+    for (int i = 0; i < SLASH_TRAIL_MAX_ACTIVE; i++) {
+        if (sys->trails[i].slashIndex == slashIndex && sys->trails[i].alive) return;
+    }
+
+    // Buscar slot libre
+    SlashTrail* slot = NULL;
+    for (int i = 0; i < SLASH_TRAIL_MAX_ACTIVE; i++) {
+        if (!sys->trails[i].alive) { slot = &sys->trails[i]; break; }
+    }
+    if (!slot) return;
+
+    memset(slot, 0, sizeof(SlashTrail));
+    slot->active      = true;
+    slot->alive       = true;
+    slot->slashIndex  = slashIndex;
+    slot->config      = *config;
+    slot->pointCount  = 0;
+    slot->spawnTimer  = 0.0f;
+
+    int maxSeg = config->segments > 0 ? config->segments : 24;
+    if (maxSeg > SLASH_TRAIL_MAX_SEGMENTS) maxSeg = SLASH_TRAIL_MAX_SEGMENTS;
+    slot->config.segments = maxSeg;
+
+    // spawnRate: repartir puntos uniformemente durante la vida del trail
+    slot->spawnRate = config->lifetime / (float)maxSeg;
+    if (slot->spawnRate < 0.006f) slot->spawnRate = 0.006f;
+
+    // Cargar textura si se especificó
+    if (config->texturePath[0] != '\0') {
+        slot->texture    = LoadTexture(config->texturePath);
+        slot->hasTexture = (slot->texture.id != 0);
+        if (!slot->hasTexture) {
+            TraceLog(LOG_WARNING, "SlashTrail: no se pudo cargar textura '%s', usando solo color", config->texturePath);
+        } else {
+            TraceLog(LOG_INFO, "SlashTrail: textura cargada '%s' (id=%d)", config->texturePath, slot->texture.id);
+        }
+    } else {
+        TraceLog(LOG_INFO, "SlashTrail: sin textura, usando solo color para evento %d", slashIndex);
+    }
+}
+
+// Detener la emisión (los puntos ya vivos se desvanecen solos)
+void SlashTrail_Deactivate(SlashTrailSystem* sys, int slashIndex) {
+    if (!sys) return;
+    for (int i = 0; i < SLASH_TRAIL_MAX_ACTIVE; i++) {
+        if (sys->trails[i].slashIndex == slashIndex && sys->trails[i].alive)
+            sys->trails[i].active = false; // Deja de emitir pero sigue viviendo
+    }
+}
+
+// Actualizar un trail concreto con la posición del bone
+void SlashTrail_UpdateTrail(SlashTrailSystem* sys, float deltaTime, int slashIndex, Vector3 bonePosition) {
+    if (!sys) return;
+
+    for (int i = 0; i < SLASH_TRAIL_MAX_ACTIVE; i++) {
+        SlashTrail* trail = &sys->trails[i];
+        if (!trail->alive || trail->slashIndex != slashIndex) continue;
+
+        // Envejecer todos los puntos
+        bool anyAlive = false;
+        for (int p = 0; p < trail->config.segments; p++) {
+            SlashTrailPoint* pt = &trail->points[p];
+            if (!pt->active) continue;
+            pt->age += deltaTime;
+            if (pt->age >= pt->lifetime) {
+                pt->active = false;
+            } else {
+                anyAlive = true;
+            }
+        }
+
+        // Emitir nuevos puntos si el trail está activo
+        if (trail->active) {
+            trail->spawnTimer += deltaTime;
+            while (trail->spawnTimer >= trail->spawnRate) {
+                trail->spawnTimer -= trail->spawnRate;
+
+                // Buscar slot libre
+                int slot = -1;
+                for (int p = 0; p < trail->config.segments; p++) {
+                    if (!trail->points[p].active) { slot = p; break; }
+                }
+                // Sin slot libre: reemplazar el más viejo
+                if (slot < 0) {
+                    float maxAge = -1.0f;
+                    for (int p = 0; p < trail->config.segments; p++) {
+                        if (trail->points[p].age > maxAge) {
+                            maxAge = trail->points[p].age;
+                            slot = p;
+                        }
+                    }
+                }
+                if (slot >= 0) {
+                    trail->points[slot].position = bonePosition;
+                    trail->points[slot].age      = 0.0f;
+                    trail->points[slot].lifetime = trail->config.lifetime;
+                    trail->points[slot].active   = true;
+                    anyAlive = true;
+                }
+            }
+        }
+
+        // Limpiar slot del sistema si no hay nada vivo y no emite
+        if (!trail->active && !anyAlive) {
+            if (trail->hasTexture) {
+                UnloadTexture(trail->texture);
+                trail->hasTexture = false;
+            }
+            memset(trail, 0, sizeof(SlashTrail));
+        }
+        trail->alive = anyAlive || trail->active;
+    }
+}
+
+// Dibujar todos los trails — se llama dentro de un BeginMode3D/EndMode3D
+void SlashTrail_Draw(SlashTrailSystem* sys, Camera camera) {
+    if (!sys) return;
+
+    Vector3 camForward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+
+    rlDisableDepthTest();
+    rlDisableBackfaceCulling();
+    BeginBlendMode(BLEND_ADDITIVE);
+
+    for (int i = 0; i < SLASH_TRAIL_MAX_ACTIVE; i++) {
+        SlashTrail* trail = &sys->trails[i];
+        if (!trail->alive) continue;
+
+        // --- Recoger y ordenar puntos activos por edad (punta=joven primero, cola=viejo al final) ---
+        SlashTrailPoint* live[SLASH_TRAIL_MAX_SEGMENTS];
+        int lc = 0;
+        for (int p = 0; p < trail->config.segments; p++) {
+            if (trail->points[p].active) {
+                live[lc++] = &trail->points[p];
+            }
+        }
+
+        if (lc < 2) {
+            // Con un solo punto, dibujar al menos una esfera de debug para confirmar que el sistema funciona
+            if (lc == 1) {
+                DrawSphere(live[0]->position, 0.02f, trail->config.colorStart);
+            }
+            continue;
+        }
+
+        // Ordenar por age ascendente (más joven = punta del slash)
+        for (int a = 0; a < lc - 1; a++) {
+            for (int b2 = a + 1; b2 < lc; b2++) {
+                if (live[b2]->age < live[a]->age) {
+                    SlashTrailPoint* tmp = live[a];
+                    live[a] = live[b2];
+                    live[b2] = tmp;
+                }
+            }
+        }
+
+        // --- Construir el ribbon como pares de triángulos usando DrawTriangle3D ---
+        // Cada segmento: quad dividido en 2 triángulos
+        //
+        //   c0 -------- n0
+        //   |  \        |
+        //   |   \       |
+        //   c1 -------- n1
+        //
+        // Tri 1: c0, n0, c1
+        // Tri 2: n0, n1, c1
+
+        for (int p = 0; p < lc - 1; p++) {
+            SlashTrailPoint* curr = live[p];
+            SlashTrailPoint* next = live[p + 1];
+
+            // t=0 en la punta (joven), t=1 en la cola (viejo)
+            float tCurr = curr->age / curr->lifetime;
+            float tNext = next->age / next->lifetime;
+            if (tCurr < 0.0f) tCurr = 0.0f;
+            if (tCurr > 1.0f) tCurr = 1.0f;
+            if (tNext < 0.0f) tNext = 0.0f;
+            if (tNext > 1.0f) tNext = 1.0f;
+
+            // Ancho: máximo en punta, cero en cola
+            float wCurr = SlashTrail__LerpF(trail->config.widthStart, trail->config.widthEnd, tCurr);
+            float wNext = SlashTrail__LerpF(trail->config.widthStart, trail->config.widthEnd, tNext);
+            if (wCurr < 0.001f && wNext < 0.001f) continue;
+
+            // Colores con fade de alpha
+            Color cCurr = SlashTrail__LerpColor(trail->config.colorStart, trail->config.colorEnd, tCurr);
+            Color cNext  = SlashTrail__LerpColor(trail->config.colorStart, trail->config.colorEnd, tNext);
+            cCurr.a = (unsigned char)(cCurr.a * (1.0f - tCurr));
+            cNext.a  = (unsigned char)(cNext.a  * (1.0f - tNext));
+
+            // Usar la media de los dos colores para DrawTriangle3D (no tiene per-vertex color)
+            Color colA = SlashTrail__LerpColor(cCurr, cNext, 0.0f); // cara punta
+            Color colB = SlashTrail__LerpColor(cCurr, cNext, 0.5f); // cara media
+            Color colC = SlashTrail__LerpColor(cCurr, cNext, 1.0f); // cara cola
+
+            // Perpendicular al segmento vista desde la cámara → ribbon orientado a cámara
+            Vector3 segDir = Vector3Subtract(next->position, curr->position);
+            if (Vector3Length(segDir) < 0.0001f) continue;
+            segDir = Vector3Normalize(segDir);
+
+            // Si el segmento es casi paralelo al forward de cámara, usar camera.up como fallback
+            Vector3 axis = camForward;
+            if (fabsf(Vector3DotProduct(segDir, camForward)) > 0.99f) {
+                axis = camera.up;
+            }
+            Vector3 perp = Vector3Normalize(Vector3CrossProduct(segDir, axis));
+
+            Vector3 c0 = Vector3Add(curr->position,  Vector3Scale(perp,  wCurr * 0.5f));
+            Vector3 c1 = Vector3Add(curr->position,  Vector3Scale(perp, -wCurr * 0.5f));
+            Vector3 n0 = Vector3Add(next->position,  Vector3Scale(perp,  wNext * 0.5f));
+            Vector3 n1 = Vector3Add(next->position,  Vector3Scale(perp, -wNext * 0.5f));
+
+            // Triángulo 1: c0 → n0 → c1 (cara frontal)
+            DrawTriangle3D(c0, n0, c1, colA);
+            // Triángulo 2: n0 → n1 → c1 (cara frontal)
+            DrawTriangle3D(n0, n1, c1, colB);
+            // Cara trasera (backface manual)
+            DrawTriangle3D(c1, n0, c0, colA);
+            DrawTriangle3D(c1, n1, n0, colB);
+
+            // Con textura: superponer un quad texturizado encima usando rlgl
+            if (trail->hasTexture && trail->texture.id > 0) {
+                rlSetTexture(trail->texture.id);
+                rlBegin(RL_QUADS);
+
+                float uC = (float)p       / (float)(lc - 1);
+                float uN = (float)(p + 1) / (float)(lc - 1);
+
+                rlColor4ub(colA.r, colA.g, colA.b, colA.a);
+                rlTexCoord2f(uC, 0.0f); rlVertex3f(c0.x, c0.y, c0.z);
+                rlColor4ub(colB.r, colB.g, colB.b, colB.a);
+                rlTexCoord2f(uN, 0.0f); rlVertex3f(n0.x, n0.y, n0.z);
+                rlColor4ub(colC.r, colC.g, colC.b, colC.a);
+                rlTexCoord2f(uN, 1.0f); rlVertex3f(n1.x, n1.y, n1.z);
+                rlColor4ub(colA.r, colA.g, colA.b, colA.a);
+                rlTexCoord2f(uC, 1.0f); rlVertex3f(c1.x, c1.y, c1.z);
+
+                rlEnd();
+                rlSetTexture(0);
+            }
+        }
+    }
+
+    EndBlendMode();
+    rlEnableBackfaceCulling();
+    rlEnableDepthTest();
+}
+
+// Punto de entrada principal: gestiona activación/desactivación automática por frames
+// Llamar cada frame con el frame actual de la animación.
+void SlashTrail_Tick(
+    SlashTrailSystem*     sys,
+    float                 deltaTime,
+    int                   currentFrame,
+    const SlashEventConfig* events,
+    int                   eventCount,
+    const AnimationFrame* frame,
+    const char*           personId)
+{
+    if (!sys || !events || !frame) return;
+
+    for (int e = 0; e < eventCount; e++) {
+        const SlashEventConfig* ev = &events[e];
+        bool inRange = (currentFrame >= ev->frameStart && currentFrame <= ev->frameEnd);
+
+        // Buscar si ya existe un trail activo o vivo para este evento
+        bool exists = false;
+        for (int i = 0; i < SLASH_TRAIL_MAX_ACTIVE; i++) {
+            if (sys->trails[i].alive && sys->trails[i].slashIndex == e) {
+                exists = true;
+                break;
+            }
+        }
+
+        // Activar si entramos al rango y no existe todavía
+        if (inRange && !exists) {
+            TraceLog(LOG_INFO, "SlashTrail: activando evento %d bone='%s' frames [%d-%d]",
+                     e, ev->boneName, ev->frameStart, ev->frameEnd);
+            SlashTrail_Activate(sys, e, ev);
+        }
+
+        // Desactivar emisión si salimos del rango
+        if (!inRange) {
+            SlashTrail_Deactivate(sys, e);
+        }
+
+        // Actualizar con la posición actual del bone
+        if (inRange || exists) {
+            Vector3 bonePos = SlashTrail__GetBonePos(frame, personId, ev->boneName);
+            SlashTrail_UpdateTrail(sys, deltaTime, e, bonePos);
+        }
     }
 }
 
