@@ -2,7 +2,7 @@
   "name": "AttackCombo1",
   "fps": 60,
   "start_frame": 0,
-  "end_frame": 160,
+  "end_frame": 161,
   "loop": false,
   "events": [
     {
@@ -26,6 +26,20 @@
         "lifetime": 0.10,
         "segments": 12
       }
+    }
+    {
+      "type": "model3d",
+      "frame_start": 0,
+      "frame_end": 161,
+      "bone": "RWrist",
+      "model": "data/textures/liz00/sword.glb",
+      "scale": 0.4,
+      "offset_x": 0.03,
+      "offset_y": 0.0,
+      "offset_z": 0.15,
+      "rot_x": 90.0,
+      "rot_y": 0.0,
+      "rot_z": 90.0
     }
   ]
 }

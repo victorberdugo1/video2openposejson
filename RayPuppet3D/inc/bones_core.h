@@ -53,6 +53,11 @@
 #define SLASH_TRAIL_MAX_SEGMENTS   64
 #define SLASH_TRAIL_MAX_ACTIVE      8
 
+// Model3D Attachment System
+#define BONES_MAX_MODEL3D_EVENTS   8
+#define BONES_MODEL3D_MAX_PATH     256
+#define BONES_MODEL3D_MAX_BONE     64
+
 // ============================================================================
 // ENUMS
 // ============================================================================
@@ -81,6 +86,7 @@ typedef enum {
 	ANIM_EVENT_SOUND,
 	ANIM_EVENT_PARTICLE,
 	ANIM_EVENT_SLASH,
+	ANIM_EVENT_MODEL3D,
 	ANIM_EVENT_CUSTOM
 } AnimEventType;
 
@@ -349,6 +355,39 @@ typedef struct {
 } SlashTrailSystem;
 
 // ============================================================================
+// MODEL 3D ATTACHMENT STRUCTURES
+// ============================================================================
+
+// Configuración de un evento de modelo 3D leído del .anim.
+// JSON de ejemplo (mismo array "events" que slash):
+//   { "type": "model3d", "frame_start": 67, "frame_end": 87,
+//     "bone": "RWrist", "model": "data/textures/sword.glb",
+//     "scale": 1.0, "offset_x": 0.0, "offset_y": 0.05, "offset_z": 0.0,
+//     "rot_x": 0.0, "rot_y": 0.0, "rot_z": 0.0 }
+typedef struct {
+    int   frameStart;
+    int   frameEnd;
+    char  boneName[BONES_MODEL3D_MAX_BONE];
+    char  modelPath[BONES_MODEL3D_MAX_PATH];
+    float scale;
+    Vector3 offset;
+    Vector3 rotationEuler;   // grados XYZ
+    bool  valid;
+} Model3DEventConfig;
+
+typedef struct {
+    Model3DEventConfig config;
+    Model      model;
+    bool       loaded;
+    bool       visible;
+} Model3DInstance;
+
+typedef struct {
+    Model3DInstance instances[BONES_MAX_MODEL3D_EVENTS];
+    int             instanceCount;
+} Model3DAttachmentSystem;
+
+// ============================================================================
 // ANIMATION SYSTEM STRUCTURES
 // ============================================================================
 
@@ -373,6 +412,8 @@ typedef struct {
 	int eventCount;
 	SlashEventConfig slashEvents[16];
 	int slashEventCount;
+	Model3DEventConfig model3dEvents[BONES_MAX_MODEL3D_EVENTS];
+	int model3dEventCount;
 	bool valid;
 } AnimationClipMetadata;
 
@@ -485,6 +526,7 @@ typedef struct AnimatedCharacter {
 	TextureSetCollection* textureSets;
 	OrnamentSystem* ornaments;
 	SlashTrailSystem slashTrails;
+	Model3DAttachmentSystem model3dAttachments;
 	// Transform del mundo — SlashTrail_Tick graba puntos en espacio mundo
 	Vector3 worldPosition;
 	float   worldRotation;
@@ -673,6 +715,23 @@ void SlashTrail_Tick(SlashTrailSystem* sys, float deltaTime, int currentFrame,
                      Vector3 worldPos, Vector3 pivot, Matrix rot, bool applyWorldTransform);
 
 // ============================================================================
+// MODEL 3D ATTACHMENT API
+// ============================================================================
+
+void Model3D_InitSystem(Model3DAttachmentSystem* sys);
+void Model3D_FreeSystem(Model3DAttachmentSystem* sys);
+void Model3D_LoadFromClip(Model3DAttachmentSystem* sys, const AnimationClipMetadata* clip);
+void Model3D_Tick(Model3DAttachmentSystem* sys, int currentFrame);
+void Model3D_Draw(
+    Model3DAttachmentSystem* sys,
+    const AnimationFrame*    frame,
+    const char*              personId,
+    Vector3                  worldPos,
+    Vector3                  pivot,
+    Matrix                   rot,
+    bool                     applyWorldTransform);
+
+// ============================================================================
 // ANIMATION CONTROLLER API
 // ============================================================================
 void AnimController_Free(AnimationController* controller);
@@ -785,6 +844,9 @@ bool ShouldFlipBoneTexture(const char* boneName);
 bool GetBoneConnectionsWithPriority(const char* boneName, char connections[3][32], float priorities[3]);
 BonesRenderConfig BonesGetDefaultRenderConfig(void);
 void BonesSetRenderConfig(const BonesRenderConfig* config);
+
+// Forward declaration — implementación en SLASH TRAIL SYSTEM IMPLEMENTATION
+static Vector3 SlashTrail__GetBonePos(const AnimationFrame* frame, const char* personId, const char* boneName);
 
 // ============================================================================
 // IMPLEMENTATION
@@ -1668,6 +1730,35 @@ bool AnimController_LoadClipMetadata(AnimationController* controller, const char
 					continue; // No añadir al array de eventos general
 				}
 
+				// — Model3D event —
+				if (strcmp(eventType, "model3d") == 0 && clip->model3dEventCount < BONES_MAX_MODEL3D_EVENTS) {
+					Model3DEventConfig* m = &clip->model3dEvents[clip->model3dEventCount];
+					memset(m, 0, sizeof(Model3DEventConfig));
+
+					m->scale = 1.0f;
+
+					ParseJSONInt   (eventPos, "frame_start", &m->frameStart);
+					ParseJSONInt   (eventPos, "frame_end",   &m->frameEnd);
+					ParseJSONString(eventPos, "bone",  m->boneName,  BONES_MODEL3D_MAX_BONE);
+					ParseJSONString(eventPos, "model", m->modelPath, BONES_MODEL3D_MAX_PATH);
+					ParseJSONFloat (eventPos, "scale",    &m->scale);
+					ParseJSONFloat (eventPos, "offset_x", &m->offset.x);
+					ParseJSONFloat (eventPos, "offset_y", &m->offset.y);
+					ParseJSONFloat (eventPos, "offset_z", &m->offset.z);
+					ParseJSONFloat (eventPos, "rot_x",    &m->rotationEuler.x);
+					ParseJSONFloat (eventPos, "rot_y",    &m->rotationEuler.y);
+					ParseJSONFloat (eventPos, "rot_z",    &m->rotationEuler.z);
+
+					m->valid = (m->modelPath[0] != '\0');
+					if (m->valid)
+						TraceLog(LOG_INFO, "Model3D event %d: bone='%s' model='%s' frames[%d-%d]",
+						         clip->model3dEventCount, m->boneName, m->modelPath,
+						         m->frameStart, m->frameEnd);
+
+					clip->model3dEventCount++;
+					continue;
+				}
+
 				// — Eventos generales (texture, sound, custom) —
 				if (!ParseJSONFloat(eventPos, "time", &eventTime)) continue;
 				event->time = eventTime;
@@ -2346,6 +2437,7 @@ AnimatedCharacter* CreateAnimatedCharacter(const char* textureConfigPath, const 
 	}
 
 	SlashTrail_InitSystem(&character->slashTrails);
+	Model3D_InitSystem(&character->model3dAttachments);
 	character->hasWorldTransform = false;
 
 	return character;
@@ -2355,6 +2447,7 @@ void DestroyAnimatedCharacter(AnimatedCharacter* character) {
 	if (!character) return;
 
 	SlashTrail_FreeSystem(&character->slashTrails);
+	Model3D_FreeSystem(&character->model3dAttachments);
 	AnimController_Free(character->animController);
 	BonesTextureSets_Free(character->textureSets);
 	BonesRenderer_Free(character->renderer);
@@ -2532,6 +2625,8 @@ bool LoadAnimation(AnimatedCharacter* character, const char* animationPath, cons
 	// No hacer FreeSystem aqui — se hara despues si la nueva anim tiene sus propios slashes
 	for (int _ti = 0; _ti < SLASH_TRAIL_MAX_ACTIVE; _ti++)
 		SlashTrail_Deactivate(&character->slashTrails, character->slashTrails.trails[_ti].slashIndex);
+	// Liberar modelos 3D del clip anterior inmediatamente
+	Model3D_FreeSystem(&character->model3dAttachments);
 	character->hasWorldTransform = false;
 
 	if (BonesLoadFromJSON(&character->animation, animationPath) != BONES_SUCCESS) {
@@ -2552,6 +2647,12 @@ bool LoadAnimation(AnimatedCharacter* character, const char* animationPath, cons
 		const char* clipName = "default";
 		if (character->animController->clipCount > 0) clipName = character->animController->clips[0].name;
 		AnimController_PlayClip(character->animController, clipName);
+		// Cargar los modelos 3D definidos en el clip recién activado
+		if (character->animController->currentClipIndex >= 0) {
+			const AnimationClipMetadata* activeClip =
+			    &character->animController->clips[character->animController->currentClipIndex];
+			Model3D_LoadFromClip(&character->model3dAttachments, activeClip);
+		}
 	}
 
 	// Si la nueva animacion tiene slash events propios, limpiar trails viejos ahora
@@ -2756,7 +2857,13 @@ void UpdateAnimatedCharacter(AnimatedCharacter* character, float deltaTime) {
 					character->worldPivot,
 					MatrixRotateY(character->worldRotation),
 					character->hasWorldTransform);
+				// Actualizar visibilidad de los modelos 3D adjuntos
+				Model3D_Tick(&character->model3dAttachments, jsonFrame);
 			}
+		}
+		// Model3D_Tick también cuando no hay slash events (modelos siempre actualizados)
+		if (activeClip->slashEventCount == 0 && character->model3dAttachments.instanceCount > 0) {
+			Model3D_Tick(&character->model3dAttachments, character->animController->currentFrameInJSON);
 		}
 	}
 
@@ -2807,13 +2914,64 @@ void UpdateAnimatedCharacter(AnimatedCharacter* character, float deltaTime) {
 void DrawAnimatedCharacter(AnimatedCharacter* character, Camera camera) {
 	if (!character || !character->animation.isLoaded) return;
 	character->renderer->camera = camera;
+
+	// --- Painter's algorithm para modelo 3D vs billboards ---
+	// Los billboards usan rlDisableDepthTest() internamente, así que el modelo
+	// también debe dibujarse sin depth test. La ordenación es por distancia a cámara.
+	// Si el modelo está más lejos que el personaje → dibujar primero (detrás).
+	// Si el modelo está más cerca → dibujar después (delante).
+
+	const AnimationFrame* rf = NULL;
+	const char* personId = "";
+	if (character->currentFrame >= 0 && character->currentFrame < character->animation.frameCount) {
+		rf = &character->animation.frames[character->currentFrame];
+		if (rf->personCount > 0) personId = rf->persons[0].personId;
+	}
+
+	// Calcular distancia del modelo y del personaje a la cámara
+	float modelDist = 1e9f;
+	bool hasVisibleModel = false;
+	if (character->model3dAttachments.instanceCount > 0 && rf) {
+		for (int i = 0; i < character->model3dAttachments.instanceCount; i++) {
+			Model3DInstance* inst = &character->model3dAttachments.instances[i];
+			if (!inst->visible || !inst->loaded) continue;
+			hasVisibleModel = true;
+			Vector3 bp = SlashTrail__GetBonePos(rf, personId, inst->config.boneName);
+			float d = Vector3Distance(camera.position, bp);
+			if (d < modelDist) modelDist = d;
+		}
+	}
+	float charDist = Vector3Distance(camera.position, character->autoCenter);
+
+	// Modelo más lejos que el personaje → dibujarlo ANTES (detrás de los billboards)
+	if (hasVisibleModel && modelDist > charDist) {
+		BeginMode3D(camera);
+		rlDisableDepthTest();
+		Model3D_Draw(&character->model3dAttachments, rf, personId,
+		             character->worldPosition, character->worldPivot,
+		             MatrixRotateY(character->worldRotation), character->hasWorldTransform);
+		rlEnableDepthTest();
+		EndMode3D();
+	}
+
 	BonesRenderer_RenderFrame(character->renderer,
 			character->renderBones, character->renderBonesCount,
 			character->renderHeads, character->renderHeadsCount,
 			character->renderTorsos, character->renderTorsosCount,
 			character->autoCenter, character->autoCenterCalculated);
 
-	// Trail se dibuja en su propio BeginMode3D
+	// Modelo más cerca que el personaje → dibujarlo DESPUÉS (delante de los billboards)
+	if (hasVisibleModel && modelDist <= charDist) {
+		BeginMode3D(camera);
+		rlDisableDepthTest();
+		Model3D_Draw(&character->model3dAttachments, rf, personId,
+		             character->worldPosition, character->worldPivot,
+		             MatrixRotateY(character->worldRotation), character->hasWorldTransform);
+		rlEnableDepthTest();
+		EndMode3D();
+	}
+
+	// Trail se dibuja en su propio BeginMode3D (gestiona su propio depth state)
 	BeginMode3D(camera);
 	SlashTrail_Draw(&character->slashTrails, camera);
 	EndMode3D();
@@ -2977,11 +3135,61 @@ void DrawAnimatedCharacterTransformed(AnimatedCharacter* character, Camera camer
 	}
 
 	Vector3 transformedCenter = Vector3Add(worldPosition, pivot);
+
+	// Frame y personId para el modelo 3D
+	const AnimationFrame* rf3d = NULL;
+	const char* pid3d = "";
+	if (character->currentFrame >= 0 && character->currentFrame < character->animation.frameCount) {
+		rf3d = &character->animation.frames[character->currentFrame];
+		if (rf3d->personCount > 0) pid3d = rf3d->persons[0].personId;
+	}
+
+	// Distancia modelo vs personaje para painter's algorithm
+	float modelDist3d = 1e9f;
+	bool hasVisibleModel3d = false;
+	if (character->model3dAttachments.instanceCount > 0 && rf3d) {
+		for (int i = 0; i < character->model3dAttachments.instanceCount; i++) {
+			Model3DInstance* inst = &character->model3dAttachments.instances[i];
+			if (!inst->visible || !inst->loaded) continue;
+			hasVisibleModel3d = true;
+			Vector3 bp = SlashTrail__GetBonePos(rf3d, pid3d, inst->config.boneName);
+			// Aplicar transform mundo
+			Vector3 rel    = Vector3Subtract(bp, pivot);
+			Vector3 rotVec = Vector3Transform(rel, rot);
+			bp = Vector3Add(Vector3Add(worldPosition, pivot), rotVec);
+			float d = Vector3Distance(camera.position, bp);
+			if (d < modelDist3d) modelDist3d = d;
+		}
+	}
+	float charDist3d = Vector3Distance(camera.position, transformedCenter);
+
+	// Modelo más lejos → dibujar ANTES del renderer (detrás de billboards)
+	if (hasVisibleModel3d && modelDist3d > charDist3d) {
+		BeginMode3D(camera);
+		rlDisableDepthTest();
+		Model3D_Draw(&character->model3dAttachments, rf3d, pid3d,
+		             character->worldPosition, character->worldPivot,
+		             MatrixRotateY(character->worldRotation), character->hasWorldTransform);
+		rlEnableDepthTest();
+		EndMode3D();
+	}
+
 	BonesRenderer_RenderFrame(character->renderer,
 			bonesCopy ? bonesCopy : character->renderBones, bc,
 			headsCopy ? headsCopy : character->renderHeads, hc,
 			torsosCopy ? torsosCopy : character->renderTorsos, tc,
 			transformedCenter, character->autoCenterCalculated);
+
+	// Modelo más cerca → dibujar DESPUÉS del renderer (delante de billboards)
+	if (hasVisibleModel3d && modelDist3d <= charDist3d) {
+		BeginMode3D(camera);
+		rlDisableDepthTest();
+		Model3D_Draw(&character->model3dAttachments, rf3d, pid3d,
+		             character->worldPosition, character->worldPivot,
+		             MatrixRotateY(character->worldRotation), character->hasWorldTransform);
+		rlEnableDepthTest();
+		EndMode3D();
+	}
 
 	if (bonesCopy) free(bonesCopy);
 	if (headsCopy) free(headsCopy);
@@ -5762,6 +5970,187 @@ static inline SlashHitboxInfo AnimController_GetActiveSlashHitbox(
     }
 
     return result; // active = false
+}
+
+// ============================================================================
+// MODEL 3D ATTACHMENT IMPLEMENTATION
+// ============================================================================
+
+void Model3D_InitSystem(Model3DAttachmentSystem* sys) {
+    if (!sys) return;
+    memset(sys, 0, sizeof(Model3DAttachmentSystem));
+}
+
+void Model3D_FreeSystem(Model3DAttachmentSystem* sys) {
+    if (!sys) return;
+    for (int i = 0; i < sys->instanceCount; i++) {
+        if (sys->instances[i].loaded) {
+            UnloadModel(sys->instances[i].model);
+            sys->instances[i].loaded = false;
+        }
+    }
+    sys->instanceCount = 0;
+}
+
+void Model3D_LoadFromClip(Model3DAttachmentSystem* sys, const AnimationClipMetadata* clip) {
+    if (!sys || !clip) return;
+
+    Model3D_FreeSystem(sys); // liberar los del clip anterior
+
+    for (int i = 0; i < clip->model3dEventCount && i < BONES_MAX_MODEL3D_EVENTS; i++) {
+        const Model3DEventConfig* cfg = &clip->model3dEvents[i];
+        if (!cfg->valid) continue;
+
+        Model3DInstance* inst = &sys->instances[sys->instanceCount];
+        inst->config  = *cfg;
+        inst->visible = false;
+
+        if (FileExists(cfg->modelPath)) {
+            inst->model  = LoadModel(cfg->modelPath);
+            inst->loaded = true;
+            TraceLog(LOG_INFO, "Model3D: loaded '%s'", cfg->modelPath);
+        } else {
+            inst->loaded = false;
+            TraceLog(LOG_WARNING, "Model3D: file not found '%s'", cfg->modelPath);
+        }
+
+        sys->instanceCount++;
+    }
+}
+
+void Model3D_Tick(Model3DAttachmentSystem* sys, int currentFrame) {
+    if (!sys) return;
+    for (int i = 0; i < sys->instanceCount; i++) {
+        Model3DInstance* inst = &sys->instances[i];
+        inst->visible = inst->loaded &&
+                        (currentFrame >= inst->config.frameStart) &&
+                        (currentFrame <= inst->config.frameEnd);
+    }
+}
+
+void Model3D_Draw(
+    Model3DAttachmentSystem* sys,
+    const AnimationFrame*    frame,
+    const char*              personId,
+    Vector3                  worldPos,
+    Vector3                  pivot,
+    Matrix                   rot,
+    bool                     applyWorldTransform)
+{
+    if (!sys || !frame) return;
+
+    for (int i = 0; i < sys->instanceCount; i++) {
+        Model3DInstance* inst = &sys->instances[i];
+        if (!inst->visible || !inst->loaded) continue;
+
+        // --- 1. Posición del bone ---
+        Vector3 bonePos = SlashTrail__GetBonePos(frame, personId, inst->config.boneName);
+
+        // --- 2. Orientación estable del brazo ---
+        // Calculamos forward directamente desde los bones del brazo (elbow→wrist),
+        // y construimos up/right con Gram-Schmidt usando Y-mundo como referencia estable.
+        // Esto evita los saltos de GetStablePerpendicularVector.
+        const Person* person = NULL;
+        for (int p = 0; p < frame->personCount; p++) {
+            if (!frame->persons[p].active) continue;
+            if (personId && personId[0] != '\0') {
+                if (strcmp(frame->persons[p].personId, personId) == 0) {
+                    person = &frame->persons[p]; break;
+                }
+            } else { person = &frame->persons[p]; break; }
+        }
+
+        Vector3 bFwd   = {0, 0, 1};
+        Vector3 bUp    = {0, 1, 0};
+        Vector3 bRight = {1, 0, 0};
+
+        if (person) {
+            // Determinar el bone "proximal" (el que está un nivel más arriba del bone objetivo)
+            // RWrist → viene de RElbow; LWrist → LElbow; cualquier otro → usar posición del bone
+            const char* proximalName = NULL;
+            const char* bn = inst->config.boneName;
+            if      (strcmp(bn, "RWrist") == 0) proximalName = "RElbow";
+            else if (strcmp(bn, "LWrist") == 0) proximalName = "LElbow";
+            else if (strcmp(bn, "RElbow") == 0) proximalName = "RShoulder";
+            else if (strcmp(bn, "LElbow") == 0) proximalName = "LShoulder";
+            else if (strcmp(bn, "RAnkle") == 0) proximalName = "RKnee";
+            else if (strcmp(bn, "LAnkle") == 0) proximalName = "LKnee";
+            else if (strcmp(bn, "RKnee")  == 0) proximalName = "RHip";
+            else if (strcmp(bn, "LKnee")  == 0) proximalName = "LHip";
+
+            Vector3 proxPos = proximalName
+                ? GetBonePositionByName(person, proximalName)
+                : (Vector3){bonePos.x, bonePos.y - 0.1f, bonePos.z};
+
+            Vector3 dir = Vector3Subtract(bonePos, proxPos);
+            float dirLen = Vector3Length(dir);
+
+            if (dirLen > 1e-4f) {
+                bFwd = Vector3Scale(dir, 1.0f / dirLen); // proximal→distal = forward de la espada
+
+                // Gram-Schmidt con Y-mundo como referencia de up.
+                // Si el brazo es casi vertical (|dot| > 0.95), usar Z-mundo para evitar singularidad.
+                Vector3 worldUp = {0, 1, 0};
+                if (fabsf(Vector3DotProduct(bFwd, worldUp)) > 0.95f)
+                    worldUp = (Vector3){0, 0, 1};
+
+                bRight = SafeNormalize(Vector3CrossProduct(bFwd, worldUp));
+                bUp    = SafeNormalize(Vector3CrossProduct(bRight, bFwd));
+            }
+        }
+
+        // --- 3. Transform mundo ---
+        if (applyWorldTransform) {
+            Vector3 rel    = Vector3Subtract(bonePos, pivot);
+            Vector3 rotVec = Vector3Transform(rel, rot);
+            bonePos = Vector3Add(Vector3Add(worldPos, pivot), rotVec);
+            bFwd    = Vector3Transform(bFwd,   rot);
+            bUp     = Vector3Transform(bUp,    rot);
+            bRight  = Vector3Transform(bRight, rot);
+        }
+
+        // --- 4. Rotaciones locales ajuste fino (espacio del bone) ---
+        // rot_x → inclina adelante/atrás (alrededor de bRight)
+        // rot_y → abre izquierda/derecha  (alrededor de bUp)
+        // rot_z → rueda sobre el eje del brazo (alrededor de bFwd)
+        if (fabsf(inst->config.rotationEuler.x) > 0.001f) {
+            float a = DEG2RAD * inst->config.rotationEuler.x;
+            Vector3 newFwd = SafeNormalize(Vector3Add(
+                Vector3Scale(bFwd, cosf(a)), Vector3Scale(bUp, sinf(a))));
+            bUp  = SafeNormalize(Vector3CrossProduct(bRight, newFwd));
+            bFwd = newFwd;
+        }
+        if (fabsf(inst->config.rotationEuler.y) > 0.001f) {
+            float a = DEG2RAD * inst->config.rotationEuler.y;
+            Vector3 newFwd = SafeNormalize(Vector3Add(
+                Vector3Scale(bFwd, cosf(a)), Vector3Scale(bRight, -sinf(a))));
+            bRight = SafeNormalize(Vector3CrossProduct(newFwd, bUp));
+            bFwd   = newFwd;
+        }
+        if (fabsf(inst->config.rotationEuler.z) > 0.001f) {
+            float a = DEG2RAD * inst->config.rotationEuler.z;
+            Vector3 newUp  = SafeNormalize(Vector3Add(
+                Vector3Scale(bUp, cosf(a)), Vector3Scale(bRight, sinf(a))));
+            bRight = SafeNormalize(Vector3CrossProduct(bFwd, newUp));
+            bUp    = newUp;
+        }
+
+        // --- 5. Offset en espacio local del bone ---
+        bonePos = Vector3Add(bonePos, Vector3Scale(bRight, inst->config.offset.x));
+        bonePos = Vector3Add(bonePos, Vector3Scale(bUp,    inst->config.offset.y));
+        bonePos = Vector3Add(bonePos, Vector3Scale(bFwd,   inst->config.offset.z));
+
+        // --- 6. Matrix column-major de raylib ---
+        float s = inst->config.scale;
+        Matrix m;
+        m.m0  = bRight.x * s;  m.m4  = bUp.x * s;  m.m8  = bFwd.x * s;  m.m12 = bonePos.x;
+        m.m1  = bRight.y * s;  m.m5  = bUp.y * s;  m.m9  = bFwd.y * s;  m.m13 = bonePos.y;
+        m.m2  = bRight.z * s;  m.m6  = bUp.z * s;  m.m10 = bFwd.z * s;  m.m14 = bonePos.z;
+        m.m3  = 0.0f;          m.m7  = 0.0f;        m.m11 = 0.0f;        m.m15 = 1.0f;
+
+        inst->model.transform = m;
+        DrawModel(inst->model, (Vector3){0, 0, 0}, 1.0f, WHITE);
+    }
 }
 
 #endif // BONES_CORE_H
