@@ -318,6 +318,9 @@ typedef struct {
 	char  boneName[BONES_AE_MAX_NAME];   // Bone emisor del trail (ej: "RWrist")
 	char  texturePath[BONES_AE_MAX_PATH]; // Textura del slash sprite
 	// Trail config
+	float emitOffsetX;
+    	float emitOffsetY;
+    	float emitOffsetZ;
 	bool  trailEnabled;
 	float widthStart;               // Ancho en la punta (más joven)
 	float widthEnd;                 // Ancho en la cola (desaparece)
@@ -1608,6 +1611,15 @@ void AnimController_Free(AnimationController* controller) {
 	if (controller) free(controller);
 }
 
+static bool ParseJSONFloatInBlock(const char* blockStart, const char* blockEnd, const char* key, float* outValue) {
+    char searchKey[128];
+    snprintf(searchKey, sizeof(searchKey), "\"%s\":", key);
+    const char* pos = strstr(blockStart, searchKey);
+    if (!pos || pos >= blockEnd) return false;
+    if (sscanf(pos + strlen(searchKey), "%f", outValue) == 1) return true;
+    return false;
+}
+
 bool AnimController_LoadClipMetadata(AnimationController* controller, const char* jsonPath) {
 	FILE* file;
 	char* jsonData;
@@ -1677,10 +1689,24 @@ bool AnimController_LoadClipMetadata(AnimationController* controller, const char
 					se->lifetime     = 0.20f;
 					se->segments     = 24;
 
-					ParseJSONInt(eventPos, "frame_start", &se->frameStart);
-					ParseJSONInt(eventPos, "frame_end",   &se->frameEnd);
-					ParseJSONString(eventPos, "bone",    se->boneName,    BONES_AE_MAX_NAME);
-					ParseJSONString(eventPos, "texture", se->texturePath, BONES_AE_MAX_PATH);
+    // Calcular fin del bloque de este evento (buscar la } de cierre)
+    const char* blockEnd = eventPos + 1;
+    int depth = 1;
+    while (*blockEnd && depth > 0) {
+        if (*blockEnd == '{') depth++;
+        else if (*blockEnd == '}') depth--;
+        blockEnd++;
+    }
+
+    ParseJSONInt(eventPos, "frame_start", &se->frameStart);
+    ParseJSONInt(eventPos, "frame_end",   &se->frameEnd);
+    ParseJSONString(eventPos, "bone",    se->boneName,    BONES_AE_MAX_NAME);
+    ParseJSONString(eventPos, "texture", se->texturePath, BONES_AE_MAX_PATH);
+
+    // EMIT OFFSET — buscar solo dentro del bloque de este evento
+    ParseJSONFloatInBlock(eventPos, blockEnd, "emit_offset_x", &se->emitOffsetX);
+    ParseJSONFloatInBlock(eventPos, blockEnd, "emit_offset_y", &se->emitOffsetY);
+    ParseJSONFloatInBlock(eventPos, blockEnd, "emit_offset_z", &se->emitOffsetZ);
 
 					// Parse trail sub-object
 					const char* trailTag = strstr(eventPos, "\"trail\"");
@@ -5821,6 +5847,72 @@ void SlashTrail_Draw(SlashTrailSystem* sys, Camera camera) {
     rlEnableDepthTest();
 }
 
+static Vector3 SlashTrail__GetEmitPos(
+    const AnimationFrame* frame,
+    const char*           personId,
+    const SlashEventConfig* ev)
+{
+    // Si no hay frame o evento, devolver (0,0,0)
+    if (!frame || !ev) return (Vector3){0, 0, 0};
+
+    Vector3 bonePos = SlashTrail__GetBonePos(frame, personId, ev->boneName);
+
+    // Sin offset configurado: devolver posición del bone directamente
+    if (fabsf(ev->emitOffsetX) < 0.0001f &&
+        fabsf(ev->emitOffsetY) < 0.0001f &&
+        fabsf(ev->emitOffsetZ) < 0.0001f)
+        return bonePos;
+
+    // Calcular orientación del bone para aplicar el offset en espacio local
+    const Person* person = NULL;
+    for (int p = 0; p < frame->personCount; p++) {
+        if (!frame->persons[p].active) continue;
+        if (personId && personId[0] != '\0') {
+            if (strcmp(frame->persons[p].personId, personId) == 0) {
+                person = &frame->persons[p]; break;
+            }
+        } else { person = &frame->persons[p]; break; }
+    }
+
+    // Si no encontramos persona, devolver bonePos sin offset
+    if (!person) return bonePos;
+
+    Vector3 fwd   = {0, 0, 1};
+    Vector3 up    = {0, 1, 0};
+    Vector3 right = {1, 0, 0};
+
+    const char* proximalName = NULL;
+    const char* bn = ev->boneName;
+    if      (strcmp(bn, "RWrist") == 0) proximalName = "RElbow";
+    else if (strcmp(bn, "LWrist") == 0) proximalName = "LElbow";
+    else if (strcmp(bn, "RElbow") == 0) proximalName = "RShoulder";
+    else if (strcmp(bn, "LElbow") == 0) proximalName = "LShoulder";
+    else if (strcmp(bn, "RAnkle") == 0) proximalName = "RKnee";
+    else if (strcmp(bn, "LAnkle") == 0) proximalName = "LKnee";
+    else if (strcmp(bn, "RKnee")  == 0) proximalName = "RHip";
+    else if (strcmp(bn, "LKnee")  == 0) proximalName = "LHip";
+
+    Vector3 proxPos = proximalName
+        ? GetBonePositionByName(person, proximalName)
+        : (Vector3){bonePos.x, bonePos.y - 0.1f, bonePos.z};
+
+    Vector3 dir = Vector3Subtract(bonePos, proxPos);
+    float len = Vector3Length(dir);
+    if (len > 1e-4f) {
+        fwd = Vector3Scale(dir, 1.0f / len);
+        Vector3 worldUp = {0, 1, 0};
+        if (fabsf(Vector3DotProduct(fwd, worldUp)) > 0.95f)
+            worldUp = (Vector3){0, 0, 1};
+        right = SafeNormalize(Vector3CrossProduct(fwd, worldUp));
+        up    = SafeNormalize(Vector3CrossProduct(right, fwd));
+    }
+
+    return (Vector3){
+        bonePos.x + right.x * ev->emitOffsetX + up.x * ev->emitOffsetY + fwd.x * ev->emitOffsetZ,
+        bonePos.y + right.y * ev->emitOffsetX + up.y * ev->emitOffsetY + fwd.y * ev->emitOffsetZ,
+        bonePos.z + right.z * ev->emitOffsetX + up.z * ev->emitOffsetY + fwd.z * ev->emitOffsetZ,
+    };
+}
 // Punto de entrada principal: gestiona activación/desactivación automática por frames
 // Llamar cada frame con el frame actual de la animación.
 void SlashTrail_Tick(
@@ -5865,7 +5957,7 @@ void SlashTrail_Tick(
 
         if (inRange) {
             // Dentro del rango: actualizar con posicion real del bone
-            Vector3 bonePos = SlashTrail__GetBonePos(frame, personId, ev->boneName);
+            Vector3 bonePos = SlashTrail__GetEmitPos(frame, personId, ev);
             if (applyWorldTransform) {
                 Vector3 rel = Vector3Subtract(bonePos, pivot);
                 Vector3 rotated = Vector3Transform(rel, rot);
@@ -6152,5 +6244,6 @@ void Model3D_Draw(
         DrawModel(inst->model, (Vector3){0, 0, 0}, 1.0f, WHITE);
     }
 }
+
 
 #endif // BONES_CORE_H

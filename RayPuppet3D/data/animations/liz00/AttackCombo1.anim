@@ -17,6 +17,9 @@
       "frame_end": 87,
       "bone": "RWrist",
       "texture": "data/vfx/slash_01.png",
+      "emit_offset_x": 0.0,
+      "emit_offset_y": 0.25,
+      "emit_offset_z": 0.0,
       "trail": {
         "enabled": true,
         "width_start": 0.10,
@@ -26,7 +29,7 @@
         "lifetime": 0.10,
         "segments": 12
       }
-    }
+    },
     {
       "type": "model3d",
       "frame_start": 0,
