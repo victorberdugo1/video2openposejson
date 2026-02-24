@@ -42,7 +42,7 @@ else
 
     CC = cc
     CFLAGS = -Wall -Wextra -Werror -I$(INC_DIR) -I$(RAYLIB_DIR)/src -g -MMD -MP
-    LDFLAGS = -L. -lraylib -lm -ldl -lpthread -lGL -lX11
+    LDFLAGS = -L. -lraylib -lm -ldl -lpthread -lGL -lX11 -g -fsanitize=address -fsanitize=leak
 
     MKDIR_P = mkdir -p "$(@D)"
     RM = rm -f
