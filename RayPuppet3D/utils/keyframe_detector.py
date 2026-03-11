@@ -1,16 +1,16 @@
 """
 Detector de Keyframes
 
-python keyframe_detector.py input.json output.json
+python keyframe_detector.py normalizer.json keyframes.json
 
 # Más keyframes (20% en vez de 15%)
-python keyframe_detector.py input.json output.json --density 0.20
+python keyframe_detector.py input.json keyframes.json --density 0.20
 
 # Menos keyframes (10% en vez de 15%)
-python keyframe_detector.py input.json output.json --density 0.10
+python keyframe_detector.py input.json keyframes.json --density 0.10
 
 # Número exacto (ignora AUTO)
-python keyframe_detector.py input.json output.json --num 30
+python keyframe_detector.py input.json keyframes.json --num 30
 
 """
 

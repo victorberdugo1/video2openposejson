@@ -30,7 +30,7 @@ DATA_DIR = data
 ifeq ($(OS),Windows_NT)
 
     CC = gcc
-    CFLAGS = -Wall -Wextra -Werror -I$(INC_DIR) -I$(RAYLIB_DIR)/src -g -MMD -MP
+    CFLAGS = -Wall -Wextra -Werror -I$(INC_DIR) -I$(RAYLIB_DIR)/src -g -MMD -MP -mwindows
     LDFLAGS = -L. -lraylib -lopengl32 -lgdi32 -lwinmm -lole32 -lws2_32 -lm
 
     MKDIR_P = if not exist "$(@D)" mkdir "$(@D)"

@@ -1,23 +1,23 @@
 # Básico (con valores óptimos por defecto + posicionamiento en suelo)
-# python normalizer.py -a output_openpose.json -r body.json -o suavizada.json -v
+# python normalizer.py -a output_openpose.json -r body.json -o normalizer.json -v
 
 # Ajustar suavidad (más suave)
-# python normalizer.py -a output_openpose.json -r body.json -o suavizada.json --process-noise 0.001 --measurement-noise 0.1 -v
+# python normalizer.py -a output_openpose.json -r body.json -o normalizer.json --process-noise 0.001 --measurement-noise 0.1 -v
 
 # Solo normalizar, sin Kalman
-# python normalizer.py -a output_openpose.json -r body.json -o solo_norm.json --no-kalman -v
+# python normalizer.py -a output_openpose.json -r body.json -o normalizer.json --no-kalman -v
 
 # Kalman estándar (no adaptativo)
-# python normalizer.py -a output_openpose.json -r body.json -o suavizada.json --no-adaptive -v
+# python normalizer.py -a output_openpose.json -r body.json -o normalizer.json --no-adaptive -v
 
 # Sin posicionamiento en suelo (mantener posición original)
-# python normalizer.py -a output_openpose.json -r body.json -o suavizada.json --no-ground -v
+# python normalizer.py -a output_openpose.json -r body.json -o normalizer.json --no-ground -v
 
-# Sin ground + offset manual
-# python normalizer.py -a output_openpose.json -r body.json -o out.json --no-ground --y-offset -0.05 --z-offset 0.05 -v
+# Sin ground + offset manual ➤ Jumps
+# python normalizer.py -a output_openpose.json -r body.json -o normalizer.json --no-ground --y-offset -0.05 --z-offset 0.05 -v
 
-# Sin normalización, solo ajustar posición con offsets
-# python normalizer.py -a output_openpose.json -o out.json --no-ground --y-offset 0.4 --z-offset 0.1 -v
+# Sin normalización, solo ajustar posición con offsets 
+# python normalizer.py -a output_openpose.json -o normalizer.json --no-ground --y-offset 0.4 --z-offset 0.1 -v
 
 #!/usr/bin/env python3
 """

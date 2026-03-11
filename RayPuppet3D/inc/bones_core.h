@@ -2022,6 +2022,7 @@ static inline int BonesRenderer_LoadTexture(BonesRenderer* renderer, const char*
 		img = GenImageColor(1024, 1024, CLITERAL(Color){60, 120, 220, 255});
 		ImageDrawText(&img, path, 8, 8, 128, WHITE);
 	}
+	ImageAlphaPremultiply(&img);
 
 	renderer->textures[renderer->textureCount] = LoadTextureFromImage(img);
 	UnloadImage(img);
@@ -2409,8 +2410,9 @@ static inline void BonesRenderer_RenderFrame(BonesRenderer* renderer,
 		DetectZFighting(renderItems, itemCount);
 		SortRenderItems(renderItems, itemCount);
 
-		BeginBlendMode(BLEND_ALPHA);
-		rlDisableDepthTest();
+		BeginBlendMode(BLEND_ALPHA_PREMULTIPLY);
+		rlEnableDepthTest();
+		rlDisableDepthMask();
 
 		const AnimationFrame* frame = NULL;
 
@@ -2484,13 +2486,16 @@ static inline void BonesRenderer_RenderFrame(BonesRenderer* renderer,
 		}
 
 		EndBlendMode();
+		rlEnableDepthMask();
 	}
 
 	EndMode3D();
 }
 
 static inline void BonesRenderer_DrawAutoCenter(BonesRenderer* renderer, Vector3 autoCenter) {
-	if (renderer) DrawSphereWires(autoCenter, 0.05f, 8, 8, ORANGE);
+(void)renderer;
+(void)autoCenter;
+//if (renderer) DrawSphereWires(autoCenter, 0.05f, 8, 8, ORANGE);
 }
 
 // ----------------------------------------------------------------------------
