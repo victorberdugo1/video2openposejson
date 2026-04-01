@@ -1,0 +1,13 @@
+{
+  "name": "idle",
+  "fps": 30,
+  "start_frame": 0,
+  "end_frame": 270,
+  "loop": true,
+  "events": [
+    {"time": 0.2, "type": "texture", "bone": "Head", "variant": "idle"},
+    {"time": 1.2, "type": "texture", "bone": "Head", "variant": "blink"},
+    {"time": 1.6, "type": "texture", "bone": "Head", "variant": "idle"},
+    {"time": 0.2, "type": "texture", "bone": "Chest", "variant": "idle"},
+  ]
+}

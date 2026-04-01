@@ -12,2736 +12,3955 @@
 #include <math.h>
 #include <time.h>
 
-// ============================================================================
-// CONSTANTS
-// ============================================================================
+#define ATLAS_COLS                  4
+#define ATLAS_ROWS                  4
+#define ASYM_ATLAS_COLS             5
+#define ASYM_ATLAS_ROWS             5
+#define MAX_BONE_NAME_LENGTH        64
+#define MAX_FILE_PATH_LENGTH        512
+#define MAX_BONES_PER_PERSON        32
+#define MAX_FRAMES                  10000
+#define MAX_PERSONS                 10
+#define MAX_TEXTURES                64
+#define MAX_RENDER_ITEMS            512
+#define MAX_ORNAMENTS               32
 
-#define ATLAS_COLS 4
-#define ATLAS_ROWS 4
-#define MAX_BONE_NAME_LENGTH 64
-#define MAX_FILE_PATH_LENGTH 512
-#define MAX_BONES_PER_PERSON 32
-#define MAX_FRAMES 10000
-#define MAX_PERSONS 10
-#define MAX_TEXTURES 64
-#define MAX_RENDER_ITEMS 512
+#define TORSO_BIAS                  0.001f
+#define BONE_BIAS                   0.0f
+#define HEAD_BIAS                   -0.001f
+#define INDEX_BIAS                  -0.00001f
+#define Z_FIGHTING_THRESHOLD        0.01f
+#define MIN_DISTANCE_THRESHOLD      0.001f
 
-// Render Constants
-#define TORSO_BIAS 0.001f
-#define BONE_BIAS 0.0f
-#define HEAD_BIAS -0.001f
-#define INDEX_BIAS -0.00001f
-#define Z_FIGHTING_THRESHOLD 0.01f
-#define MIN_DISTANCE_THRESHOLD 0.001f
+#define BONES_MAX_TEXTURE_VARIANTS  16
+#define BONES_MAX_TEXTURE_SETS      64
+#define BONES_MAX_ANIM_EVENTS       256
+#define BONES_MAX_ANIM_CLIPS        32
+#define BONES_AE_MAX_NAME           64
+#define BONES_AE_MAX_PATH           256
 
-// Texture Sets & Animation System
-#define BONES_MAX_TEXTURE_VARIANTS 16
-#define BONES_MAX_TEXTURE_SETS 64
-#define BONES_MAX_ANIM_EVENTS 256
-#define BONES_MAX_ANIM_CLIPS 32
-#define BONES_AE_MAX_NAME 64
-#define BONES_AE_MAX_PATH 256
+#define HEAD_DEPTH_OFFSET           0.04f
+#define CHEST_OFFSET_Y              -0.06f
+#define CHEST_OFFSET_Z              -0.005f
+#define CHEST_FALLBACK_Y            -0.08f
+#define HIP_OFFSET_Y                -0.02f
 
-// Calculated Constants
-#define HEAD_DEPTH_OFFSET 0.04f
-#define CHEST_OFFSET_Y -0.06f
-#define CHEST_OFFSET_Z -0.005f
-#define CHEST_FALLBACK_Y -0.08f
-#define HIP_OFFSET_Y -0.02f
-
-// Slash Trail System
-#define SLASH_TRAIL_MAX_SEGMENTS   64
+#define SLASH_TRAIL_MAX_SEGMENTS    64
 #define SLASH_TRAIL_MAX_ACTIVE      8
 
-// Model3D Attachment System
-#define BONES_MAX_MODEL3D_EVENTS   8
-#define BONES_MODEL3D_MAX_PATH     256
-#define BONES_MODEL3D_MAX_BONE     64
-
-// ============================================================================
-// ENUMS
-// ============================================================================
+#define BONES_MAX_MODEL3D_EVENTS    8
+#define BONES_MODEL3D_MAX_PATH      256
+#define BONES_MODEL3D_MAX_BONE      64
 
 typedef enum {
-	BONES_SUCCESS = 0,
-	BONES_ERROR_NULL_POINTER,
-	BONES_ERROR_FILE_NOT_FOUND,
-	BONES_ERROR_INVALID_JSON,
-	BONES_ERROR_MEMORY_ALLOCATION,
-	BONES_ERROR_BONE_NOT_FOUND,
-	BONES_ERROR_FRAME_OUT_OF_RANGE,
-	BONES_ERROR_PERSON_NOT_FOUND,
-	BONES_ERROR_INVALID_COORDINATES,
-	BONES_ERROR_BUFFER_OVERFLOW,
-	BONES_ERROR_EMPTY_DATA
+    BONES_SUCCESS = 0,
+    BONES_ERROR_NULL_POINTER,
+    BONES_ERROR_FILE_NOT_FOUND,
+    BONES_ERROR_INVALID_JSON,
+    BONES_ERROR_MEMORY_ALLOCATION,
+    BONES_ERROR_BONE_NOT_FOUND,
+    BONES_ERROR_FRAME_OUT_OF_RANGE,
+    BONES_ERROR_PERSON_NOT_FOUND,
+    BONES_ERROR_INVALID_COORDINATES,
+    BONES_ERROR_BUFFER_OVERFLOW,
+    BONES_ERROR_EMPTY_DATA
 } BonesError;
 
 typedef enum {
-	TORSO_CHEST = 0,
-	TORSO_HIP = 1
+    TORSO_CHEST = 0,
+    TORSO_HIP   = 1
 } TorsoType;
 
 typedef enum {
-	ANIM_EVENT_TEXTURE,
-	ANIM_EVENT_SOUND,
-	ANIM_EVENT_PARTICLE,
-	ANIM_EVENT_SLASH,
-	ANIM_EVENT_MODEL3D,
-	ANIM_EVENT_CUSTOM
+    ANIM_EVENT_TEXTURE,
+    ANIM_EVENT_SOUND,
+    ANIM_EVENT_PARTICLE,
+    ANIM_EVENT_SLASH,
+    ANIM_EVENT_MODEL3D,
+    ANIM_EVENT_CUSTOM
 } AnimEventType;
 
-// ============================================================================
-// BASIC STRUCTURES
-// ============================================================================
-
-typedef struct {
-	Vector3 position;
-	float confidence;
-	bool valid;
-} BonePosition;
-
-typedef struct {
-	char name[MAX_BONE_NAME_LENGTH];
-	BonePosition position;
-	int textureIndex;
-	Vector2 size;
-	float rotation;
-	bool mirrored;
-	bool visible;
-} Bone;
-
-typedef struct Person {
-	char personId[16];
-	Bone bones[MAX_BONES_PER_PERSON];
-	int boneCount;
-	bool active;
-} Person;
-
-typedef struct {
-	int frameNumber;
-	Person persons[MAX_PERSONS];
-	int personCount;
-	bool valid;
-	bool isOriginalKeyframe;
-} AnimationFrame;
-
-typedef struct {
-	AnimationFrame* frames;
-	int frameCount;
-	int maxFrames;
-	int currentFrame;
-	bool isLoaded;
-	char filePath[256];
-} BonesAnimation;
-
-// ============================================================================
-// ORIENTATION STRUCTURES
-// ============================================================================
-
-typedef struct {
-	Vector3 position;
-	Vector3 forward;
-	Vector3 up;
-	Vector3 right;
-	float yaw;
-	float pitch;
-	float roll;
-	bool valid;
-} BoneOrientation;
-
-typedef struct {
-	Vector3 position;
-	Vector3 forward;
-	Vector3 up;
-	Vector3 right;
-	float yaw;
-	float pitch;
-	float roll;
-	bool valid;
-} HeadOrientation;
-
-typedef struct {
-	bool valid;
-	Vector3 position;
-	Vector3 forward;
-	Vector3 up;
-	Vector3 right;
-	float yaw, pitch, roll;
-} TorsoOrientation;
-
-typedef struct {
-	bool valid;
-	Vector3 chestPosition;
-	Vector3 hipPosition;
-	Vector3 spineDirection;
-	Vector3 spineRight;
-	Vector3 spineForward;
-} VirtualSpine;
-
-typedef struct {
-	Vector3 neck, lShoulder, rShoulder, lHip, rHip;
-	bool hasNeck, hasLShoulder, hasRShoulder, hasLHip, hasRHip;
-	int shoulderCount, hipCount;
-} CachedBones;
-
-typedef struct {
-	Vector3 pos0;
-	Vector3 pos1;
-} BoneConnectionPositions;
-
-// ============================================================================
-// RENDER STRUCTURES
-// ============================================================================
-
-typedef struct {
-	char personId[16];
-	char boneName[MAX_BONE_NAME_LENGTH];
-	Vector3 position;
-	BoneOrientation orientation;
-	int atlasIndex;
-	float rotation;
-	bool mirrored;
-	float distance;
-	char texturePath[MAX_FILE_PATH_LENGTH];
-	float size;
-	bool valid;
-	bool visible;
-} BoneRenderData;
-
-typedef struct {
-	Vector3 position;
-	HeadOrientation orientation;
-	float size;
-	bool visible;
-	bool valid;
-	char texturePath[MAX_FILE_PATH_LENGTH];
-	char personId[16];
-} HeadRenderData;
-
-typedef struct {
-	bool valid;
-	bool visible;
-	Vector3 position;
-	TorsoOrientation orientation;
-	TorsoType type;
-	float size;
-	char texturePath[MAX_FILE_PATH_LENGTH];
-	char personId[16];
-	const Person* person;
-	bool disableCompensation;
-} TorsoRenderData;
-
-typedef struct {
-	int type;
-	int index;
-	float distance;
-	float depthBias;
-	bool hasZFighting;
-} RenderItem;
-
-typedef struct {
-	Texture2D textures[MAX_TEXTURES];
-	char texturePaths[MAX_TEXTURES][MAX_FILE_PATH_LENGTH];
-	int textureCount;
-	int physCols, physRows;
-	Camera camera;
-} BonesRenderer;
-
-typedef struct {
-	float defaultBoneSize;
-	bool drawDebugSpheres;
-	bool enableDepthSorting;
-	Color debugColor;
-	float debugSphereRadius;
-	bool showInvalidBones;
-} BonesRenderConfig;
-
-// ============================================================================
-// TEXTURE CONFIG STRUCTURES
-// ============================================================================
-
-typedef struct {
-	char boneName[MAX_BONE_NAME_LENGTH];
-	char texturePath[MAX_FILE_PATH_LENGTH];
-	bool visible;
-	float size;
-} BoneTextureConfig;
-
-typedef struct {
-	BoneTextureConfig* configs;
-	int configCount;
-	int configCapacity;
-	bool loaded;
-	time_t lastModified;
-} SimpleTextureSystem;
-
-typedef struct {
-	char boneName[MAX_BONE_NAME_LENGTH];
-	char texturePath[MAX_FILE_PATH_LENGTH];
-	float size;
-	bool visible;
-	bool valid;
-} BoneConfig;
-
-// ============================================================================
-// TEXTURE SET STRUCTURES
-// ============================================================================
-
-typedef struct {
-	char variantName[BONES_AE_MAX_NAME];
-	char texturePath[BONES_AE_MAX_PATH];
-	bool valid;
-} BoneTextureVariant;
-
-typedef struct {
-	char boneName[BONES_AE_MAX_NAME];
-	BoneTextureVariant variants[BONES_MAX_TEXTURE_VARIANTS];
-	int variantCount;
-	int activeVariantIndex;
-	bool valid;
-} BoneTextureSet;
-
-typedef struct {
-	BoneTextureSet sets[BONES_MAX_TEXTURE_SETS];
-	int setCount;
-	bool loaded;
-} TextureSetCollection;
-
-// ============================================================================
-// SLASH TRAIL STRUCTURES
-// ============================================================================
-
-// Configuración de un evento slash (leída del .anim)
-typedef struct {
-	int   frameStart;               // Frame donde comienza el slash
-	int   frameEnd;                 // Frame donde termina el slash
-	char  boneName[BONES_AE_MAX_NAME];   // Bone emisor del trail (ej: "RWrist")
-	char  texturePath[BONES_AE_MAX_PATH]; // Textura del slash sprite
-										  // Trail config
-	float emitOffsetX;
-	float emitOffsetY;
-	float emitOffsetZ;
-	bool  trailEnabled;
-	float widthStart;               // Ancho en la punta (más joven)
-	float widthEnd;                 // Ancho en la cola (desaparece)
-	Color colorStart;               // Color RGBA en la punta
-	Color colorEnd;                 // Color RGBA en la cola
-	float lifetime;                 // Cuánto dura cada punto antes de desvanecerse
-	int   segments;                 // Número de puntos máximos del trail
-} SlashEventConfig;
-
-// Un punto temporal del trail
-typedef struct {
-	Vector3 position;
-	float   age;
-	float   lifetime;
-	bool    active;
-} SlashTrailPoint;
-
-// Un trail activo en el sistema
-typedef struct {
-	bool            active;         // ¿Está emitiendo nuevos puntos?
-	bool            alive;          // ¿Hay puntos vivos? (para saber cuándo destruir)
-	int             slashIndex;     // Índice del SlashEventConfig que lo creó
-	SlashEventConfig config;
-	SlashTrailPoint points[SLASH_TRAIL_MAX_SEGMENTS];
-	int             pointCount;
-	float           spawnTimer;
-	float           spawnRate;
-	Texture2D       texture;
-	bool            hasTexture;
-} SlashTrail;
-
-// Sistema completo de trails
-typedef struct {
-	SlashTrail   trails[SLASH_TRAIL_MAX_ACTIVE];
-} SlashTrailSystem;
-
-// ============================================================================
-// MODEL 3D ATTACHMENT STRUCTURES
-// ============================================================================
-
-// Configuración de un evento de modelo 3D leído del .anim.
-// JSON de ejemplo (mismo array "events" que slash):
-//   { "type": "model3d", "frame_start": 67, "frame_end": 87,
-//     "bone": "RWrist", "model": "data/textures/sword.glb",
-//     "scale": 1.0, "offset_x": 0.0, "offset_y": 0.05, "offset_z": 0.0,
-//     "rot_x": 0.0, "rot_y": 0.0, "rot_z": 0.0 }
-typedef struct {
-	int   frameStart;
-	int   frameEnd;
-	char  boneName[BONES_MODEL3D_MAX_BONE];
-	char  modelPath[BONES_MODEL3D_MAX_PATH];
-	float scale;
-	Vector3 offset;
-	Vector3 rotationEuler;   // grados XYZ
-	bool  valid;
-} Model3DEventConfig;
-
-typedef struct {
-	Model3DEventConfig config;
-	Model      model;
-	bool       loaded;
-	bool       visible;
-} Model3DInstance;
-
-typedef struct
-{
-	Model3DInstance instances[BONES_MAX_MODEL3D_EVENTS];
-	int instanceCount;
-} Model3DAttachmentSystem;
-
-// ============================================================================
-// ANIMATION SYSTEM STRUCTURES
-// ============================================================================
-
-typedef struct {
-	float time;
-	AnimEventType type;
-	char boneName[BONES_AE_MAX_NAME];
-	char personId[BONES_AE_MAX_NAME];
-	char variantName[BONES_AE_MAX_NAME];
-	char stringParam[BONES_AE_MAX_NAME];
-	bool processed;
-	bool valid;
-} AnimationEvent;
-
-typedef struct {
-	char name[BONES_AE_MAX_NAME];
-	float fps;
-	int startFrame;
-	int endFrame;
-	bool loop;
-	AnimationEvent events[BONES_MAX_ANIM_EVENTS];
-	int eventCount;
-	SlashEventConfig slashEvents[16];
-	int slashEventCount;
-	Model3DEventConfig model3dEvents[BONES_MAX_MODEL3D_EVENTS];
-	int model3dEventCount;
-	bool valid;
-} AnimationClipMetadata;
-
-typedef struct {
-	TextureSetCollection*  textureSets;
-	AnimationClipMetadata* clips;          // <- heap, no array embebido
-	int                    clipCount;
-	int                    clipCapacity;   // <- nuevo campo
-	int                    currentClipIndex;
-	float                  localTime;
-	bool                   playing;
-	void*                  bonesAnimation;
-	int                    currentFrameInJSON;
-	bool                   valid;
-} AnimationController;
-
-// ============================================================================
-// CHARACTER PROFILE STRUCTURES
-// ============================================================================
-
-typedef struct {
-	char name[64];
-	char texturesConfigPath[256];
-	char textureSetsPath[256];
-	char animationsPath[256];
-} CharacterProfile;
-
-
-// ============================================================================
-// ORNAMENT SYSTEM STRUCTURES
-// ============================================================================
-
 typedef enum {
-	PHYSICS_STIFF,      // Pelo corto, orejas rígidas
-	PHYSICS_MEDIUM,     // Pelo medio, movimiento normal
-	PHYSICS_SOFT,       // Pelo largo, más fluido
-	PHYSICS_VERYSOFT    // Extremos de cadenas, muy suave
+    PHYSICS_STIFF,
+    PHYSICS_MEDIUM,
+    PHYSICS_SOFT,
+    PHYSICS_VERYSOFT
 } OrnamentPhysicsPreset;
 
 typedef struct {
-	// Configuración (leída del archivo)
-	char name[MAX_BONE_NAME_LENGTH];
-	char anchorBoneName[MAX_BONE_NAME_LENGTH];
-	Vector3 offsetFromAnchor;
-	char texturePath[MAX_FILE_PATH_LENGTH];
-	bool visible;
-	float size;
-
-	// Sistema de cadenas
-	char chainParentName[MAX_BONE_NAME_LENGTH];
-	bool isChained;
-	int chainParentIndex;
-	float chainRestLength;
-
-	// Física (preset)
-	OrnamentPhysicsPreset physicsPreset;
-
-	// Estado físico (actualizado cada frame)
-	Vector3 currentPosition;
-	Vector3 previousPosition;
-	Vector3 velocity;
-	bool initialized;
-
-	// Parámetros físicos (derivados del preset)
-	float stiffness;
-	float damping;
-	float gravityScale;
-
-	bool valid;
-} BoneOrnament;
-
-#define MAX_ORNAMENTS 32
+    Vector3 position;
+    float   confidence;
+    bool    valid;
+} BonePosition;
 
 typedef struct {
-	BoneOrnament ornaments[MAX_ORNAMENTS];
-	int ornamentCount;
-	bool loaded;
+    char          name[MAX_BONE_NAME_LENGTH];
+    BonePosition  position;
+    int           textureIndex;
+    Vector2       size;
+    float         rotation;
+    bool          mirrored;
+    bool          visible;
+} Bone;
+
+typedef struct Person {
+    char personId[16];
+    Bone bones[MAX_BONES_PER_PERSON];
+    int  boneCount;
+    bool active;
+} Person;
+
+typedef struct {
+    int    frameNumber;
+    Person persons[MAX_PERSONS];
+    int    personCount;
+    bool   valid;
+    bool   isOriginalKeyframe;
+} AnimationFrame;
+
+typedef struct {
+    AnimationFrame* frames;
+    int             frameCount;
+    int             maxFrames;
+    int             currentFrame;
+    bool            isLoaded;
+    char            filePath[256];
+} BonesAnimation;
+
+typedef struct {
+    Vector3 position;
+    Vector3 forward;
+    Vector3 up;
+    Vector3 right;
+    float   yaw, pitch, roll;
+    bool    valid;
+} BoneOrientation;
+
+typedef struct {
+    Vector3 position;
+    Vector3 forward;
+    Vector3 up;
+    Vector3 right;
+    float   yaw, pitch, roll;
+    bool    valid;
+} HeadOrientation;
+
+typedef struct {
+    Vector3 position;
+    Vector3 forward;
+    Vector3 up;
+    Vector3 right;
+    float   yaw, pitch, roll;
+    bool    valid;
+} TorsoOrientation;
+
+typedef struct {
+    bool    valid;
+    Vector3 chestPosition;
+    Vector3 hipPosition;
+    Vector3 spineDirection;
+    Vector3 spineRight;
+    Vector3 spineForward;
+} VirtualSpine;
+
+typedef struct {
+    Vector3 neck, lShoulder, rShoulder, lHip, rHip;
+    bool    hasNeck, hasLShoulder, hasRShoulder, hasLHip, hasRHip;
+    int     shoulderCount, hipCount;
+} CachedBones;
+
+typedef struct {
+    Vector3 pos0;
+    Vector3 pos1;
+} BoneConnectionPositions;
+
+typedef struct {
+    char          personId[16];
+    char          boneName[MAX_BONE_NAME_LENGTH];
+    Vector3       position;
+    BoneOrientation orientation;
+    int           atlasIndex;
+    float         rotation;
+    bool          mirrored;
+    float         distance;
+    char          texturePath[MAX_FILE_PATH_LENGTH];
+    float         size;
+    bool          valid;
+    bool          visible;
+    bool          isAsymmetric;
+} BoneRenderData;
+
+typedef struct {
+    Vector3         position;
+    HeadOrientation orientation;
+    float           size;
+    bool            visible;
+    bool            valid;
+    char            texturePath[MAX_FILE_PATH_LENGTH];
+    char            personId[16];
+} HeadRenderData;
+
+typedef struct {
+    bool            valid;
+    bool            visible;
+    Vector3         position;
+    TorsoOrientation orientation;
+    TorsoType       type;
+    float           size;
+    char            texturePath[MAX_FILE_PATH_LENGTH];
+    char            personId[16];
+    const Person*   person;
+    bool            disableCompensation;
+    bool            isAsymmetric;
+} TorsoRenderData;
+
+typedef struct {
+    int   type;
+    int   index;
+    float distance;
+    float depthBias;
+    bool  hasZFighting;
+} RenderItem;
+
+typedef struct {
+    Texture2D textures[MAX_TEXTURES];
+    char      texturePaths[MAX_TEXTURES][MAX_FILE_PATH_LENGTH];
+    int       textureCount;
+    int       physCols, physRows;
+    Camera    camera;
+} BonesRenderer;
+
+typedef struct {
+    float defaultBoneSize;
+    bool  drawDebugSpheres;
+    bool  enableDepthSorting;
+    Color debugColor;
+    float debugSphereRadius;
+    bool  showInvalidBones;
+} BonesRenderConfig;
+
+typedef struct {
+    char  boneName[MAX_BONE_NAME_LENGTH];
+    char  texturePath[MAX_FILE_PATH_LENGTH];
+    int   visibleMode;
+    float size;
+} BoneTextureConfig;
+
+typedef struct {
+    BoneTextureConfig* configs;
+    int                configCount;
+    int                configCapacity;
+    bool               loaded;
+    time_t             lastModified;
+} SimpleTextureSystem;
+
+typedef struct {
+    char  boneName[MAX_BONE_NAME_LENGTH];
+    char  texturePath[MAX_FILE_PATH_LENGTH];
+    float size;
+    int   visibleMode;
+    bool  visible;
+    bool  valid;
+} BoneConfig;
+
+typedef struct {
+    char variantName[BONES_AE_MAX_NAME];
+    char texturePath[BONES_AE_MAX_PATH];
+    bool valid;
+} BoneTextureVariant;
+
+typedef struct {
+    char             boneName[BONES_AE_MAX_NAME];
+    BoneTextureVariant variants[BONES_MAX_TEXTURE_VARIANTS];
+    int              variantCount;
+    int              activeVariantIndex;
+    bool             valid;
+} BoneTextureSet;
+
+typedef struct {
+    BoneTextureSet sets[BONES_MAX_TEXTURE_SETS];
+    int            setCount;
+    bool           loaded;
+} TextureSetCollection;
+
+typedef struct {
+    int   frameStart;
+    int   frameEnd;
+    char  boneName[BONES_AE_MAX_NAME];
+    char  texturePath[BONES_AE_MAX_PATH];
+    float emitOffsetX, emitOffsetY, emitOffsetZ;
+    bool  trailEnabled;
+    float widthStart;
+    float widthEnd;
+    Color colorStart;
+    Color colorEnd;
+    float lifetime;
+    int   segments;
+} SlashEventConfig;
+
+typedef struct {
+    Vector3 position;
+    float   age;
+    float   lifetime;
+    bool    active;
+} SlashTrailPoint;
+
+typedef struct {
+    bool             active;
+    bool             alive;
+    int              slashIndex;
+    SlashEventConfig config;
+    SlashTrailPoint  points[SLASH_TRAIL_MAX_SEGMENTS];
+    int              pointCount;
+    float            spawnTimer;
+    float            spawnRate;
+    Texture2D        texture;
+    bool             hasTexture;
+} SlashTrail;
+
+typedef struct {
+    SlashTrail trails[SLASH_TRAIL_MAX_ACTIVE];
+} SlashTrailSystem;
+
+typedef struct {
+    int     frameStart;
+    int     frameEnd;
+    char    boneName[BONES_MODEL3D_MAX_BONE];
+    char    modelPath[BONES_MODEL3D_MAX_PATH];
+    float   scale;
+    Vector3 offset;
+    Vector3 rotationEuler;
+    bool    valid;
+} Model3DEventConfig;
+
+typedef struct {
+    Model3DEventConfig config;
+    Model              model;
+    bool               loaded;
+    bool               visible;
+} Model3DInstance;
+
+typedef struct {
+    Model3DInstance instances[BONES_MAX_MODEL3D_EVENTS];
+    int             instanceCount;
+} Model3DAttachmentSystem;
+
+typedef struct {
+    float         time;
+    AnimEventType type;
+    char          boneName[BONES_AE_MAX_NAME];
+    char          personId[BONES_AE_MAX_NAME];
+    char          variantName[BONES_AE_MAX_NAME];
+    char          stringParam[BONES_AE_MAX_NAME];
+    bool          processed;
+    bool          valid;
+} AnimationEvent;
+
+typedef struct {
+    char               name[BONES_AE_MAX_NAME];
+    float              fps;
+    int                startFrame;
+    int                endFrame;
+    bool               loop;
+    AnimationEvent     events[BONES_MAX_ANIM_EVENTS];
+    int                eventCount;
+    SlashEventConfig   slashEvents[16];
+    int                slashEventCount;
+    Model3DEventConfig model3dEvents[BONES_MAX_MODEL3D_EVENTS];
+    int                model3dEventCount;
+    bool               valid;
+} AnimationClipMetadata;
+
+typedef struct {
+    TextureSetCollection*  textureSets;
+    AnimationClipMetadata* clips;
+    int                    clipCount;
+    int                    clipCapacity;
+    int                    currentClipIndex;
+    float                  localTime;
+    bool                   playing;
+    void*                  bonesAnimation;
+    int                    currentFrameInJSON;
+    bool                   valid;
+} AnimationController;
+
+typedef struct {
+    char name[64];
+    char texturesConfigPath[256];
+    char textureSetsPath[256];
+    char animationsPath[256];
+} CharacterProfile;
+
+typedef struct {
+    char                  name[MAX_BONE_NAME_LENGTH];
+    char                  anchorBoneName[MAX_BONE_NAME_LENGTH];
+    Vector3               offsetFromAnchor;
+    char                  texturePath[MAX_FILE_PATH_LENGTH];
+    bool                  visible;
+    float                 size;
+
+    char                  chainParentName[MAX_BONE_NAME_LENGTH];
+    bool                  isChained;
+    int                   chainParentIndex;
+    float                 chainRestLength;
+
+    OrnamentPhysicsPreset physicsPreset;
+
+    Vector3               currentPosition;
+    Vector3               previousPosition;
+    Vector3               velocity;
+    bool                  initialized;
+
+    float                 stiffness;
+    float                 damping;
+    float                 gravityScale;
+
+    bool                  valid;
+} BoneOrnament;
+
+typedef struct {
+    BoneOrnament ornaments[MAX_ORNAMENTS];
+    int          ornamentCount;
+    bool         loaded;
 } OrnamentSystem;
 
-// ============================================================================
-// ANIMATED CHARACTER STRUCTURES
-// ============================================================================
-
 typedef struct AnimatedCharacter {
-	BonesAnimation animation;
-	BonesRenderer* renderer;
-	SimpleTextureSystem textureSystem;
-	BoneConfig* boneConfigs;
-	int boneConfigCount;
-	BonesRenderConfig renderConfig;
-	BoneRenderData* renderBones;
-	int renderBonesCount;
-	int renderBonesCapacity;
-	HeadRenderData* renderHeads;
-	int renderHeadsCount;
-	int renderHeadsCapacity;
-	TorsoRenderData* renderTorsos;
-	int renderTorsosCount;
-	int renderTorsosCapacity;
-	int currentFrame;
-	int maxFrames;
-	bool autoPlay;
-	float autoPlaySpeed;
-	Vector3 autoCenter;
-	bool autoCenterCalculated;
-	bool renderHeadBillboards;
-	bool renderTorsoBillboards;
-	int lastProcessedFrame;
-	bool forceUpdate;
-	AnimationController* animController;
-	TextureSetCollection* textureSets;
-	OrnamentSystem* ornaments;
-	SlashTrailSystem slashTrails;
-	Model3DAttachmentSystem model3dAttachments;
-	// Transform del mundo — SlashTrail_Tick graba puntos en espacio mundo
-	Vector3 worldPosition;
-	float   worldRotation;
-	Vector3 worldPivot;
-	bool    hasWorldTransform;
-	bool    lockRootXZ;   // When true, animation root motion is locked on XZ
+    BonesAnimation          animation;
+    BonesRenderer*          renderer;
+    SimpleTextureSystem     textureSystem;
+    BoneConfig*             boneConfigs;
+    int                     boneConfigCount;
+    BonesRenderConfig       renderConfig;
+    BoneRenderData*         renderBones;
+    int                     renderBonesCount;
+    int                     renderBonesCapacity;
+    HeadRenderData*         renderHeads;
+    int                     renderHeadsCount;
+    int                     renderHeadsCapacity;
+    TorsoRenderData*        renderTorsos;
+    int                     renderTorsosCount;
+    int                     renderTorsosCapacity;
+    int                     currentFrame;
+    int                     maxFrames;
+    bool                    autoPlay;
+    float                   autoPlaySpeed;
+    Vector3                 autoCenter;
+    bool                    autoCenterCalculated;
+    bool                    renderHeadBillboards;
+    bool                    renderTorsoBillboards;
+    int                     lastProcessedFrame;
+    bool                    forceUpdate;
+    AnimationController*    animController;
+    TextureSetCollection*   textureSets;
+    OrnamentSystem*         ornaments;
+    SlashTrailSystem        slashTrails;
+    Model3DAttachmentSystem model3dAttachments;
+    Vector3                 worldPosition;
+    float                   worldRotation;
+    Vector3                 worldPivot;
+    bool                    hasWorldTransform;
+    bool                    lockRootXZ;
 } AnimatedCharacter;
 
-// ============================================================================
-// CONNECTION TABLES (STATIC)
-// ============================================================================
+typedef struct {
+    bool    active;
+    char    boneName[BONES_AE_MAX_NAME];
+    Vector3 bonePosition;
+    int     frameStart;
+    int     frameEnd;
+    int     slashIndex;
+} SlashHitboxInfo;
 
 static const struct {
-	const char* boneName;
-	const char* connectedBone;
-	float projectionFactor;
+    const char* boneName;
+    const char* connectedBone;
+    float       projectionFactor;
 } MIDPOINT_CONNECTIONS[] = {
-	{"Neck", "HEAD_CALCULATED", 1.0f},
-	{"LShoulder", "LElbow", 1.0f}, {"RShoulder", "RElbow", 1.0f},
-	{"LElbow", "LWrist", 1.0f}, {"RElbow", "RWrist", 1.0f},
-	{"LWrist", "LElbow", 1.3f}, {"RWrist", "RElbow", 1.3f},
-	{"LHip", "LKnee", 1.0f}, {"RHip", "RKnee", 1.0f},
-	{"LKnee", "LAnkle", 1.0f}, {"RKnee", "RAnkle", 1.0f},
-	{"LAnkle", "FOOT_FORWARD", 1.0f}, {"RAnkle", "FOOT_FORWARD", 1.0f},
-	{"", "", 0.0f}
+    {"Neck",     "HEAD_CALCULATED", 1.0f},
+    {"LShoulder","LElbow",          1.0f}, {"RShoulder","RElbow",  1.0f},
+    {"LElbow",   "LWrist",          1.0f}, {"RElbow",   "RWrist",  1.0f},
+    {"LWrist",   "LElbow",          1.3f}, {"RWrist",   "RElbow",  1.3f},
+    {"LHip",     "LKnee",           1.0f}, {"RHip",     "RKnee",   1.0f},
+    {"LKnee",    "LAnkle",          1.0f}, {"RKnee",    "RAnkle",  1.0f},
+    {"LAnkle",   "FOOT_FORWARD",    1.0f}, {"RAnkle",   "FOOT_FORWARD", 1.0f},
+    {"", "", 0.0f}
 };
 
 static const struct {
-	const char* boneName;
-	const char* connections[3];
-	float priority[3];
+    const char* boneName;
+    const char* connections[3];
+    float       priority[3];
 } BONE_CONNECTIONS[] = {
-	{"LShoulder", {"LShoulder", "LElbow", ""}, {1.0f, 0.8f, 0.0f}},
-	{"LElbow", {"LElbow", "LWrist", ""}, {1.0f, 0.8f, 0.0f}},
-	{"LWrist", {"LWrist", "LElbow", ""}, {1.0f, 0.0f, 0.0f}},
-	{"RShoulder", {"RShoulder", "RElbow", ""}, {1.0f, 0.8f, 0.0f}},
-	{"RElbow", {"RElbow", "RWrist", ""}, {1.0f, 0.8f, 0.0f}},
-	{"RWrist", {"RElbow", "RWrist", ""}, {1.0f, 0.0f, 0.0f}},
-	{"LHip", {"LHip", "LKnee", ""}, {1.0f, 0.8f, 0.0f}},
-	{"LKnee", {"LKnee", "LAnkle", ""}, {1.0f, 0.8f, 0.0f}},
-	{"LAnkle", {"LKnee", "LAnkle", ""}, {1.0f, 0.8f, 0.0f}},
-	{"RHip", {"RHip", "RKnee", ""}, {1.0f, 0.8f, 0.0f}},
-	{"RKnee", {"RKnee", "RAnkle", ""}, {1.0f, 0.8f, 0.0f}},
-	{"RAnkle", {"RKnee", "RAnkle", ""}, {1.0f, 0.8f, 0.0f}},
-	{"Neck", {"Neck", "Head", ""},  {0.8f, 1.0f, 0.0f}},
-	{"", {"", "", ""}, {0.0f, 0.0f, 0.0f}}
+    {"LShoulder", {"LShoulder","LElbow",  ""}, {1.0f, 0.8f, 0.0f}},
+    {"LElbow",    {"LElbow",   "LWrist",  ""}, {1.0f, 0.8f, 0.0f}},
+    {"LWrist",    {"LWrist",   "LElbow",  ""}, {1.0f, 0.0f, 0.0f}},
+    {"RShoulder", {"RShoulder","RElbow",  ""}, {1.0f, 0.8f, 0.0f}},
+    {"RElbow",    {"RElbow",   "RWrist",  ""}, {1.0f, 0.8f, 0.0f}},
+    {"RWrist",    {"RElbow",   "RWrist",  ""}, {1.0f, 0.0f, 0.0f}},
+    {"LHip",      {"LHip",     "LKnee",   ""}, {1.0f, 0.8f, 0.0f}},
+    {"LKnee",     {"LKnee",    "LAnkle",  ""}, {1.0f, 0.8f, 0.0f}},
+    {"LAnkle",    {"LKnee",    "LAnkle",  ""}, {1.0f, 0.8f, 0.0f}},
+    {"RHip",      {"RHip",     "RKnee",   ""}, {1.0f, 0.8f, 0.0f}},
+    {"RKnee",     {"RKnee",    "RAnkle",  ""}, {1.0f, 0.8f, 0.0f}},
+    {"RAnkle",    {"RKnee",    "RAnkle",  ""}, {1.0f, 0.8f, 0.0f}},
+    {"Neck",      {"Neck",     "Head",    ""}, {0.8f, 1.0f, 0.0f}},
+    {"", {"","",""}, {0.0f, 0.0f, 0.0f}}
 };
 
 static const struct {
-	const char* boneName;
-	const char* primaryConnection;
-	const char* secondaryConnection;
-	bool reverseForward;
-	bool isLimb;
-	bool useStableOrientation;
+    const char* boneName;
+    const char* primaryConnection;
+    const char* secondaryConnection;
+    bool        reverseForward;
+    bool        isLimb;
+    bool        useStableOrientation;
 } BONE_ORIENTATIONS[] = {
-	{"LShoulder", "LElbow", "Neck", false, true, true},
-	{"LElbow", "Neck", "LWrist", true, true, true},
-	{"LWrist", "LElbow", "", false, false, true},
-	{"RShoulder", "RElbow", "Neck", true, true, true},
-	{"RElbow", "Neck", "RWrist", false, true, true},
-	{"RWrist", "RElbow", "", false, false, true},
-	{"LHip", "LKnee", "FRONT_CALCULATED", true, true, true},
-	{"LKnee", "LAnkle", "LHip", true, true, true},
-	{"LAnkle", "LKnee", "FRONT_CALCULATED", true, false, true},
-	{"RHip", "RKnee", "FRONT_CALCULATED", false, true, true},
-	{"RKnee", "RAnkle", "RHip", true, true, true},
-	{"RAnkle", "RKnee", "REAR_CALCULATED", false, false, true},
-	{"Neck", "HEAD_CALCULATED", "", true, false, true},
-	{"", "", "", false, false, false}
+    {"LShoulder", "LElbow",           "Neck",             false, true,  true},
+    {"LElbow",    "Neck",             "LWrist",           true,  true,  true},
+    {"LWrist",    "LElbow",           "",                 false, false, true},
+    {"RShoulder", "RElbow",           "Neck",             true,  true,  true},
+    {"RElbow",    "Neck",             "RWrist",           false, true,  true},
+    {"RWrist",    "RElbow",           "",                 false, false, true},
+    {"LHip",      "LKnee",           "FRONT_CALCULATED", true,  true,  true},
+    {"LKnee",     "LAnkle",          "LHip",             true,  true,  true},
+    {"LAnkle",    "LKnee",           "FRONT_CALCULATED", true,  false, true},
+    {"RHip",      "RKnee",           "FRONT_CALCULATED", false, true,  true},
+    {"RKnee",     "RAnkle",          "RHip",             true,  true,  true},
+    {"RAnkle",    "RKnee",           "REAR_CALCULATED",  false, false, true},
+    {"Neck",      "HEAD_CALCULATED", "",                 true,  false, true},
+    {"", "", "", false, false, false}
 };
 
 static const struct {
-	const char* boneName;
-	float yawOffset;
-	float pitchOffset;
-	float rollOffset;
+    const char* boneName;
+    float       yawOffset;
+    float       pitchOffset;
+    float       rollOffset;
 } BONE_ANGLE_OFFSETS[] = {
-	{"LShoulder", 90.0f, 180.0f, -90.0f},
-	{"LElbow", 90.0f, 225.0f, -90.0f},
-	{"LWrist", 90.0f, 180.0f, 90.0f},
-	{"RShoulder", -90.0f, 0.0f, 90.0f},
-	{"RElbow", -90.0f, -90.0f, 90.0f},
-	{"RWrist", 90.0f, 180.0f, 90.0f},
-	{"LHip", 90.0f, -45.0f, 90.0f},
-	{"LKnee", 90.0f, 90.0f, 90.0f},
-	{"LAnkle",  90.0f, -90.0f, 90.0f},
-	{"RHip", -90.0f, -45.0f, -90.0f},
-	{"RKnee", -90.0f, 90.0f, 90.0f},
-	{"RAnkle", 90.0f, 180.0f, 90.0f},
-	{"Neck", -90.0f, 180.0f, -90.0f},
-	{"", 0.0f, 0.0f, 0.0f}
+    {"LShoulder",  90.0f, 180.0f,  -90.0f},
+    {"LElbow",     90.0f, 225.0f,  -90.0f},
+    {"LWrist",     90.0f, 180.0f,   90.0f},
+    {"RShoulder", -90.0f,   0.0f,   90.0f},
+    {"RElbow",    -90.0f, -90.0f,   90.0f},
+    {"RWrist",     90.0f, 180.0f,   90.0f},
+    {"LHip",       90.0f, -45.0f,   90.0f},
+    {"LKnee",      90.0f,  90.0f,   90.0f},
+    {"LAnkle",     90.0f, -90.0f,   90.0f},
+    {"RHip",      -90.0f, -45.0f,  -90.0f},
+    {"RKnee",     -90.0f,  90.0f,   90.0f},
+    {"RAnkle",     90.0f, 180.0f,   90.0f},
+    {"Neck",      -90.0f, 180.0f,  -90.0f},
+    {"", 0.0f, 0.0f, 0.0f}
 };
 
 static const struct {
-	const char* boneName;
-	float scaleFactorUp;
-	float scaleFactorDown;
+    const char* boneName;
+    float       scaleFactorUp;
+    float       scaleFactorDown;
 } BONE_SCALE_FACTORS[] = {
-	{"LShoulder", 0.3f, 1.2f},
-	{"RShoulder", 0.3f, 1.2f},
-	{"LElbow", 0.0f, 0.9f},
-	{"RElbow", 0.0f, 0.9f},
-	{"LHip", 0.1f, 1.0f},
-	{"RHip", 0.1f, 1.0f},
-	{"LKnee", 0.1f, 1.0f},
-	{"RKnee", 0.1f, 1.0f},
-	{"", 0.5f, 0.5f}
+    {"LShoulder", 0.3f, 1.2f},
+    {"RShoulder", 0.3f, 1.2f},
+    {"LElbow",    0.0f, 0.9f},
+    {"RElbow",    0.0f, 0.9f},
+    {"LHip",      0.1f, 1.0f},
+    {"RHip",      0.1f, 1.0f},
+    {"LKnee",     0.1f, 1.0f},
+    {"RKnee",     0.1f, 1.0f},
+    {"", 0.5f, 0.5f}
 };
 
-// ============================================================================
-// CORE ANIMATION API
-// ============================================================================
-
-static BonesError BonesInit(BonesAnimation* animation, int maxFrames);
-static void BonesFree(BonesAnimation* animation);
-static BonesError BonesLoadFromJSON(BonesAnimation* animation, const char* jsonFilePath);
-static BonesError BonesLoadFromString(BonesAnimation* animation, const char* jsonString);
-static BonesError BonesSetFrame(BonesAnimation* animation, int frameNumber);
-static int BonesGetCurrentFrame(const BonesAnimation* animation);
-static int BonesGetFrameCount(const BonesAnimation* animation);
-static bool BonesIsValidFrame(const BonesAnimation* animation, int frameNumber);
-static bool BonesIsPositionValid(Vector3 position);
-static const char* BonesGetErrorString(BonesError error);
-static bool BonesCreateMissingFrames(BonesAnimation* animation);
-static bool BonesInterpolateFrames(BonesAnimation* animation, int frameA, int frameB, int framesToAdd);
-static bool BonesInsertEmptyFrame(BonesAnimation* animation, int position);
-static bool BonesCopyFrame(BonesAnimation* animation, int sourceFrame, int targetFrame);
-
-// ============================================================================
-// TEXTURE MANAGEMENT API
-// ============================================================================
-
-static bool LoadSimpleTextureConfig(SimpleTextureSystem* system, const char* filename);
-static void LoadBoneConfigurations(SimpleTextureSystem* textureSystem, BoneConfig** boneConfigs, int* boneConfigCount);
-static BoneConfig* FindBoneConfig(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName);
-static const char* GetTexturePathForBone(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName, TextureSetCollection* textureSets);
-static bool IsBoneVisible(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName);
-static float GetBoneSize(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName);
-static void CleanupTextureSystem(SimpleTextureSystem* textureSystem, BoneConfig** boneConfigs, int* boneConfigCount);
-
-// ============================================================================
-// TEXTURE SETS API
-// ============================================================================
-
-static TextureSetCollection* BonesTextureSets_Create(void);
-static void BonesTextureSets_Free(TextureSetCollection* collection);
-static bool BonesTextureSets_LoadFromFile(TextureSetCollection* collection, const char* filePath);
-static const char* BonesTextureSets_GetActiveTexture(const TextureSetCollection* collection, const char* boneName);
-static bool BonesTextureSets_SetVariant(TextureSetCollection* collection, const char* boneName, const char* variantName);
-static const char* BonesTextureSets_GetActiveVariantName(const TextureSetCollection* collection, const char* boneName);
-static void BonesTextureSets_ResetAll(TextureSetCollection* collection);
-static BoneTextureSet* BonesTextureSets_FindSet(TextureSetCollection* collection, const char* boneName);
-
-// ============================================================================
-// ORNAMENT SYSTEM API
-// ============================================================================
-
-static OrnamentSystem* Ornaments_Create(void);
-static void Ornaments_Free(OrnamentSystem* system);
-static bool Ornaments_LoadFromConfig(OrnamentSystem* system, const char* configPath);
-static void Ornaments_InitializePhysics(OrnamentSystem* system, const AnimationFrame* frame);
-static void Ornaments_UpdatePhysics(OrnamentSystem* system, const AnimationFrame* frame, float deltaTime);
-static void Ornaments_CollectForRendering(OrnamentSystem* system, 
-		BoneRenderData** renderBones, 
-		int* renderBonesCount, 
-		int* renderBonesCapacity,
-		Camera camera);
-static void Ornaments_ApplyPreset(BoneOrnament* ornament, OrnamentPhysicsPreset preset);
-static Vector3 Ornaments_GetAnchorPosition(const AnimationFrame* frame, const char* anchorName);
-static BoneOrientation Ornaments_GetAnchorOrientation(const AnimationFrame* frame, const char* anchorName);
-static void Ornaments_SolveChainConstraint(BoneOrnament* child, BoneOrnament* parent);
-
-// ============================================================================
-// SLASH TRAIL API
-// ============================================================================
-
-static void SlashTrail_InitSystem(SlashTrailSystem* sys);
-static void SlashTrail_FreeSystem(SlashTrailSystem* sys);
-static void SlashTrail_Activate(SlashTrailSystem* sys, int slashIndex, const SlashEventConfig* config);
-static void SlashTrail_Deactivate(SlashTrailSystem* sys, int slashIndex);
-static void SlashTrail_UpdateTrail(SlashTrailSystem* sys, float deltaTime, int slashIndex, Vector3 bonePosition);
-static void SlashTrail_Draw(SlashTrailSystem* sys, Camera camera);
-static void SlashTrail_Tick(SlashTrailSystem* sys, float deltaTime, int currentFrame,
-		const SlashEventConfig* events, int eventCount,
-		const AnimationFrame* frame, const char* personId,
-		Vector3 worldPos, Vector3 pivot, Matrix rot, bool applyWorldTransform);
-
-// ============================================================================
-// MODEL 3D ATTACHMENT API
-// ============================================================================
-
-static void Model3D_InitSystem(Model3DAttachmentSystem* sys);
-static void Model3D_FreeSystem(Model3DAttachmentSystem* sys);
-static void Model3D_LoadFromClip(Model3DAttachmentSystem* sys, const AnimationClipMetadata* clip);
-static void Model3D_Tick(Model3DAttachmentSystem* sys, int currentFrame);
-static void Model3D_Draw(
-		Model3DAttachmentSystem* sys,
-		const AnimationFrame*    frame,
-		const char*              personId,
-		Vector3                  worldPos,
-		Vector3                  pivot,
-		Matrix                   rot,
-		bool                     applyWorldTransform);
-
-// ============================================================================
-// ANIMATION CONTROLLER API
-// ============================================================================
-static void AnimController_Free(AnimationController* controller);
-static bool AnimController_LoadClipMetadata(AnimationController* controller, const char* jsonPath);
-static bool AnimController_PlayClip(AnimationController* controller, const char* clipName);
-static void AnimController_Pause(AnimationController* controller);
-static void AnimController_Resume(AnimationController* controller);
-static void AnimController_Update(AnimationController* controller, float deltaTime);
-static int AnimController_GetCurrentFrame(const AnimationController* controller);
-
-// ============================================================================
-// RENDERER API
-// ============================================================================
-
-static BonesRenderer* BonesRenderer_Create(void);
-static void BonesRenderer_Free(BonesRenderer* renderer);
-static bool BonesRenderer_Init(BonesRenderer* renderer);
-static int BonesRenderer_LoadTexture(BonesRenderer* renderer, const char* path);
-static void BonesRenderer_SetAtlasDimensions(BonesRenderer* renderer, int cols, int rows);
-static void BonesRenderer_RenderFrame(BonesRenderer* renderer, 
-		BoneRenderData* bones, int boneCount,
-		HeadRenderData* heads, int headCount, 
-		TorsoRenderData* torsos, int torsoCount,
-		Vector3 autoCenter, bool autoCenterCalculated);
-
-static void BonesRenderer_DrawAutoCenter(BonesRenderer* renderer, Vector3 autoCenter);
-
-// ============================================================================
-// ANIMATED CHARACTER API
-// ============================================================================
-
-static AnimatedCharacter* CreateAnimatedCharacter(const char* textureConfigPath, const char* textureSetsPath);
-static void DestroyAnimatedCharacter(AnimatedCharacter* character);
-static void UpdateAnimatedCharacter(AnimatedCharacter* character, float deltaTime);
-static void DrawAnimatedCharacter(AnimatedCharacter* character, Camera camera);
-static void DrawAnimatedCharacterTransformed(AnimatedCharacter* character, Camera camera, Vector3 worldPosition, float worldRotation);
-static void SetCharacterFrame(AnimatedCharacter* character, int frame);
-static void SetCharacterAutoPlay(AnimatedCharacter* character, bool autoPlay);
-static void RestartAnimation(AnimatedCharacter* character);
-static void ResetCharacterAutoCenter(AnimatedCharacter* character);
-static void LockAnimationRootXZ(AnimatedCharacter* character, bool lock);
-static float GetCurrentAnimDuration(const AnimatedCharacter* character);
-static bool IsSlashActiveForCharacter(const AnimatedCharacter* character);
-static Vector3 GetActiveSlashBonePos(const AnimatedCharacter* character, Vector3 fallback);
-static void SetCharacterBillboards(AnimatedCharacter* character, bool heads, bool torsos);
-static void SetAnimationTransitionDuration(float duration);
-
-// ============================================================================
-// CALCULATION FUNCTIONS
-// ============================================================================
-
-static Vector3 CalculateHeadPosition(const Person* person);
-static Vector3 CalculateChestPosition(const Person* person);
-static Vector3 CalculateHipPosition(const Person* person);
-static Vector3 GetBonePositionByName(const Person* person, const char* boneName);
-static Vector3 SafeNormalize(Vector3 v);
-static VirtualSpine CalculateVirtualSpine(const Person* person);
-static TorsoOrientation CalculateChestOrientation(const Person* person);
-static TorsoOrientation CalculateHipOrientation(const Person* person);
-static HeadOrientation CalculateHeadOrientation(const Person* person);
-static BoneOrientation CalculateBoneOrientation(const char* boneName, const Person* person, Vector3 bonePosition);
-static Vector3 CalculateBoneMidpoint(const char* boneName, const Person* person);
-
-// ============================================================================
-// RENDERING CALCULATION FUNCTIONS
-// ============================================================================
-
-static void CalculateHandBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex, float* outRotation, bool* outMirrored, const char* boneName);
-static void CalculateHandBoneRenderDataWithOrientation(const BoneRenderData* boneData, Camera camera, int* outChosenIndex, float* outRotation, bool* outMirrored);
-static void CalculateLimbBoneRenderData(const BoneRenderData* boneData, const Person* person, Camera camera, int* outChosenIndex, float* outRotation, bool* outMirrored);
-static void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera, int* outChosenIndex, float* outRotation, bool* outMirrored);
-static void CalculateHeadRenderData(const HeadRenderData* headData, Camera camera, int* outChosenIndex, float* outRotation, bool* outMirrored);
-static BoneConnectionPositions GetBoneConnectionPositionsEx(const BoneRenderData* boneData, const Person* person);
-
-// ============================================================================
-// RENDERING COLLECTION FUNCTIONS
-// ============================================================================
-
-static void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, BoneRenderData** renderBones,
-		int* renderBonesCount, int* renderBonesCapacity, BoneConfig* boneConfigs, int boneConfigCount,
-		TextureSetCollection* textureSets, OrnamentSystem* ornaments);
-static void CollectHeadsForRendering(const BonesAnimation* animation, HeadRenderData** heads,
-		int* headCount, int* headCapacity, BoneConfig* boneConfigs, int boneConfigCount,
-		TextureSetCollection* textureSets);
-static void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData** torsos,
-		int* torsoCount, int* torsoCapacity, BoneConfig* boneConfigs, int boneConfigCount,
-		TextureSetCollection* textureSets);
-static void EnrichBoneRenderDataWithOrientation(BoneRenderData* renderBone, const Person* person);
-static bool ResizeRenderBonesArray(BoneRenderData** renderBones, int* renderBonesCapacity, int newCapacity);
-
-// ============================================================================
-// RENDERING DRAWING FUNCTIONS
-// ============================================================================
-
-static Rectangle SrcFromLogical(Texture2D tex, int logicalCol, int logicalRow, int physCols, int physRows, bool mirrored, bool* outMirrored);
-static void DrawBonetileCustom(Texture2D tex, Camera camera, Rectangle src, Vector3 pos, Vector2 size, float rotationDeg, bool mirrored, const char* boneName);
-static void DrawBonetileCustomWithRoll(Texture2D tex, Camera camera, Rectangle src, Vector3 pos, Vector2 size,
-		float rotationDeg, bool mirrored, bool neighborValid, Vector3 neighborPos, 
-		const BoneRenderData* boneData, const Person* person);
-static void DrawHeadBillboard(Texture2D texture, Camera camera, const HeadRenderData* headData, int physCols, int physRows);
-static void DrawTorsoBillboard(Texture2D texture, Camera camera, const TorsoRenderData* torsoData, int physCols, int physRows);
-
-// ============================================================================
-// UTILITY FUNCTIONS
-// ============================================================================
-
-static BoneRenderData* FindRenderBoneByName(BoneRenderData* bones, int boneCount, const char* boneName);
-static const Person* FindPersonByBoneName(const AnimationFrame* frame, const char* boneName);
-static bool IsWristBone(const char* boneName);
-static bool ShouldRenderHead(const Person* person);
-static bool ShouldRenderChest(const Person* person);
-static bool ShouldRenderHip(const Person* person);
-static bool ShouldUseVariableHeight(const char* boneName);
-static bool ShouldFlipBoneTexture(const char* boneName);
-static bool GetBoneConnectionsWithPriority(const char* boneName, char connections[3][32], float priorities[3]);
-static BonesRenderConfig BonesGetDefaultRenderConfig(void);
-static void BonesSetRenderConfig(const BonesRenderConfig* config);
-
-// Forward declaration — implementación en SLASH TRAIL SYSTEM IMPLEMENTATION
-static Vector3 SlashTrail__GetBonePos(const AnimationFrame* frame, const char* personId, const char* boneName);
-
-// ============================================================================
-// IMPLEMENTATION
-// ============================================================================
-
-// Global transition state
 static AnimationFrame g_transitionFromFrame;
 static AnimationFrame g_transitionToFrame;
-static bool g_isTransitioning = false;
-static float g_transitionTime = 0.0f;
-static float g_transitionDuration = 0.85f;
-static bool g_hasValidFromFrame = false;
+static bool           g_isTransitioning    = false;
+static float          g_transitionTime     = 0.0f;
+static float          g_transitionDuration = 0.85f;
+static bool           g_hasValidFromFrame  = false;
 
-// Global render config
 static BonesRenderConfig g_renderConfig = {
-	.defaultBoneSize = 0.35f,
-	.drawDebugSpheres = false,
-	.enableDepthSorting = true,
-	.debugColor = RED,
-	.debugSphereRadius = 0.035f,
-	.showInvalidBones = false
+    .defaultBoneSize    = 0.35f,
+    .drawDebugSpheres   = false,
+    .enableDepthSorting = true,
+    .debugColor         = RED,
+    .debugSphereRadius  = 0.035f,
+    .showInvalidBones   = false
 };
 
-// ----------------------------------------------------------------------------
-// Core Animation Functions
-// ----------------------------------------------------------------------------
+static inline bool BonesIsPositionValid(Vector3 position);
+static inline int BonesGetCurrentFrame(const BonesAnimation* animation);
+static inline bool BonesIsValidFrame(const BonesAnimation* animation, int frameNumber);
+static inline BonesError BonesSetFrame(BonesAnimation* animation, int frameNumber);
+static inline int BonesGetFrameCount(const BonesAnimation* animation);
+static inline bool BonesCreateMissingFrames(BonesAnimation* animation);
+static inline BonesError BonesInit(BonesAnimation* animation, int maxFrames);
+static inline void BonesFree(BonesAnimation* animation);
+static inline BonesError BonesLoadFromJSON(BonesAnimation* animation, const char* jsonFilePath);
+static inline BonesError BonesLoadFromString(BonesAnimation* animation, const char* jsonString);
+
+static inline Vector3 SafeNormalize(Vector3 v);
+static inline bool IsWristBone(const char* boneName);
+static inline bool IsAsymmetricBone(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName);
+static inline CachedBones CacheBones(const Person* person);
+static inline Vector3 GetBonePositionByName(const Person* person, const char* boneName);
+static inline Vector3 CalculateHeadPosition(const Person* person);
+static inline Vector3 CalculateChestPosition(const Person* person);
+static inline Vector3 CalculateHipPosition(const Person* person);
+static inline VirtualSpine CalculateVirtualSpine(const Person* person);
+static inline TorsoOrientation CreateOrientation(Vector3 pos, Vector3 forward, Vector3 up, Vector3 right);
+static inline TorsoOrientation CalculateChestOrientation(const Person* person);
+static inline TorsoOrientation CalculateHipOrientation(const Person* person);
+static inline HeadOrientation CalculateHeadOrientation(const Person* person);
+static inline BoneOrientation CalculateBoneOrientation(const char* boneName, const Person* person, Vector3 bonePosition);
+static inline Vector3 CalculateBoneMidpoint(const char* boneName, const Person* person);
+
+static inline bool ShouldRenderHead(const Person* person);
+static inline bool ShouldRenderChest(const Person* person);
+static inline bool ShouldRenderHip(const Person* person);
+static inline bool ShouldUseVariableHeight(const char* boneName);
+static inline bool ShouldFlipBoneTexture(const char* boneName);
+static inline bool GetBoneConnectionsWithPriority(const char* boneName, char connections[3][32], float priorities[3]);
+static inline BonesRenderConfig BonesGetDefaultRenderConfig(void);
+static inline void BonesSetRenderConfig(const BonesRenderConfig* config);
+
+static inline bool LoadSimpleTextureConfig(SimpleTextureSystem* system, const char* filename);
+static inline void LoadBoneConfigurations(SimpleTextureSystem* textureSystem, BoneConfig** boneConfigs, int* boneConfigCount);
+static inline BoneConfig* FindBoneConfig(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName);
+static inline const char* GetTexturePathForBone(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName, TextureSetCollection* textureSets);
+static inline bool IsBoneVisible(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName);
+static inline int GetBoneVisibleMode(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName);
+static inline float GetBoneSize(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName);
+static inline void CleanupTextureSystem(SimpleTextureSystem* textureSystem, BoneConfig** boneConfigs, int* boneConfigCount);
+
+static inline TextureSetCollection* BonesTextureSets_Create(void);
+static inline void BonesTextureSets_Free(TextureSetCollection* collection);
+static inline bool BonesTextureSets_LoadFromFile(TextureSetCollection* collection, const char* filePath);
+static inline const char* BonesTextureSets_GetActiveTexture(const TextureSetCollection* collection, const char* boneName);
+static inline bool BonesTextureSets_SetVariant(TextureSetCollection* collection, const char* boneName, const char* variantName);
+static inline BoneTextureSet* BonesTextureSets_FindSet(TextureSetCollection* collection, const char* boneName);
+
+static inline OrnamentSystem* Ornaments_Create(void);
+static inline void Ornaments_Free(OrnamentSystem* system);
+static inline bool Ornaments_LoadFromConfig(OrnamentSystem* system, const char* configPath);
+static inline void Ornaments_InitializePhysics(OrnamentSystem* system, const AnimationFrame* frame);
+static inline void Ornaments_UpdatePhysics(OrnamentSystem* system, const AnimationFrame* frame, float deltaTime);
+static inline void Ornaments_CollectForRendering(OrnamentSystem* system, BoneRenderData** renderBones, int* renderBonesCount, int* renderBonesCapacity, Camera camera);
+static inline void Ornaments_ApplyPreset(BoneOrnament* ornament, OrnamentPhysicsPreset preset);
+static inline Vector3 Ornaments_GetAnchorPosition(const AnimationFrame* frame, const char* anchorName);
+static inline BoneOrientation Ornaments_GetAnchorOrientation(const AnimationFrame* frame, const char* anchorName);
+static inline void Ornaments_SolveChainConstraint(BoneOrnament* child, BoneOrnament* parent);
+
+static inline void SlashTrail_InitSystem(SlashTrailSystem* sys);
+static inline void SlashTrail_FreeSystem(SlashTrailSystem* sys);
+static inline void SlashTrail_Activate(SlashTrailSystem* sys, int slashIndex, const SlashEventConfig* config);
+static inline void SlashTrail_Deactivate(SlashTrailSystem* sys, int slashIndex);
+static inline void SlashTrail_UpdateTrail(SlashTrailSystem* sys, float deltaTime, int slashIndex, Vector3 bonePosition);
+static inline void SlashTrail_Draw(SlashTrailSystem* sys, Camera camera);
+static inline void SlashTrail_Tick(SlashTrailSystem* sys, float deltaTime, int currentFrame,
+                                   const SlashEventConfig* events, int eventCount,
+                                   const AnimationFrame* frame, const char* personId,
+                                   Vector3 worldPos, Vector3 pivot, Matrix rot, bool applyWorldTransform);
+static inline Vector3 SlashTrail__GetBonePos(const AnimationFrame* frame, const char* personId, const char* boneName);
+
+static inline void Model3D_InitSystem(Model3DAttachmentSystem* sys);
+static inline void Model3D_FreeSystem(Model3DAttachmentSystem* sys);
+static inline void Model3D_LoadFromClip(Model3DAttachmentSystem* sys, const AnimationClipMetadata* clip);
+static inline void Model3D_Tick(Model3DAttachmentSystem* sys, int currentFrame);
+static inline void Model3D_Draw(Model3DAttachmentSystem* sys, const AnimationFrame* frame,
+                                const char* personId, Vector3 worldPos, Vector3 pivot,
+                                Matrix rot, bool applyWorldTransform);
+
+static inline BonesRenderer* BonesRenderer_Create(void);
+static inline void BonesRenderer_Free(BonesRenderer* renderer);
+static inline bool BonesRenderer_Init(BonesRenderer* renderer);
+static inline int BonesRenderer_LoadTexture(BonesRenderer* renderer, const char* path);
+static inline void BonesRenderer_RenderFrame(BonesRenderer* renderer,
+                                              BoneRenderData* bones, int boneCount,
+                                              HeadRenderData* heads, int headCount,
+                                              TorsoRenderData* torsos, int torsoCount,
+                                              Vector3 autoCenter, bool autoCenterCalculated);
+
+static inline bool ResizeRenderBonesArray(BoneRenderData** renderBones, int* renderBonesCapacity, int newCapacity);
+static inline void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, BoneRenderData** renderBones,
+                                            int* renderBonesCount, int* renderBonesCapacity, BoneConfig* boneConfigs,
+                                            int boneConfigCount, TextureSetCollection* textureSets, OrnamentSystem* ornaments);
+static inline void CollectHeadsForRendering(const BonesAnimation* animation, HeadRenderData** heads,
+                                            int* headCount, int* headCapacity, BoneConfig* boneConfigs,
+                                            int boneConfigCount, TextureSetCollection* textureSets);
+static inline void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData** torsos,
+                                             int* torsoCount, int* torsoCapacity, BoneConfig* boneConfigs,
+                                             int boneConfigCount, TextureSetCollection* textureSets);
+static inline void EnrichBoneRenderDataWithOrientation(BoneRenderData* renderBone, const Person* person);
+
+static inline BoneRenderData* FindRenderBoneByName(BoneRenderData* bones, int boneCount, const char* boneName);
+static inline const Person* FindPersonByBoneName(const AnimationFrame* frame, const char* boneName);
+static inline BoneConnectionPositions GetBoneConnectionPositionsEx(const BoneRenderData* boneData, const Person* person);
+
+static inline void CalculateHandBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex, float* outRotation, bool* outMirrored, const char* boneName);
+static inline void CalculateHandBoneRenderDataWithOrientation(const BoneRenderData* boneData, Camera camera, int* outChosenIndex, float* outRotation, bool* outMirrored);
+static inline void CalculateLimbBoneRenderData(const BoneRenderData* boneData, const Person* person, Camera camera, int* outChosenIndex, float* outRotation, bool* outMirrored);
+static inline void CalculateAsymmetricBoneRenderData(const BoneRenderData* boneData, Camera camera, int* outChosenIndex, float* outRotation, bool* outMirrored);
+static inline void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera, int* outChosenIndex, float* outRotation, bool* outMirrored);
+static inline void CalculateHeadRenderData(const HeadRenderData* headData, Camera camera, int* outChosenIndex, float* outRotation, bool* outMirrored);
+
+static inline Rectangle SrcFromLogical(Texture2D tex, int logicalCol, int logicalRow, int physCols, int physRows, bool mirrored, bool* outMirrored);
+static inline void DrawBonetileCustom(Texture2D tex, Camera camera, Rectangle src, Vector3 pos, Vector2 size, float rotationDeg, bool mirrored, const char* boneName);
+static inline void DrawBonetileCustomWithRoll(Texture2D tex, Camera camera, Rectangle src, Vector3 pos, Vector2 size,
+                                              float rotationDeg, bool mirrored, bool neighborValid, Vector3 neighborPos,
+                                              const BoneRenderData* boneData, const Person* person);
+static inline void DrawHeadBillboard(Texture2D texture, Camera camera, const HeadRenderData* headData, int physCols, int physRows);
+static inline void DrawTorsoBillboard(Texture2D texture, Camera camera, const TorsoRenderData* torsoData, int physCols, int physRows);
+
+static AnimationController* AnimController_Create(void* bonesAnimation, TextureSetCollection* textureSets);
+static inline void AnimController_Free(AnimationController* controller);
+static inline bool AnimController_LoadClipMetadata(AnimationController* controller, const char* jsonPath);
+static inline bool AnimController_PlayClip(AnimationController* controller, const char* clipName);
+static inline void AnimController_Update(AnimationController* controller, float deltaTime);
+static inline int AnimController_GetCurrentFrame(const AnimationController* controller);
+static inline SlashHitboxInfo AnimController_GetActiveSlashHitbox(const AnimationController* controller,
+                                    const AnimationFrame* frame, const char* personId,
+                                    Vector3 worldPos, Vector3 pivot, Matrix rot,
+                                    bool applyWorldTransform, int slashIndexHint);
+
+static inline AnimatedCharacter* CreateAnimatedCharacter(const char* textureConfigPath, const char* textureSetsPath);
+static inline void DestroyAnimatedCharacter(AnimatedCharacter* character);
+static inline void UpdateAnimatedCharacter(AnimatedCharacter* character, float deltaTime);
+static inline void DrawAnimatedCharacterTransformed(AnimatedCharacter* character, Camera camera, Vector3 worldPosition, float worldRotation);
+static inline void SetCharacterFrame(AnimatedCharacter* character, int frame);
+static inline void SetCharacterAutoPlay(AnimatedCharacter* character, bool autoPlay);
+static inline void RestartAnimation(AnimatedCharacter* character);
+static inline void ResetCharacterAutoCenter(AnimatedCharacter* character);
+static inline void LockAnimationRootXZ(AnimatedCharacter* character, bool lock);
+static inline float GetCurrentAnimDuration(const AnimatedCharacter* character);
+static inline bool IsSlashActiveForCharacter(const AnimatedCharacter* character);
+static inline Vector3 GetActiveSlashBonePos(const AnimatedCharacter* character, Vector3 fallback);
+static inline void SetAnimationTransitionDuration(float duration);
+static inline bool BonesInterpolateFrames(BonesAnimation* animation, int frameA, int frameB, int framesToAdd);
+static inline bool BonesInsertEmptyFrame(BonesAnimation* animation, int position);
+static inline bool BonesCopyFrame(BonesAnimation* animation, int sourceFrame, int targetFrame);
+static inline void DrawAnimatedCharacter(AnimatedCharacter* character, Camera camera);
+static inline void SetCharacterBillboards(AnimatedCharacter* character, bool heads, bool torsos);
 
 static inline BonesError BonesInit(BonesAnimation* animation, int maxFrames) {
-	if (!animation) return BONES_ERROR_NULL_POINTER;
-	if (maxFrames <= 0 || maxFrames > MAX_FRAMES) maxFrames = MAX_FRAMES;
+    if (!animation) return BONES_ERROR_NULL_POINTER;
+    if (maxFrames <= 0 || maxFrames > MAX_FRAMES) maxFrames = MAX_FRAMES;
 
-	memset(animation, 0, sizeof(BonesAnimation));
-	animation->frames = calloc(maxFrames, sizeof(AnimationFrame));
-	if (!animation->frames) return BONES_ERROR_MEMORY_ALLOCATION;
+    memset(animation, 0, sizeof(BonesAnimation));
+    animation->frames = calloc(maxFrames, sizeof(AnimationFrame));
+    if (!animation->frames) return BONES_ERROR_MEMORY_ALLOCATION;
 
-	animation->maxFrames = maxFrames;
-	animation->currentFrame = -1;
-	return BONES_SUCCESS;
+    animation->maxFrames    = maxFrames;
+    animation->currentFrame = -1;
+    return BONES_SUCCESS;
 }
 
 static inline void BonesFree(BonesAnimation* animation) {
-	if (animation) {
-		free(animation->frames);
-		memset(animation, 0, sizeof(BonesAnimation));
-		animation->currentFrame = -1;
-	}
-}
-
-static inline const char* BonesGetErrorString(BonesError error) {
-	static const char* errorStrings[] = {
-		[BONES_SUCCESS] = "Operation successful",
-		[BONES_ERROR_NULL_POINTER] = "Null pointer received",
-		[BONES_ERROR_FILE_NOT_FOUND] = "File not found",
-		[BONES_ERROR_INVALID_JSON] = "Invalid or malformed JSON",
-		[BONES_ERROR_MEMORY_ALLOCATION] = "Memory allocation error",
-		[BONES_ERROR_BONE_NOT_FOUND] = "Bone not found",
-		[BONES_ERROR_FRAME_OUT_OF_RANGE] = "Frame out of valid range",
-		[BONES_ERROR_PERSON_NOT_FOUND] = "Person not found",
-		[BONES_ERROR_INVALID_COORDINATES] = "Invalid coordinates",
-		[BONES_ERROR_BUFFER_OVERFLOW] = "Buffer overflow",
-		[BONES_ERROR_EMPTY_DATA] = "Empty or no content data"
-	};
-	return (error < sizeof(errorStrings) / sizeof(errorStrings[0]) && errorStrings[error])
-		? errorStrings[error] : "Unknown error";
+    if (!animation) return;
+    free(animation->frames);
+    memset(animation, 0, sizeof(BonesAnimation));
+    animation->currentFrame = -1;
 }
 
 static inline BonesError BonesSetFrame(BonesAnimation* animation, int frameNumber) {
-	if (!animation) return BONES_ERROR_NULL_POINTER;
-	if (!animation->isLoaded) return BONES_ERROR_EMPTY_DATA;
-	if (frameNumber < 0 || frameNumber >= animation->frameCount) return BONES_ERROR_FRAME_OUT_OF_RANGE;
-	animation->currentFrame = frameNumber;
-	return BONES_SUCCESS;
+    if (!animation) return BONES_ERROR_NULL_POINTER;
+    if (!animation->isLoaded) return BONES_ERROR_EMPTY_DATA;
+    if (frameNumber < 0 || frameNumber >= animation->frameCount) return BONES_ERROR_FRAME_OUT_OF_RANGE;
+    animation->currentFrame = frameNumber;
+    return BONES_SUCCESS;
 }
 
 static inline int BonesGetCurrentFrame(const BonesAnimation* animation) {
-	return animation ? animation->currentFrame : -1;
+    return animation ? animation->currentFrame : -1;
 }
 
 static inline int BonesGetFrameCount(const BonesAnimation* animation) {
-	return animation ? animation->frameCount : 0;
+    return animation ? animation->frameCount : 0;
 }
 
 static inline bool BonesIsValidFrame(const BonesAnimation* animation, int frameNumber) {
-	return animation && animation->isLoaded && frameNumber >= 0 &&
-		frameNumber < animation->frameCount && animation->frames[frameNumber].valid;
+    return animation && animation->isLoaded && frameNumber >= 0 &&
+           frameNumber < animation->frameCount && animation->frames[frameNumber].valid;
 }
 
 static inline bool BonesIsPositionValid(Vector3 position) {
-	return !isnan(position.x) && !isnan(position.y) && !isnan(position.z) &&
-		isfinite(position.x) && isfinite(position.y) && isfinite(position.z);
+    return !isnan(position.x) && !isnan(position.y) && !isnan(position.z) &&
+           isfinite(position.x) && isfinite(position.y) && isfinite(position.z);
 }
 
-// ----------------------------------------------------------------------------
-// JSON Parsing and Loading
-// ----------------------------------------------------------------------------
-
 static inline bool ParseJSONFloat(const char* json, const char* key, float* outValue) {
-	char searchKey[128];
-	const char* pos;
-	snprintf(searchKey, sizeof(searchKey), "\"%s\":", key);
-	pos = strstr(json, searchKey);
-	if (pos && sscanf(pos + strlen(searchKey), "%f", outValue) == 1) return true;
-	return false;
+    char searchKey[128];
+    snprintf(searchKey, sizeof(searchKey), "\"%s\":", key);
+    const char* pos = strstr(json, searchKey);
+    return pos && sscanf(pos + strlen(searchKey), "%f", outValue) == 1;
 }
 
 static inline bool ParseJSONInt(const char* json, const char* key, int* outValue) {
-	char searchKey[128];
-	const char* pos;
-	snprintf(searchKey, sizeof(searchKey), "\"%s\":", key);
-	pos = strstr(json, searchKey);
-	if (pos && sscanf(pos + strlen(searchKey), "%d", outValue) == 1) return true;
-	return false;
+    char searchKey[128];
+    snprintf(searchKey, sizeof(searchKey), "\"%s\":", key);
+    const char* pos = strstr(json, searchKey);
+    return pos && sscanf(pos + strlen(searchKey), "%d", outValue) == 1;
 }
 
 static inline bool ParseJSONString(const char* json, const char* key, char* outValue, int maxLen) {
-	char searchKey[128];
-	const char* pos, *start, *end;
-	int len;
-
-	snprintf(searchKey, sizeof(searchKey), "\"%s\":", key);
-	pos = strstr(json, searchKey);
-	if (!pos) return false;
-
-	start = strchr(pos + strlen(searchKey), '"');
-	if (!start) return false;
-	start++;
-
-	end = strchr(start, '"');
-	if (!end) return false;
-
-	len = (int)(end - start);
-	if (len >= maxLen) len = maxLen - 1;
-
-	strncpy(outValue, start, len);
-	outValue[len] = '\0';
-	return true;
-}
-
-static inline BonesError ParseJSONFrame(const char* jsonData, int* outFrameNum, Person* outPersons, int* outPersonCount) {
-	if (!jsonData || !outFrameNum || !outPersons || !outPersonCount) return BONES_ERROR_NULL_POINTER;
-
-	*outPersonCount = 0;
-	const char* frameStart = strstr(jsonData, "\"frame_");
-	if (!frameStart || sscanf(frameStart, "\"frame_%d\"", outFrameNum) != 1) return BONES_ERROR_INVALID_JSON;
-
-	static const char* expectedBones[] = {
-		"Nose", "LEye", "REye", "LEar", "REar",
-		"LShoulder", "RShoulder", "LElbow", "RElbow",
-		"LWrist", "RWrist", "LHip", "RHip",
-		"LKnee", "RKnee", "LAnkle", "RAnkle", "Neck"
-	};
-
-	const char* personStart = strstr(frameStart, "\"person_");
-	while (personStart && *outPersonCount < MAX_PERSONS) {
-		Person* currentPerson = &outPersons[*outPersonCount];
-		memset(currentPerson, 0, sizeof(Person));
-
-		if (sscanf(personStart, "\"person_%15[^\"]\"", currentPerson->personId) != 1) break;
-		currentPerson->active = true;
-
-		const char* nextPerson = strstr(personStart + 1, "\"person_");
-
-		for (int b = 0; b < 18 && currentPerson->boneCount < MAX_BONES_PER_PERSON; b++) {
-			char searchPattern[64];
-			snprintf(searchPattern, sizeof(searchPattern), "\"%s\":", expectedBones[b]);
-			const char* bonePos = strstr(personStart, searchPattern);
-			if (!bonePos || (nextPerson && bonePos > nextPerson)) continue;
-
-			double x, y, z;
-			if (sscanf(strstr(bonePos, "\"x\":"), "\"x\": %lf", &x) == 1 &&
-					sscanf(strstr(bonePos, "\"y\":"), "\"y\": %lf", &y) == 1 &&
-					sscanf(strstr(bonePos, "\"z\":"), "\"z\": %lf", &z) == 1) {
-				Bone* currentBone = &currentPerson->bones[currentPerson->boneCount];
-				strncpy(currentBone->name, expectedBones[b], MAX_BONE_NAME_LENGTH - 1);
-				currentBone->name[MAX_BONE_NAME_LENGTH - 1] = '\0';
-
-				currentBone->position.position = (Vector3){
-					(float)(x * 2.0 - 1.0),
-						(float)(1.0 - y),
-						(float)(z * 2.0 - 1.0)
-				};
-				currentBone->position.valid = BonesIsPositionValid(currentBone->position.position);
-				currentBone->position.confidence = 1.0f;
-				currentBone->size = (Vector2){ g_renderConfig.defaultBoneSize, g_renderConfig.defaultBoneSize };
-				currentBone->visible = true;
-				currentPerson->boneCount++;
-			}
-		}
-
-		if (currentPerson->boneCount > 0) (*outPersonCount)++;
-		personStart = nextPerson;
-	}
-
-	return (*outPersonCount > 0) ? BONES_SUCCESS : BONES_ERROR_EMPTY_DATA;
-}
-
-static inline BonesError BonesLoadFromJSON(BonesAnimation* animation, const char* jsonFilePath) {
-	if (!animation || !jsonFilePath) return BONES_ERROR_NULL_POINTER;
-	char* jsonData = LoadFileText(jsonFilePath);
-	if (!jsonData) return BONES_ERROR_FILE_NOT_FOUND;
-
-	BonesError result = BonesLoadFromString(animation, jsonData);
-	if (result == BONES_SUCCESS) {
-		strncpy(animation->filePath, jsonFilePath, sizeof(animation->filePath) - 1);
-		animation->filePath[sizeof(animation->filePath) - 1] = '\0';
-	}
-
-	UnloadFileText(jsonData);
-	return result;
-}
-
-static inline BonesError BonesLoadFromString(BonesAnimation* animation, const char* jsonString) {
-	if (!animation || !jsonString || !animation->frames) return BONES_ERROR_NULL_POINTER;
-
-	animation->frameCount = 0;
-	animation->currentFrame = -1;
-	animation->isLoaded = false;
-
-	const char* searchPos = jsonString;
-	while (animation->frameCount < animation->maxFrames) {
-		const char* nextFrame = strstr(searchPos, "\"frame_");
-		if (!nextFrame) break;
-
-		AnimationFrame* frame = &animation->frames[animation->frameCount];
-		memset(frame, 0, sizeof(AnimationFrame));
-
-		BonesError parseResult = ParseJSONFrame(nextFrame, &frame->frameNumber, frame->persons, &frame->personCount);
-		if (parseResult == BONES_SUCCESS) {
-			frame->valid = true;
-			frame->isOriginalKeyframe = true;
-			animation->frameCount++;
-		}
-		searchPos = nextFrame + 1;
-	}
-
-	if (animation->frameCount > 0) {
-		animation->currentFrame = 0;
-		animation->isLoaded = true;
-		return BONES_SUCCESS;
-	}
-
-	return BONES_ERROR_EMPTY_DATA;
-}
-
-// ----------------------------------------------------------------------------
-// Frame Interpolation and Management
-// ----------------------------------------------------------------------------
-
-static inline void InterpolateBone(const Bone* boneA, const Bone* boneB, Bone* result, float t) {
-	strncpy(result->name, boneA->name, MAX_BONE_NAME_LENGTH - 1);
-	result->name[MAX_BONE_NAME_LENGTH - 1] = '\0';
-
-	result->position.position.x = boneA->position.position.x * (1.0f - t) + boneB->position.position.x * t;
-	result->position.position.y = boneA->position.position.y * (1.0f - t) + boneB->position.position.y * t;
-	result->position.position.z = boneA->position.position.z * (1.0f - t) + boneB->position.position.z * t;
-
-	result->position.valid = boneA->position.valid && boneB->position.valid;
-	result->position.confidence = (boneA->position.confidence + boneB->position.confidence) * 0.5f;
-
-	result->size.x = boneA->size.x * (1.0f - t) + boneB->size.x * t;
-	result->size.y = boneA->size.y * (1.0f - t) + boneB->size.y * t;
-
-	result->visible = boneA->visible || boneB->visible;
-	result->textureIndex = boneA->textureIndex;
-	result->rotation = boneA->rotation * (1.0f - t) + boneB->rotation * t;
-	result->mirrored = boneA->mirrored;
-}
-
-static inline void InterpolatePerson(const Person* personA, const Person* personB, Person* result, float t) {
-	strncpy(result->personId, personA->personId, 15);
-	result->personId[15] = '\0';
-
-	result->active = personA->active || personB->active;
-	result->boneCount = personA->boneCount > personB->boneCount ? personA->boneCount : personB->boneCount;
-
-	for (int i = 0; i < result->boneCount; i++) {
-		if (i < personA->boneCount && i < personB->boneCount) {
-			InterpolateBone(&personA->bones[i], &personB->bones[i], &result->bones[i], t);
-		} else if (i < personA->boneCount) {
-			result->bones[i] = personA->bones[i];
-		} else {
-			result->bones[i] = personB->bones[i];
-		}
-	}
-}
-
-static inline bool BonesInterpolateFrames(BonesAnimation* animation, int frameA, int frameB, int framesToAdd) {
-	if (!animation || frameA < 0 || frameB <= frameA || frameB >= animation->frameCount ||
-			framesToAdd <= 0 || animation->frameCount + framesToAdd > animation->maxFrames) return false;
-
-	for (int i = animation->frameCount - 1; i >= frameB; i--) {
-		animation->frames[i + framesToAdd] = animation->frames[i];
-		animation->frames[i + framesToAdd].frameNumber = i + framesToAdd;
-	}
-
-	AnimationFrame* srcA = &animation->frames[frameA];
-	AnimationFrame* srcB = &animation->frames[frameB + framesToAdd];
-
-	for (int i = 0; i < framesToAdd; i++) {
-		int newFrameIndex = frameA + i + 1;
-		float t = (float)(i + 1) / (float)(framesToAdd + 1);
-
-		AnimationFrame* dest = &animation->frames[newFrameIndex];
-		dest->frameNumber = newFrameIndex;
-		dest->personCount = srcA->personCount > srcB->personCount ? srcA->personCount : srcB->personCount;
-		dest->valid = true;
-		dest->isOriginalKeyframe = false;
-		for (int p = 0; p < dest->personCount; p++) {
-			if (p < srcA->personCount && p < srcB->personCount) {
-				InterpolatePerson(&srcA->persons[p], &srcB->persons[p], &dest->persons[p], t);
-			} else if (p < srcA->personCount) {
-				dest->persons[p] = srcA->persons[p];
-			} else {
-				dest->persons[p] = srcB->persons[p];
-			}
-		}
-	}
-
-	animation->frameCount += framesToAdd;
-	return true;
-}
-
-static inline bool BonesInsertEmptyFrame(BonesAnimation* animation, int position) {
-	if (!animation || position < 0 || position > animation->frameCount || animation->frameCount >= animation->maxFrames) return false;
-
-	for (int i = animation->frameCount; i > position; i--) {
-		animation->frames[i] = animation->frames[i - 1];
-		animation->frames[i].frameNumber = i;
-	}
-
-	AnimationFrame* newFrame = &animation->frames[position];
-	memset(newFrame, 0, sizeof(AnimationFrame));
-	newFrame->frameNumber = position;
-	newFrame->valid = true;
-	animation->frameCount++;
-	return true;
-}
-
-static inline bool BonesCopyFrame(BonesAnimation* animation, int sourceFrame, int targetFrame) {
-	if (!animation || sourceFrame < 0 || sourceFrame >= animation->frameCount ||
-			targetFrame < 0 || targetFrame >= animation->maxFrames) return false;
-
-	animation->frames[targetFrame] = animation->frames[sourceFrame];
-	animation->frames[targetFrame].frameNumber = targetFrame;
-
-	if (targetFrame >= animation->frameCount) animation->frameCount = targetFrame + 1;
-	return true;
-}
-
-static inline bool BonesCreateMissingFrames(BonesAnimation* animation) {
-	if (!animation || !animation->isLoaded || animation->frameCount < 2) return false;
-
-	int minFrame = animation->frames[0].frameNumber;
-	int maxFrame = animation->frames[0].frameNumber;
-
-	for (int i = 0; i < animation->frameCount; i++) {
-		if (animation->frames[i].frameNumber < minFrame) minFrame = animation->frames[i].frameNumber;
-		if (animation->frames[i].frameNumber > maxFrame) maxFrame = animation->frames[i].frameNumber;
-	}
-
-	int totalFramesNeeded = maxFrame - minFrame + 1;
-	if (totalFramesNeeded > animation->maxFrames) {
-		AnimationFrame* expandedFrames = (AnimationFrame*)realloc(animation->frames, totalFramesNeeded * sizeof(AnimationFrame));
-		if (!expandedFrames) return false;
-
-		animation->frames = expandedFrames;
-		animation->maxFrames = totalFramesNeeded;
-		for (int i = animation->frameCount; i < totalFramesNeeded; i++) memset(&animation->frames[i], 0, sizeof(AnimationFrame));
-	}
-
-	AnimationFrame* tempFrames = (AnimationFrame*)calloc(totalFramesNeeded, sizeof(AnimationFrame));
-	if (!tempFrames) return false;
-
-	int framesCreated = 0;
-	for (int frameNum = minFrame; frameNum <= maxFrame; frameNum++) {
-		int targetIndex = frameNum - minFrame;
-		int existingIndex = -1;
-		for (int i = 0; i < animation->frameCount; i++) {
-			if (animation->frames[i].frameNumber == frameNum) {
-				existingIndex = i;
-				break;
-			}
-		}
-
-		if (existingIndex >= 0) {
-			tempFrames[targetIndex] = animation->frames[existingIndex];
-			tempFrames[targetIndex].isOriginalKeyframe = animation->frames[existingIndex].isOriginalKeyframe;
-		} else {
-			int prevFrameIdx = -1, prevFrameNum = -1;
-			for (int i = 0; i < animation->frameCount; i++) {
-				if (animation->frames[i].frameNumber < frameNum) {
-					if (prevFrameNum < 0 || animation->frames[i].frameNumber > prevFrameNum) {
-						prevFrameIdx = i;
-						prevFrameNum = animation->frames[i].frameNumber;
-					}
-				}
-			}
-
-			int nextFrameIdx = -1, nextFrameNum = -1;
-			for (int i = 0; i < animation->frameCount; i++) {
-				if (animation->frames[i].frameNumber > frameNum) {
-					if (nextFrameNum < 0 || animation->frames[i].frameNumber < nextFrameNum) {
-						nextFrameIdx = i;
-						nextFrameNum = animation->frames[i].frameNumber;
-					}
-				}
-			}
-
-			if (prevFrameIdx >= 0 && nextFrameIdx >= 0) {
-				AnimationFrame* frameA = &animation->frames[prevFrameIdx];
-				AnimationFrame* frameB = &animation->frames[nextFrameIdx];
-				float t = (float)(frameNum - prevFrameNum) / (float)(nextFrameNum - prevFrameNum);
-				t = t * t * (3.0f - 2.0f * t);
-
-				AnimationFrame* destFrame = &tempFrames[targetIndex];
-				memset(destFrame, 0, sizeof(AnimationFrame));
-				destFrame->frameNumber = frameNum;
-				destFrame->valid = true;
-				destFrame->isOriginalKeyframe = false;
-				destFrame->personCount = frameA->personCount > frameB->personCount ? frameA->personCount : frameB->personCount;
-
-				for (int p = 0; p < destFrame->personCount; p++) {
-					Person* destPerson = &destFrame->persons[p];
-					if (p < frameA->personCount && p < frameB->personCount) {
-						Person* personA = &frameA->persons[p];
-						Person* personB = &frameB->persons[p];
-
-						strncpy(destPerson->personId, personA->personId, 15);
-						destPerson->personId[15] = '\0';
-						destPerson->active = personA->active || personB->active;
-						destPerson->boneCount = personA->boneCount > personB->boneCount ? personA->boneCount : personB->boneCount;
-
-						for (int b = 0; b < destPerson->boneCount; b++) {
-							Bone* destBone = &destPerson->bones[b];
-							if (b < personA->boneCount && b < personB->boneCount) {
-								Bone* boneA = &personA->bones[b];
-								Bone* boneB = &personB->bones[b];
-
-								strncpy(destBone->name, boneA->name, MAX_BONE_NAME_LENGTH - 1);
-								destBone->name[MAX_BONE_NAME_LENGTH - 1] = '\0';
-
-								if (boneA->position.valid && boneB->position.valid) {
-									destBone->position.position.x = boneA->position.position.x * (1.0f - t) + boneB->position.position.x * t;
-									destBone->position.position.y = boneA->position.position.y * (1.0f - t) + boneB->position.position.y * t;
-									destBone->position.position.z = boneA->position.position.z * (1.0f - t) + boneB->position.position.z * t;
-									destBone->position.valid = true;
-								} else if (boneA->position.valid) {
-									destBone->position = boneA->position;
-									destBone->position.confidence = boneA->position.confidence * (1.0f - t);
-								} else if (boneB->position.valid) {
-									destBone->position = boneB->position;
-									destBone->position.confidence = boneB->position.confidence * t;
-								} else {
-									destBone->position.valid = false;
-								}
-
-								destBone->position.confidence = (boneA->position.confidence * (1.0f - t) + boneB->position.confidence * t);
-								destBone->size.x = boneA->size.x * (1.0f - t) + boneB->size.x * t;
-								destBone->size.y = boneA->size.y * (1.0f - t) + boneB->size.y * t;
-
-								float rotDiff = boneB->rotation - boneA->rotation;
-								if (rotDiff > 180.0f) rotDiff -= 360.0f;
-								if (rotDiff < -180.0f) rotDiff += 360.0f;
-								destBone->rotation = boneA->rotation + rotDiff * t;
-
-								destBone->visible = boneA->visible || boneB->visible;
-								destBone->textureIndex = boneA->textureIndex;
-								destBone->mirrored = boneA->mirrored;
-							} else if (b < personA->boneCount) {
-								*destBone = personA->bones[b];
-							} else {
-								*destBone = personB->bones[b];
-							}
-						}
-					} else if (p < frameA->personCount) {
-						*destPerson = frameA->persons[p];
-					} else {
-						*destPerson = frameB->persons[p];
-					}
-				}
-				framesCreated++;
-			} else if (prevFrameIdx >= 0) {
-				tempFrames[targetIndex] = animation->frames[prevFrameIdx];
-				tempFrames[targetIndex].frameNumber = frameNum;
-				tempFrames[targetIndex].isOriginalKeyframe = false;
-			} else if (nextFrameIdx >= 0) {
-				tempFrames[targetIndex] = animation->frames[nextFrameIdx];
-				tempFrames[targetIndex].frameNumber = frameNum;
-				tempFrames[targetIndex].isOriginalKeyframe = false;
-			}
-		}
-	}
-
-	memcpy(animation->frames, tempFrames, totalFramesNeeded * sizeof(AnimationFrame));
-	animation->frameCount = totalFramesNeeded;
-	free(tempFrames);
-	return true;
-}
-
-// ----------------------------------------------------------------------------
-// Texture Management
-// ----------------------------------------------------------------------------
-
-static inline bool LoadSimpleTextureConfig(SimpleTextureSystem* system, const char* filename) {
-	char* buffer = LoadFileText(filename);
-	if (!buffer) return false;
-
-	int lineCount = 0;
-	for (const char* ptr = buffer; *ptr; ptr++) if (*ptr == '\n') lineCount++;
-
-	if (lineCount == 0) {
-		UnloadFileText(buffer);
-		return false;
-	}
-
-	free(system->configs);
-	system->configs = calloc(lineCount, sizeof(BoneTextureConfig));
-	if (!system->configs) {
-		UnloadFileText(buffer);
-		return false;
-	}
-
-	system->configCapacity = lineCount;
-	system->configCount = 0;
-
-	char lineBuffer[512];
-	const char* lineStart = buffer;
-
-	for (const char* ptr = buffer; *ptr && system->configCount < system->configCapacity; ptr++) {
-		if (*ptr == '\n') {
-			int lineLen = ptr - lineStart;
-			if (lineLen > 5 && lineLen < 511 && *lineStart != '#' && *lineStart != '\n') {
-				memcpy(lineBuffer, lineStart, lineLen);
-				lineBuffer[lineLen] = '\0';
-
-				char boneName[MAX_BONE_NAME_LENGTH], texturePath[MAX_FILE_PATH_LENGTH];
-				int visible;
-				float size;
-
-				if (sscanf(lineBuffer, "%31s %255s %d %f", boneName, texturePath, &visible, &size) == 4) {
-					BoneTextureConfig* config = &system->configs[system->configCount];
-					strncpy(config->boneName, boneName, MAX_BONE_NAME_LENGTH - 1);
-					config->boneName[MAX_BONE_NAME_LENGTH - 1] = '\0';
-					strncpy(config->texturePath, texturePath, MAX_FILE_PATH_LENGTH - 1);
-					config->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
-					config->visible = (visible != 0);
-					config->size = size;
-					system->configCount++;
-				}
-			}
-			lineStart = ptr + 1;
-		}
-	}
-
-	UnloadFileText(buffer);
-	if (system->configCount > 0) {
-		system->loaded = true;
-		return true;
-	}
-	return false;
-}
-
-static inline void LoadBoneConfigurations(SimpleTextureSystem* textureSystem, BoneConfig** boneConfigs, int* boneConfigCount) {
-	free(*boneConfigs);
-	*boneConfigs = NULL;
-	*boneConfigCount = 0;
-
-	if (!textureSystem->loaded || textureSystem->configCount == 0) return;
-
-	*boneConfigCount = textureSystem->configCount;
-	*boneConfigs = calloc(*boneConfigCount, sizeof(BoneConfig));
-	if (!*boneConfigs) return;
-
-	for (int i = 0; i < *boneConfigCount; i++) {
-		const BoneTextureConfig* src = &textureSystem->configs[i];
-		BoneConfig* dst = &(*boneConfigs)[i];
-
-		strncpy(dst->boneName, src->boneName, MAX_BONE_NAME_LENGTH - 1);
-		dst->boneName[MAX_BONE_NAME_LENGTH - 1] = '\0';
-		strncpy(dst->texturePath, src->texturePath, MAX_FILE_PATH_LENGTH - 1);
-		dst->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
-		dst->visible = src->visible;
-		dst->size = src->size;
-		dst->valid = true;
-	}
-}
-
-static inline BoneConfig* FindBoneConfig(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName) {
-	for (int i = 0; i < boneConfigCount; i++)
-		if (strcmp(boneConfigs[i].boneName, boneName) == 0) return &boneConfigs[i];
-	return NULL;
-}
-
-static inline const char* GetTexturePathForBone(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName, TextureSetCollection* textureSets) {
-	if (textureSets && textureSets->loaded) {
-		const char* activeTexture = BonesTextureSets_GetActiveTexture(textureSets, boneName);
-		if (activeTexture) return activeTexture;
-	}
-
-	BoneConfig* config = FindBoneConfig(boneConfigs, boneConfigCount, boneName);
-	return config ? config->texturePath : "default.png";
-}
-
-static inline bool IsBoneVisible(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName) {
-	BoneConfig* config = FindBoneConfig(boneConfigs, boneConfigCount, boneName);
-	return config ? config->visible : true;
-}
-
-static inline float GetBoneSize(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName) {
-	BoneConfig* config = FindBoneConfig(boneConfigs, boneConfigCount, boneName);
-	return config ? config->size : 0.35f;
-}
-
-static inline void CleanupTextureSystem(SimpleTextureSystem* textureSystem, BoneConfig** boneConfigs, int* boneConfigCount) {
-	if (textureSystem->configs) {
-		free(textureSystem->configs);
-		memset(textureSystem, 0, sizeof(SimpleTextureSystem));
-	}
-	if (*boneConfigs) {
-		free(*boneConfigs);
-		*boneConfigs = NULL;
-		*boneConfigCount = 0;
-	}
-}
-
-// ----------------------------------------------------------------------------
-// Texture Sets
-// ----------------------------------------------------------------------------
-
-static inline TextureSetCollection* BonesTextureSets_Create(void) {
-	TextureSetCollection* collection = (TextureSetCollection*)calloc(1, sizeof(TextureSetCollection));
-	if (!collection) return NULL;
-	collection->loaded = false;
-	collection->setCount = 0;
-	return collection;
-}
-
-static inline void BonesTextureSets_Free(TextureSetCollection* collection) {
-	if (collection) free(collection);
-}
-
-static inline BoneTextureSet* BonesTextureSets_FindSet(TextureSetCollection* collection, const char* boneName) {
-	if (!collection || !boneName) return NULL;
-	for (int i = 0; i < collection->setCount; i++)
-		if (strcmp(collection->sets[i].boneName, boneName) == 0) return &collection->sets[i];
-	return NULL;
-}
-
-static inline const char* BonesTextureSets_GetActiveTexture(const TextureSetCollection* collection, const char* boneName) {
-	if (!collection || !boneName || !collection->loaded) return NULL;
-	for (int i = 0; i < collection->setCount; i++) {
-		const BoneTextureSet* set = &collection->sets[i];
-		if (strcmp(set->boneName, boneName) == 0 && set->valid)
-			if (set->activeVariantIndex >= 0 && set->activeVariantIndex < set->variantCount)
-				return set->variants[set->activeVariantIndex].texturePath;
-	}
-	return NULL;
-}
-
-static inline bool BonesTextureSets_SetVariant(TextureSetCollection* collection, const char* boneName, const char* variantName) {
-	BoneTextureSet* set = BonesTextureSets_FindSet(collection, boneName);
-	if (!set) return false;
-	for (int i = 0; i < set->variantCount; i++) {
-		if (strcmp(set->variants[i].variantName, variantName) == 0) {
-			set->activeVariantIndex = i;
-			return true;
-		}
-	}
-	return false;
-}
-
-static inline const char* BonesTextureSets_GetActiveVariantName(const TextureSetCollection* collection, const char* boneName) {
-	if (!collection || !boneName || !collection->loaded) return NULL;
-	for (int i = 0; i < collection->setCount; i++) {
-		const BoneTextureSet* set = &collection->sets[i];
-		if (strcmp(set->boneName, boneName) == 0 && set->valid)
-			if (set->activeVariantIndex >= 0 && set->activeVariantIndex < set->variantCount)
-				return set->variants[set->activeVariantIndex].variantName;
-	}
-	return NULL;
-}
-
-static inline void BonesTextureSets_ResetAll(TextureSetCollection* collection) {
-	if (!collection) return;
-	for (int i = 0; i < collection->setCount; i++)
-		collection->sets[i].activeVariantIndex = 0;
-}
-
-static inline bool BonesTextureSets_LoadFromFile(TextureSetCollection* collection, const char* filePath) {
-	FILE* file;
-	char line[512];
-	char boneName[BONES_AE_MAX_NAME];
-	char variantName[BONES_AE_MAX_NAME];
-	char texturePath[BONES_AE_MAX_PATH];
-
-	if (!collection || !filePath) return false;
-	file = fopen(filePath, "r");
-	if (!file) return false;
-
-	collection->setCount = 0;
-	collection->loaded = false;
-
-	while (fgets(line, sizeof(line), file) && collection->setCount < BONES_MAX_TEXTURE_SETS) {
-		if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') continue;
-		if (sscanf(line, "%63s %63s %255s", boneName, variantName, texturePath) != 3) continue;
-
-		BoneTextureSet* set = BonesTextureSets_FindSet(collection, boneName);
-		if (!set) {
-			if (collection->setCount >= BONES_MAX_TEXTURE_SETS) break;
-			set = &collection->sets[collection->setCount];
-			memset(set, 0, sizeof(BoneTextureSet));
-			strncpy(set->boneName, boneName, BONES_AE_MAX_NAME - 1);
-			set->boneName[BONES_AE_MAX_NAME - 1] = '\0';
-			set->variantCount = 0;
-			set->activeVariantIndex = 0;
-			set->valid = true;
-			collection->setCount++;
-		}
-
-		if (set->variantCount >= BONES_MAX_TEXTURE_VARIANTS) continue;
-
-		BoneTextureVariant* variant = &set->variants[set->variantCount];
-		strncpy(variant->variantName, variantName, BONES_AE_MAX_NAME - 1);
-		variant->variantName[BONES_AE_MAX_NAME - 1] = '\0';
-		strncpy(variant->texturePath, texturePath, BONES_AE_MAX_PATH - 1);
-		variant->texturePath[BONES_AE_MAX_PATH - 1] = '\0';
-		variant->valid = true;
-		set->variantCount++;
-	}
-
-	fclose(file);
-	if (collection->setCount > 0) {
-		collection->loaded = true;
-		return true;
-	}
-	return false;
-}
-
-// ----------------------------------------------------------------------------
-// Animation Controller
-// ----------------------------------------------------------------------------
-
-
-static inline AnimationController* AnimController_Create(void* bonesAnimation,
-		TextureSetCollection* textureSets)
-{
-	AnimationController* ctrl = (AnimationController*)calloc(1, sizeof(AnimationController));
-	if (!ctrl) {
-		TraceLog(LOG_ERROR, "AnimController_Create: calloc AnimationController falló");
-		return NULL;
-	}
-
-	// Alocar array de clips separadamente — evita struct gigante en heap
-	ctrl->clips = (AnimationClipMetadata*)calloc(BONES_MAX_ANIM_CLIPS,
-			sizeof(AnimationClipMetadata));
-	if (!ctrl->clips) {
-		TraceLog(LOG_ERROR, "AnimController_Create: calloc clips[%d] falló (size=%zu)",
-				BONES_MAX_ANIM_CLIPS, BONES_MAX_ANIM_CLIPS * sizeof(AnimationClipMetadata));
-		free(ctrl);
-		return NULL;
-	}
-
-	ctrl->bonesAnimation     = bonesAnimation;
-	ctrl->textureSets        = textureSets;
-	ctrl->clipCount          = 0;
-	ctrl->clipCapacity       = BONES_MAX_ANIM_CLIPS;
-	ctrl->currentClipIndex   = -1;
-	ctrl->localTime          = 0.0f;
-	ctrl->playing            = false;
-	ctrl->currentFrameInJSON = 0;
-	ctrl->valid              = true;
-
-	TraceLog(LOG_INFO, "AnimController_Create: OK (clips=%p, sizeof clip=%zu)",
-			(void*)ctrl->clips, sizeof(AnimationClipMetadata));
-	return ctrl;
-}
-
-
-static inline void AnimController_Free(AnimationController* controller) {
-	if (!controller) return;
-	free(controller->clips);   // <- liberar heap de clips
-	controller->clips = NULL;
-	free(controller);
+    char searchKey[128];
+    snprintf(searchKey, sizeof(searchKey), "\"%s\":", key);
+    const char* pos = strstr(json, searchKey);
+    if (!pos) return false;
+
+    const char* start = strchr(pos + strlen(searchKey), '"');
+    if (!start) return false;
+    start++;
+    const char* end = strchr(start, '"');
+    if (!end) return false;
+
+    int len = (int)(end - start);
+    if (len >= maxLen) len = maxLen - 1;
+    strncpy(outValue, start, len);
+    outValue[len] = '\0';
+    return true;
 }
 
 static inline bool ParseJSONFloatInBlock(const char* blockStart, const char* blockEnd, const char* key, float* outValue) {
-	char searchKey[128];
-	snprintf(searchKey, sizeof(searchKey), "\"%s\":", key);
-	const char* pos = strstr(blockStart, searchKey);
-	if (!pos || pos >= blockEnd) return false;
-	if (sscanf(pos + strlen(searchKey), "%f", outValue) == 1) return true;
-	return false;
+    char searchKey[128];
+    snprintf(searchKey, sizeof(searchKey), "\"%s\":", key);
+    const char* pos = strstr(blockStart, searchKey);
+    return pos && pos < blockEnd && sscanf(pos + strlen(searchKey), "%f", outValue) == 1;
 }
 
+static inline BonesError ParseJSONFrame(const char* jsonData, int* outFrameNum, Person* outPersons, int* outPersonCount) {
+    if (!jsonData || !outFrameNum || !outPersons || !outPersonCount) return BONES_ERROR_NULL_POINTER;
 
-static inline bool AnimController_LoadClipMetadata(AnimationController* controller,
-		const char* jsonPath)
-{
-	if (!controller || !jsonPath) return false;
-	if (!controller->clips) {
-		TraceLog(LOG_ERROR, "AnimController_LoadClipMetadata: clips array es NULL");
-		return false;
-	}
-	if (controller->clipCount >= controller->clipCapacity) {
-		TraceLog(LOG_WARNING, "AnimController_LoadClipMetadata: clips array lleno (%d/%d)",
-				controller->clipCount, controller->clipCapacity);
-		return false;
-	}
+    *outPersonCount = 0;
+    const char* frameStart = strstr(jsonData, "\"frame_");
+    if (!frameStart || sscanf(frameStart, "\"frame_%d\"", outFrameNum) != 1)
+        return BONES_ERROR_INVALID_JSON;
 
-	// --- El resto del parsing es igual que el original ---
-	FILE* file = fopen(jsonPath, "rb");
-	if (!file) return false;
+    static const char* expectedBones[] = {
+        "Nose","LEye","REye","LEar","REar",
+        "LShoulder","RShoulder","LElbow","RElbow",
+        "LWrist","RWrist","LHip","RHip",
+        "LKnee","RKnee","LAnkle","RAnkle","Neck"
+    };
 
-	fseek(file, 0, SEEK_END);
-	long fileSize = ftell(file);
-	fseek(file, 0, SEEK_SET);
+    const char* personStart = strstr(frameStart, "\"person_");
+    while (personStart && *outPersonCount < MAX_PERSONS) {
+        Person* p = &outPersons[*outPersonCount];
+        memset(p, 0, sizeof(Person));
+        if (sscanf(personStart, "\"person_%15[^\"]\"", p->personId) != 1) break;
+        p->active = true;
 
-	char* jsonData = (char*)malloc(fileSize + 1);
-	if (!jsonData) { fclose(file); return false; }
+        const char* nextPerson = strstr(personStart + 1, "\"person_");
 
-	fread(jsonData, 1, fileSize, file);
-	jsonData[fileSize] = '\0';
-	fclose(file);
+        for (int b = 0; b < 18 && p->boneCount < MAX_BONES_PER_PERSON; b++) {
+            char searchPattern[64];
+            snprintf(searchPattern, sizeof(searchPattern), "\"%s\":", expectedBones[b]);
+            const char* bonePos = strstr(personStart, searchPattern);
+            if (!bonePos || (nextPerson && bonePos > nextPerson)) continue;
 
-	AnimationClipMetadata* clip = &controller->clips[controller->clipCount];
-	memset(clip, 0, sizeof(AnimationClipMetadata));
+            double x, y, z;
+            if (sscanf(strstr(bonePos, "\"x\":"), "\"x\": %lf", &x) != 1) continue;
+            if (sscanf(strstr(bonePos, "\"y\":"), "\"y\": %lf", &y) != 1) continue;
+            if (sscanf(strstr(bonePos, "\"z\":"), "\"z\": %lf", &z) != 1) continue;
 
-	if (!ParseJSONString(jsonData, "name", clip->name, BONES_AE_MAX_NAME))
-		strcpy(clip->name, "unnamed");
-	if (!ParseJSONFloat(jsonData, "fps", &clip->fps))   clip->fps = 30.0f;
-	if (!ParseJSONInt(jsonData, "start_frame", &clip->startFrame)) clip->startFrame = 0;
-	if (!ParseJSONInt(jsonData, "end_frame",   &clip->endFrame))   clip->endFrame   = 60;
-	clip->loop = strstr(jsonData, "\"loop\": true") || strstr(jsonData, "\"loop\":true");
+            Bone* bone = &p->bones[p->boneCount];
+            strncpy(bone->name, expectedBones[b], MAX_BONE_NAME_LENGTH - 1);
+            bone->name[MAX_BONE_NAME_LENGTH - 1] = '\0';
+            bone->position.position = (Vector3){
+                (float)(x * 2.0 - 1.0),
+                (float)(1.0 - y),
+                (float)(z * 2.0 - 1.0)
+            };
+            bone->position.valid      = BonesIsPositionValid(bone->position.position);
+            bone->position.confidence = 1.0f;
+            bone->size                = (Vector2){ g_renderConfig.defaultBoneSize, g_renderConfig.defaultBoneSize };
+            bone->visible             = true;
+            p->boneCount++;
+        }
 
-	clip->eventCount      = 0;
-	clip->slashEventCount = 0;
-	clip->model3dEventCount = 0;
+        if (p->boneCount > 0) (*outPersonCount)++;
+        personStart = nextPerson;
+    }
 
-	const char* eventsStart = strstr(jsonData, "\"events\":");
-	if (eventsStart) {
-		eventsStart = strchr(eventsStart, '[');
-		// Pre-calcular el cierre del array de events (buscar el ] del nivel correcto)
-		const char* arrEnd = NULL;
-		if (eventsStart) {
-			int depth = 0;
-			const char* p = eventsStart;
-			while (*p) {
-				if (*p == '[') depth++;
-				else if (*p == ']') { depth--; if (depth == 0) { arrEnd = p; break; } }
-				p++;
-			}
-		}
-
-		if (eventsStart && arrEnd) {
-			const char* eventPos = eventsStart;
-			while (1) {
-				eventPos = strchr(eventPos + 1, '{');
-				if (!eventPos || eventPos >= arrEnd) break;
-
-				// Calcular fin del bloque de este evento
-				const char* blockEnd = eventPos + 1;
-				int depth = 1;
-				while (*blockEnd && depth > 0) {
-					if (*blockEnd == '{') depth++;
-					else if (*blockEnd == '}') depth--;
-					blockEnd++;
-				}
-
-				char eventType[32] = {0};
-				if (!ParseJSONString(eventPos, "type", eventType, sizeof(eventType))) continue;
-
-				// --- Slash event ---
-				if (strcmp(eventType, "slash") == 0 &&
-						clip->slashEventCount < 16)
-				{
-					SlashEventConfig* se = &clip->slashEvents[clip->slashEventCount];
-					memset(se, 0, sizeof(SlashEventConfig));
-					se->trailEnabled = true;
-					se->widthStart   = 0.10f;
-					se->widthEnd     = 0.0f;
-					se->colorStart   = (Color){255, 200, 80, 220};
-					se->colorEnd     = (Color){255,  60, 10,   0};
-					se->lifetime     = 0.20f;
-					se->segments     = 24;
-
-					ParseJSONInt   (eventPos, "frame_start", &se->frameStart);
-					ParseJSONInt   (eventPos, "frame_end",   &se->frameEnd);
-					ParseJSONString(eventPos, "bone",    se->boneName,    BONES_AE_MAX_NAME);
-					ParseJSONString(eventPos, "texture", se->texturePath, BONES_AE_MAX_PATH);
-					ParseJSONFloatInBlock(eventPos, blockEnd, "emit_offset_x", &se->emitOffsetX);
-					ParseJSONFloatInBlock(eventPos, blockEnd, "emit_offset_y", &se->emitOffsetY);
-					ParseJSONFloatInBlock(eventPos, blockEnd, "emit_offset_z", &se->emitOffsetZ);
-
-					const char* trailTag  = strstr(eventPos, "\"trail\"");
-					const char* nextBrace = strchr(eventPos + 1, '{');
-					if (trailTag && nextBrace && trailTag < nextBrace + 64) {
-						const char* ts = strchr(trailTag, '{');
-						if (ts) {
-							float fw = 0; int iv = 0;
-							if (ParseJSONFloat(ts, "width_start", &fw)) se->widthStart = fw;
-							if (ParseJSONFloat(ts, "width_end",   &fw)) se->widthEnd   = fw;
-							if (ParseJSONFloat(ts, "lifetime",    &fw)) se->lifetime   = fw;
-							if (ParseJSONInt  (ts, "segments",    &iv)) se->segments   = iv;
-
-							const char* cs = strstr(ts, "\"color_start\"");
-							if (cs) {
-								const char* arr = strchr(cs, '[');
-								if (arr) {
-									se->colorStart.r = (unsigned char)atoi(arr+1);
-									const char* p2 = strchr(arr+1,','); if(p2){
-										se->colorStart.g = (unsigned char)atoi(p2+1);
-										const char* p3 = strchr(p2+1,','); if(p3){
-											se->colorStart.b = (unsigned char)atoi(p3+1);
-											const char* p4 = strchr(p3+1,','); if(p4)
-												se->colorStart.a = (unsigned char)atoi(p4+1);}}
-								}
-							}
-							const char* ce = strstr(ts, "\"color_end\"");
-							if (ce) {
-								const char* arr = strchr(ce, '[');
-								if (arr) {
-									se->colorEnd.r = (unsigned char)atoi(arr+1);
-									const char* p2 = strchr(arr+1,','); if(p2){
-										se->colorEnd.g = (unsigned char)atoi(p2+1);
-										const char* p3 = strchr(p2+1,','); if(p3){
-											se->colorEnd.b = (unsigned char)atoi(p3+1);
-											const char* p4 = strchr(p3+1,','); if(p4)
-												se->colorEnd.a = (unsigned char)atoi(p4+1);}}
-								}
-							}
-						}
-					}
-					if (se->segments > SLASH_TRAIL_MAX_SEGMENTS) se->segments = SLASH_TRAIL_MAX_SEGMENTS;
-					if (se->segments < 2) se->segments = 2;
-					clip->slashEventCount++;
-					continue;
-				}
-
-				// --- Model3D event ---
-				if (strcmp(eventType, "model3d") == 0 &&
-						clip->model3dEventCount < BONES_MAX_MODEL3D_EVENTS)
-				{
-					Model3DEventConfig* m = &clip->model3dEvents[clip->model3dEventCount];
-					memset(m, 0, sizeof(Model3DEventConfig));
-					m->scale = 1.0f;
-
-					ParseJSONInt   (eventPos, "frame_start", &m->frameStart);
-					ParseJSONInt   (eventPos, "frame_end",   &m->frameEnd);
-					ParseJSONString(eventPos, "bone",  m->boneName,  BONES_MODEL3D_MAX_BONE);
-					ParseJSONString(eventPos, "model", m->modelPath, BONES_MODEL3D_MAX_PATH);
-					ParseJSONFloat (eventPos, "scale",    &m->scale);
-					ParseJSONFloat (eventPos, "offset_x", &m->offset.x);
-					ParseJSONFloat (eventPos, "offset_y", &m->offset.y);
-					ParseJSONFloat (eventPos, "offset_z", &m->offset.z);
-					ParseJSONFloat (eventPos, "rot_x",    &m->rotationEuler.x);
-					ParseJSONFloat (eventPos, "rot_y",    &m->rotationEuler.y);
-					ParseJSONFloat (eventPos, "rot_z",    &m->rotationEuler.z);
-
-					m->valid = (m->modelPath[0] != '\0');
-					if (m->valid)
-						TraceLog(LOG_INFO,
-								"Model3D event %d: bone='%s' model='%s' frames[%d-%d]",
-								clip->model3dEventCount, m->boneName, m->modelPath,
-								m->frameStart, m->frameEnd);
-
-					clip->model3dEventCount++;
-					continue;
-				}
-
-				// --- Eventos generales ---
-				if (clip->eventCount >= BONES_MAX_ANIM_EVENTS) continue;
-				AnimationEvent* event = &clip->events[clip->eventCount];
-				memset(event, 0, sizeof(AnimationEvent));
-
-				float eventTime;
-				if (!ParseJSONFloat(eventPos, "time", &eventTime)) continue;
-				event->time = eventTime;
-
-				if      (strcmp(eventType, "texture") == 0) event->type = ANIM_EVENT_TEXTURE;
-				else if (strcmp(eventType, "sound")   == 0) event->type = ANIM_EVENT_SOUND;
-				else                                         event->type = ANIM_EVENT_CUSTOM;
-
-				char boneName[BONES_AE_MAX_NAME]    = {0};
-				char variantName[BONES_AE_MAX_NAME] = {0};
-				char personId[BONES_AE_MAX_NAME]    = {0};
-				ParseJSONString(eventPos, "bone",    boneName,    BONES_AE_MAX_NAME);
-				ParseJSONString(eventPos, "variant", variantName, BONES_AE_MAX_NAME);
-				ParseJSONString(eventPos, "person",  personId,    BONES_AE_MAX_NAME);
-				strncpy(event->boneName,    boneName,    BONES_AE_MAX_NAME - 1);
-				strncpy(event->variantName, variantName, BONES_AE_MAX_NAME - 1);
-				strncpy(event->personId,    personId,    BONES_AE_MAX_NAME - 1);
-
-				event->processed = false;
-				event->valid     = true;
-				clip->eventCount++;
-			}
-		}
-	}
-
-	clip->valid = true;
-	controller->clipCount++;
-
-	TraceLog(LOG_INFO,
-			"Clip cargado: name='%s' fps=%.1f frames[%d-%d] events=%d slash=%d model3d=%d",
-			clip->name, clip->fps, clip->startFrame, clip->endFrame,
-			clip->eventCount, clip->slashEventCount, clip->model3dEventCount);
-
-	free(jsonData);
-	return true;
+    return (*outPersonCount > 0) ? BONES_SUCCESS : BONES_ERROR_EMPTY_DATA;
 }
 
+static inline BonesError BonesLoadFromString(BonesAnimation* animation, const char* jsonString) {
+    if (!animation || !jsonString || !animation->frames) return BONES_ERROR_NULL_POINTER;
 
+    animation->frameCount   = 0;
+    animation->currentFrame = -1;
+    animation->isLoaded     = false;
 
-static inline bool AnimController_PlayClip(AnimationController* controller,
-		const char* clipName)
-{
-	if (!controller || !clipName || !controller->clips) return false;
+    const char* searchPos = jsonString;
+    while (animation->frameCount < animation->maxFrames) {
+        const char* nextFrame = strstr(searchPos, "\"frame_");
+        if (!nextFrame) break;
 
-	int foundIndex = -1;
-	for (int i = 0; i < controller->clipCount; i++) {
-		if (strcmp(controller->clips[i].name, clipName) == 0) {
-			foundIndex = i;
-			break;
-		}
-	}
+        AnimationFrame* frame = &animation->frames[animation->frameCount];
+        memset(frame, 0, sizeof(AnimationFrame));
 
-	// Fallback al primer clip si no se encontró por nombre
-	if (foundIndex < 0) {
-		if (controller->clipCount > 0) {
-			foundIndex = 0;
-			TraceLog(LOG_WARNING,
-					"AnimController_PlayClip: '%s' no encontrado, usando '%s'",
-					clipName, controller->clips[0].name);
-		} else {
-			TraceLog(LOG_ERROR,
-					"AnimController_PlayClip: '%s' no encontrado y no hay clips cargados",
-					clipName);
-			return false;
-		}
-	}
+        if (ParseJSONFrame(nextFrame, &frame->frameNumber, frame->persons, &frame->personCount) == BONES_SUCCESS) {
+            frame->valid              = true;
+            frame->isOriginalKeyframe = true;
+            animation->frameCount++;
+        }
+        searchPos = nextFrame + 1;
+    }
 
-	controller->currentClipIndex = foundIndex;
-	controller->localTime        = 0.0f;
-	controller->playing          = true;
-
-	if (controller->bonesAnimation) {
-		BonesAnimation* anim = (BonesAnimation*)controller->bonesAnimation;
-		if (anim->isLoaded && anim->frameCount > 0) {
-			int minFrame = anim->frames[0].frameNumber;
-			int maxFrame = anim->frames[0].frameNumber;
-			for (int f = 1; f < anim->frameCount; f++) {
-				if (anim->frames[f].frameNumber < minFrame) minFrame = anim->frames[f].frameNumber;
-				if (anim->frames[f].frameNumber > maxFrame) maxFrame = anim->frames[f].frameNumber;
-			}
-			controller->clips[foundIndex].startFrame = minFrame;
-			controller->clips[foundIndex].endFrame   = maxFrame;
-		}
-	}
-
-	controller->currentFrameInJSON = controller->clips[foundIndex].startFrame;
-	for (int j = 0; j < controller->clips[foundIndex].eventCount; j++)
-		controller->clips[foundIndex].events[j].processed = false;
-
-	return true;
+    if (animation->frameCount > 0) {
+        animation->currentFrame = 0;
+        animation->isLoaded     = true;
+        return BONES_SUCCESS;
+    }
+    return BONES_ERROR_EMPTY_DATA;
 }
 
-static inline void AnimController_Pause(AnimationController* controller) {
-	if (controller) controller->playing = false;
+static inline BonesError BonesLoadFromJSON(BonesAnimation* animation, const char* jsonFilePath) {
+    if (!animation || !jsonFilePath) return BONES_ERROR_NULL_POINTER;
+    char* jsonData = LoadFileText(jsonFilePath);
+    if (!jsonData) return BONES_ERROR_FILE_NOT_FOUND;
+
+    BonesError result = BonesLoadFromString(animation, jsonData);
+    if (result == BONES_SUCCESS) {
+        strncpy(animation->filePath, jsonFilePath, sizeof(animation->filePath) - 1);
+        animation->filePath[sizeof(animation->filePath) - 1] = '\0';
+    }
+
+    UnloadFileText(jsonData);
+    return result;
 }
 
-static inline void AnimController_Resume(AnimationController* controller) {
-	if (controller) controller->playing = true;
+static inline void InterpolateBone(const Bone* boneA, const Bone* boneB, Bone* result, float t) {
+    strncpy(result->name, boneA->name, MAX_BONE_NAME_LENGTH - 1);
+    result->name[MAX_BONE_NAME_LENGTH - 1] = '\0';
+
+    if (boneA->position.valid && boneB->position.valid) {
+        result->position.position.x = boneA->position.position.x * (1.0f - t) + boneB->position.position.x * t;
+        result->position.position.y = boneA->position.position.y * (1.0f - t) + boneB->position.position.y * t;
+        result->position.position.z = boneA->position.position.z * (1.0f - t) + boneB->position.position.z * t;
+        result->position.valid = true;
+    } else {
+        result->position = boneA->position.valid ? boneA->position : boneB->position;
+    }
+
+    result->position.confidence = boneA->position.confidence * (1.0f - t) + boneB->position.confidence * t;
+    result->size.x    = boneA->size.x * (1.0f - t) + boneB->size.x * t;
+    result->size.y    = boneA->size.y * (1.0f - t) + boneB->size.y * t;
+    result->visible       = boneA->visible || boneB->visible;
+    result->textureIndex  = boneA->textureIndex;
+
+    float rotDiff = boneB->rotation - boneA->rotation;
+    if (rotDiff >  180.0f) rotDiff -= 360.0f;
+    if (rotDiff < -180.0f) rotDiff += 360.0f;
+    result->rotation = boneA->rotation + rotDiff * t;
+    result->mirrored = boneA->mirrored;
+}
+
+static inline void InterpolatePerson(const Person* personA, const Person* personB, Person* result, float t) {
+    strncpy(result->personId, personA->personId, 15);
+    result->personId[15] = '\0';
+    result->active    = personA->active || personB->active;
+    result->boneCount = personA->boneCount > personB->boneCount ? personA->boneCount : personB->boneCount;
+
+    for (int i = 0; i < result->boneCount; i++) {
+        if (i < personA->boneCount && i < personB->boneCount)
+            InterpolateBone(&personA->bones[i], &personB->bones[i], &result->bones[i], t);
+        else if (i < personA->boneCount)
+            result->bones[i] = personA->bones[i];
+        else
+            result->bones[i] = personB->bones[i];
+    }
+}
+
+static inline bool BonesCreateMissingFrames(BonesAnimation* animation) {
+    if (!animation || !animation->isLoaded || animation->frameCount < 2) return false;
+
+    int minFrame = animation->frames[0].frameNumber;
+    int maxFrame = animation->frames[0].frameNumber;
+    for (int i = 0; i < animation->frameCount; i++) {
+        if (animation->frames[i].frameNumber < minFrame) minFrame = animation->frames[i].frameNumber;
+        if (animation->frames[i].frameNumber > maxFrame) maxFrame = animation->frames[i].frameNumber;
+    }
+
+    int totalNeeded = maxFrame - minFrame + 1;
+    if (totalNeeded > animation->maxFrames) {
+        AnimationFrame* expanded = (AnimationFrame*)realloc(animation->frames, totalNeeded * sizeof(AnimationFrame));
+        if (!expanded) return false;
+        animation->frames    = expanded;
+        animation->maxFrames = totalNeeded;
+        for (int i = animation->frameCount; i < totalNeeded; i++)
+            memset(&animation->frames[i], 0, sizeof(AnimationFrame));
+    }
+
+    AnimationFrame* temp = (AnimationFrame*)calloc(totalNeeded, sizeof(AnimationFrame));
+    if (!temp) return false;
+
+    for (int frameNum = minFrame; frameNum <= maxFrame; frameNum++) {
+        int targetIdx   = frameNum - minFrame;
+        int existingIdx = -1;
+        for (int i = 0; i < animation->frameCount; i++) {
+            if (animation->frames[i].frameNumber == frameNum) { existingIdx = i; break; }
+        }
+
+        if (existingIdx >= 0) {
+            temp[targetIdx] = animation->frames[existingIdx];
+            continue;
+        }
+
+        int prevIdx = -1, prevNum = -1, nextIdx = -1, nextNum = -1;
+        for (int i = 0; i < animation->frameCount; i++) {
+            int fn = animation->frames[i].frameNumber;
+            if (fn < frameNum && (prevNum < 0 || fn > prevNum)) { prevIdx = i; prevNum = fn; }
+            if (fn > frameNum && (nextNum < 0 || fn < nextNum)) { nextIdx = i; nextNum = fn; }
+        }
+
+        AnimationFrame* dest = &temp[targetIdx];
+        memset(dest, 0, sizeof(AnimationFrame));
+        dest->frameNumber       = frameNum;
+        dest->valid             = true;
+        dest->isOriginalKeyframe = false;
+
+        if (prevIdx >= 0 && nextIdx >= 0) {
+            AnimationFrame* fA = &animation->frames[prevIdx];
+            AnimationFrame* fB = &animation->frames[nextIdx];
+            float raw = (float)(frameNum - prevNum) / (float)(nextNum - prevNum);
+            float t   = raw * raw * (3.0f - 2.0f * raw);
+
+            dest->personCount = fA->personCount > fB->personCount ? fA->personCount : fB->personCount;
+            for (int p = 0; p < dest->personCount; p++) {
+                if (p < fA->personCount && p < fB->personCount)
+                    InterpolatePerson(&fA->persons[p], &fB->persons[p], &dest->persons[p], t);
+                else if (p < fA->personCount) dest->persons[p] = fA->persons[p];
+                else                          dest->persons[p] = fB->persons[p];
+            }
+        } else if (prevIdx >= 0) {
+            *dest = animation->frames[prevIdx];
+            dest->frameNumber        = frameNum;
+            dest->isOriginalKeyframe = false;
+        } else if (nextIdx >= 0) {
+            *dest = animation->frames[nextIdx];
+            dest->frameNumber        = frameNum;
+            dest->isOriginalKeyframe = false;
+        }
+    }
+
+    memcpy(animation->frames, temp, totalNeeded * sizeof(AnimationFrame));
+    animation->frameCount = totalNeeded;
+    free(temp);
+    return true;
+}
+
+static inline bool LoadSimpleTextureConfig(SimpleTextureSystem* system, const char* filename) {
+    char* buffer = LoadFileText(filename);
+    if (!buffer) return false;
+
+    int lineCount = 0;
+    for (const char* p = buffer; *p; p++) if (*p == '\n') lineCount++;
+
+    if (lineCount == 0) { UnloadFileText(buffer); return false; }
+
+    free(system->configs);
+    system->configs = calloc(lineCount, sizeof(BoneTextureConfig));
+    if (!system->configs) { UnloadFileText(buffer); return false; }
+
+    system->configCapacity = lineCount;
+    system->configCount    = 0;
+
+    char lineBuffer[512];
+    const char* lineStart = buffer;
+
+    for (const char* ptr = buffer; *ptr && system->configCount < system->configCapacity; ptr++) {
+        if (*ptr != '\n') continue;
+        int lineLen = (int)(ptr - lineStart);
+        if (lineLen > 5 && lineLen < 511 && *lineStart != '#' && *lineStart != '\n') {
+            memcpy(lineBuffer, lineStart, lineLen);
+            lineBuffer[lineLen] = '\0';
+
+            char boneName[MAX_BONE_NAME_LENGTH], texturePath[MAX_FILE_PATH_LENGTH];
+            int   visibleMode;
+            float size;
+            if (sscanf(lineBuffer, "%31s %255s %d %f", boneName, texturePath, &visibleMode, &size) == 4) {
+                BoneTextureConfig* cfg = &system->configs[system->configCount];
+                strncpy(cfg->boneName,    boneName,    MAX_BONE_NAME_LENGTH  - 1);
+                cfg->boneName[MAX_BONE_NAME_LENGTH - 1] = '\0';
+                strncpy(cfg->texturePath, texturePath, MAX_FILE_PATH_LENGTH  - 1);
+                cfg->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
+                cfg->visibleMode = visibleMode;
+                cfg->size    = size;
+                system->configCount++;
+            }
+        }
+        lineStart = ptr + 1;
+    }
+
+    UnloadFileText(buffer);
+    system->loaded = (system->configCount > 0);
+    return system->loaded;
+}
+
+static inline void LoadBoneConfigurations(SimpleTextureSystem* textureSystem, BoneConfig** boneConfigs, int* boneConfigCount) {
+    free(*boneConfigs);
+    *boneConfigs     = NULL;
+    *boneConfigCount = 0;
+
+    if (!textureSystem->loaded || textureSystem->configCount == 0) return;
+
+    *boneConfigCount = textureSystem->configCount;
+    *boneConfigs     = calloc(*boneConfigCount, sizeof(BoneConfig));
+    if (!*boneConfigs) return;
+
+    for (int i = 0; i < *boneConfigCount; i++) {
+        const BoneTextureConfig* src = &textureSystem->configs[i];
+        BoneConfig*              dst = &(*boneConfigs)[i];
+        strncpy(dst->boneName,    src->boneName,    MAX_BONE_NAME_LENGTH - 1);
+        dst->boneName[MAX_BONE_NAME_LENGTH - 1] = '\0';
+        strncpy(dst->texturePath, src->texturePath, MAX_FILE_PATH_LENGTH - 1);
+        dst->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
+        dst->visibleMode = src->visibleMode;
+        dst->visible = (src->visibleMode != 0);
+        dst->size    = src->size;
+        dst->valid   = true;
+    }
+}
+
+static inline BoneConfig* FindBoneConfig(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName) {
+    for (int i = 0; i < boneConfigCount; i++)
+        if (strcmp(boneConfigs[i].boneName, boneName) == 0) return &boneConfigs[i];
+    return NULL;
+}
+
+static inline const char* GetTexturePathForBone(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName, TextureSetCollection* textureSets) {
+    if (textureSets && textureSets->loaded) {
+        const char* t = BonesTextureSets_GetActiveTexture(textureSets, boneName);
+        if (t) return t;
+    }
+    BoneConfig* cfg = FindBoneConfig(boneConfigs, boneConfigCount, boneName);
+    return cfg ? cfg->texturePath : "default.png";
+}
+
+static inline bool IsBoneVisible(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName) {
+    BoneConfig* cfg = FindBoneConfig(boneConfigs, boneConfigCount, boneName);
+    return cfg ? (cfg->visibleMode != 0) : true;
+}
+
+static inline int GetBoneVisibleMode(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName) {
+    BoneConfig* cfg = FindBoneConfig(boneConfigs, boneConfigCount, boneName);
+    return cfg ? cfg->visibleMode : 1;
+}
+
+static inline bool IsAsymmetricBone(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName) {
+    return GetBoneVisibleMode(boneConfigs, boneConfigCount, boneName) == 2;
+}
+
+static inline float GetBoneSize(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName) {
+    BoneConfig* cfg = FindBoneConfig(boneConfigs, boneConfigCount, boneName);
+    return cfg ? cfg->size : 0.35f;
+}
+
+static inline void CleanupTextureSystem(SimpleTextureSystem* textureSystem, BoneConfig** boneConfigs, int* boneConfigCount) {
+    if (textureSystem->configs) {
+        free(textureSystem->configs);
+        memset(textureSystem, 0, sizeof(SimpleTextureSystem));
+    }
+    free(*boneConfigs);
+    *boneConfigs     = NULL;
+    *boneConfigCount = 0;
+}
+
+static inline TextureSetCollection* BonesTextureSets_Create(void) {
+    return (TextureSetCollection*)calloc(1, sizeof(TextureSetCollection));
+}
+
+static inline void BonesTextureSets_Free(TextureSetCollection* collection) {
+    free(collection);
+}
+
+static inline BoneTextureSet* BonesTextureSets_FindSet(TextureSetCollection* collection, const char* boneName) {
+    if (!collection || !boneName) return NULL;
+    for (int i = 0; i < collection->setCount; i++)
+        if (strcmp(collection->sets[i].boneName, boneName) == 0) return &collection->sets[i];
+    return NULL;
+}
+
+static inline const char* BonesTextureSets_GetActiveTexture(const TextureSetCollection* collection, const char* boneName) {
+    if (!collection || !boneName || !collection->loaded) return NULL;
+    for (int i = 0; i < collection->setCount; i++) {
+        const BoneTextureSet* set = &collection->sets[i];
+        if (strcmp(set->boneName, boneName) == 0 && set->valid &&
+            set->activeVariantIndex >= 0 && set->activeVariantIndex < set->variantCount)
+            return set->variants[set->activeVariantIndex].texturePath;
+    }
+    return NULL;
+}
+
+static inline bool BonesTextureSets_SetVariant(TextureSetCollection* collection, const char* boneName, const char* variantName) {
+    BoneTextureSet* set = BonesTextureSets_FindSet(collection, boneName);
+    if (!set) return false;
+    for (int i = 0; i < set->variantCount; i++) {
+        if (strcmp(set->variants[i].variantName, variantName) == 0) {
+            set->activeVariantIndex = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+static inline bool BonesTextureSets_LoadFromFile(TextureSetCollection* collection, const char* filePath) {
+    if (!collection || !filePath) return false;
+    FILE* file = fopen(filePath, "r");
+    if (!file) return false;
+
+    char line[512], boneName[BONES_AE_MAX_NAME], variantName[BONES_AE_MAX_NAME], texturePath[BONES_AE_MAX_PATH];
+    collection->setCount = 0;
+    collection->loaded   = false;
+
+    while (fgets(line, sizeof(line), file) && collection->setCount < BONES_MAX_TEXTURE_SETS) {
+        if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') continue;
+        if (sscanf(line, "%63s %63s %255s", boneName, variantName, texturePath) != 3) continue;
+
+        BoneTextureSet* set = BonesTextureSets_FindSet(collection, boneName);
+        if (!set) {
+            if (collection->setCount >= BONES_MAX_TEXTURE_SETS) break;
+            set = &collection->sets[collection->setCount];
+            memset(set, 0, sizeof(BoneTextureSet));
+            strncpy(set->boneName, boneName, BONES_AE_MAX_NAME - 1);
+            set->boneName[BONES_AE_MAX_NAME - 1] = '\0';
+            set->valid = true;
+            collection->setCount++;
+        }
+
+        if (set->variantCount >= BONES_MAX_TEXTURE_VARIANTS) continue;
+
+        BoneTextureVariant* variant = &set->variants[set->variantCount];
+        strncpy(variant->variantName, variantName, BONES_AE_MAX_NAME - 1);
+        variant->variantName[BONES_AE_MAX_NAME - 1] = '\0';
+        strncpy(variant->texturePath, texturePath, BONES_AE_MAX_PATH - 1);
+        variant->texturePath[BONES_AE_MAX_PATH - 1] = '\0';
+        variant->valid = true;
+        set->variantCount++;
+    }
+
+    fclose(file);
+    collection->loaded = (collection->setCount > 0);
+    return collection->loaded;
+}
+
+static AnimationController* AnimController_Create(void* bonesAnimation, TextureSetCollection* textureSets) {
+    AnimationController* ctrl = (AnimationController*)calloc(1, sizeof(AnimationController));
+    if (!ctrl) return NULL;
+
+    ctrl->clips = (AnimationClipMetadata*)calloc(BONES_MAX_ANIM_CLIPS, sizeof(AnimationClipMetadata));
+    if (!ctrl->clips) { free(ctrl); return NULL; }
+
+    ctrl->bonesAnimation     = bonesAnimation;
+    ctrl->textureSets        = textureSets;
+    ctrl->clipCount          = 0;
+    ctrl->clipCapacity       = BONES_MAX_ANIM_CLIPS;
+    ctrl->currentClipIndex   = -1;
+    ctrl->localTime          = 0.0f;
+    ctrl->playing            = false;
+    ctrl->currentFrameInJSON = 0;
+    ctrl->valid              = true;
+    return ctrl;
+}
+
+static inline void AnimController_Free(AnimationController* controller) {
+    if (!controller) return;
+    free(controller->clips);
+    free(controller);
+}
+
+static inline bool AnimController_LoadClipMetadata(AnimationController* controller, const char* jsonPath) {
+    if (!controller || !jsonPath || !controller->clips) return false;
+    if (controller->clipCount >= controller->clipCapacity) return false;
+
+    FILE* file = fopen(jsonPath, "rb");
+    if (!file) return false;
+
+    fseek(file, 0, SEEK_END);
+    long fileSize = ftell(file);
+    fseek(file, 0, SEEK_SET);
+
+    char* jsonData = (char*)malloc(fileSize + 1);
+    if (!jsonData) { fclose(file); return false; }
+    fread(jsonData, 1, fileSize, file);
+    jsonData[fileSize] = '\0';
+    fclose(file);
+
+    AnimationClipMetadata* clip = &controller->clips[controller->clipCount];
+    memset(clip, 0, sizeof(AnimationClipMetadata));
+
+    if (!ParseJSONString(jsonData, "name", clip->name, BONES_AE_MAX_NAME)) strcpy(clip->name, "unnamed");
+    if (!ParseJSONFloat(jsonData, "fps",         &clip->fps))        clip->fps        = 30.0f;
+    if (!ParseJSONInt  (jsonData, "start_frame", &clip->startFrame)) clip->startFrame = 0;
+    if (!ParseJSONInt  (jsonData, "end_frame",   &clip->endFrame))   clip->endFrame   = 60;
+    clip->loop = strstr(jsonData, "\"loop\": true") || strstr(jsonData, "\"loop\":true");
+
+    const char* eventsStart = strstr(jsonData, "\"events\":");
+    if (eventsStart) {
+        eventsStart = strchr(eventsStart, '[');
+        const char* arrEnd = NULL;
+        if (eventsStart) {
+            int depth = 0;
+            for (const char* p = eventsStart; *p; p++) {
+                if (*p == '[') depth++;
+                else if (*p == ']') { if (--depth == 0) { arrEnd = p; break; } }
+            }
+        }
+
+        if (eventsStart && arrEnd) {
+            const char* eventPos = eventsStart;
+            while (1) {
+                eventPos = strchr(eventPos + 1, '{');
+                if (!eventPos || eventPos >= arrEnd) break;
+
+                const char* blockEnd = eventPos + 1;
+                int depth = 1;
+                while (*blockEnd && depth > 0) {
+                    if (*blockEnd == '{') depth++;
+                    else if (*blockEnd == '}') depth--;
+                    blockEnd++;
+                }
+
+                char eventType[32] = {0};
+                if (!ParseJSONString(eventPos, "type", eventType, sizeof(eventType))) continue;
+
+                if (strcmp(eventType, "slash") == 0 && clip->slashEventCount < 16) {
+                    SlashEventConfig* se = &clip->slashEvents[clip->slashEventCount];
+                    memset(se, 0, sizeof(SlashEventConfig));
+                    se->trailEnabled = true;
+                    se->widthStart   = 0.10f;
+                    se->widthEnd     = 0.0f;
+                    se->colorStart   = (Color){255, 200,  80, 220};
+                    se->colorEnd     = (Color){255,  60,  10,   0};
+                    se->lifetime     = 0.20f;
+                    se->segments     = 24;
+
+                    ParseJSONInt   (eventPos, "frame_start", &se->frameStart);
+                    ParseJSONInt   (eventPos, "frame_end",   &se->frameEnd);
+                    ParseJSONString(eventPos, "bone",        se->boneName,    BONES_AE_MAX_NAME);
+                    ParseJSONString(eventPos, "texture",     se->texturePath, BONES_AE_MAX_PATH);
+                    ParseJSONFloatInBlock(eventPos, blockEnd, "emit_offset_x", &se->emitOffsetX);
+                    ParseJSONFloatInBlock(eventPos, blockEnd, "emit_offset_y", &se->emitOffsetY);
+                    ParseJSONFloatInBlock(eventPos, blockEnd, "emit_offset_z", &se->emitOffsetZ);
+
+                    const char* trailTag  = strstr(eventPos, "\"trail\"");
+                    const char* nextBrace = strchr(eventPos + 1, '{');
+                    if (trailTag && nextBrace && trailTag < nextBrace + 64) {
+                        const char* ts = strchr(trailTag, '{');
+                        if (ts) {
+                            float fw = 0; int iv = 0;
+                            if (ParseJSONFloat(ts, "width_start", &fw)) se->widthStart = fw;
+                            if (ParseJSONFloat(ts, "width_end",   &fw)) se->widthEnd   = fw;
+                            if (ParseJSONFloat(ts, "lifetime",    &fw)) se->lifetime   = fw;
+                            if (ParseJSONInt  (ts, "segments",    &iv)) se->segments   = iv;
+
+                            const char* cs = strstr(ts, "\"color_start\"");
+                            if (cs) {
+                                const char* arr = strchr(cs, '[');
+                                if (arr) {
+                                    se->colorStart.r = (unsigned char)atoi(arr + 1);
+                                    const char* p2 = strchr(arr+1,','); if (p2) {
+                                    se->colorStart.g = (unsigned char)atoi(p2 + 1);
+                                    const char* p3 = strchr(p2+1,','); if (p3) {
+                                    se->colorStart.b = (unsigned char)atoi(p3 + 1);
+                                    const char* p4 = strchr(p3+1,','); if (p4)
+                                    se->colorStart.a = (unsigned char)atoi(p4 + 1); }}
+                                }
+                            }
+                            const char* ce = strstr(ts, "\"color_end\"");
+                            if (ce) {
+                                const char* arr = strchr(ce, '[');
+                                if (arr) {
+                                    se->colorEnd.r = (unsigned char)atoi(arr + 1);
+                                    const char* p2 = strchr(arr+1,','); if (p2) {
+                                    se->colorEnd.g = (unsigned char)atoi(p2 + 1);
+                                    const char* p3 = strchr(p2+1,','); if (p3) {
+                                    se->colorEnd.b = (unsigned char)atoi(p3 + 1);
+                                    const char* p4 = strchr(p3+1,','); if (p4)
+                                    se->colorEnd.a = (unsigned char)atoi(p4 + 1); }}
+                                }
+                            }
+                        }
+                    }
+                    if (se->segments > SLASH_TRAIL_MAX_SEGMENTS) se->segments = SLASH_TRAIL_MAX_SEGMENTS;
+                    if (se->segments < 2) se->segments = 2;
+                    clip->slashEventCount++;
+                    continue;
+                }
+
+                if (strcmp(eventType, "model3d") == 0 && clip->model3dEventCount < BONES_MAX_MODEL3D_EVENTS) {
+                    Model3DEventConfig* m = &clip->model3dEvents[clip->model3dEventCount];
+                    memset(m, 0, sizeof(Model3DEventConfig));
+                    m->scale = 1.0f;
+                    ParseJSONInt   (eventPos, "frame_start", &m->frameStart);
+                    ParseJSONInt   (eventPos, "frame_end",   &m->frameEnd);
+                    ParseJSONString(eventPos, "bone",        m->boneName,  BONES_MODEL3D_MAX_BONE);
+                    ParseJSONString(eventPos, "model",       m->modelPath, BONES_MODEL3D_MAX_PATH);
+                    ParseJSONFloat (eventPos, "scale",       &m->scale);
+                    ParseJSONFloat (eventPos, "offset_x",    &m->offset.x);
+                    ParseJSONFloat (eventPos, "offset_y",    &m->offset.y);
+                    ParseJSONFloat (eventPos, "offset_z",    &m->offset.z);
+                    ParseJSONFloat (eventPos, "rot_x",       &m->rotationEuler.x);
+                    ParseJSONFloat (eventPos, "rot_y",       &m->rotationEuler.y);
+                    ParseJSONFloat (eventPos, "rot_z",       &m->rotationEuler.z);
+                    m->valid = (m->modelPath[0] != '\0');
+                    clip->model3dEventCount++;
+                    continue;
+                }
+
+                if (clip->eventCount >= BONES_MAX_ANIM_EVENTS) continue;
+                AnimationEvent* ev = &clip->events[clip->eventCount];
+                memset(ev, 0, sizeof(AnimationEvent));
+
+                float eventTime;
+                if (!ParseJSONFloat(eventPos, "time", &eventTime)) continue;
+                ev->time = eventTime;
+
+                if      (strcmp(eventType, "texture") == 0) ev->type = ANIM_EVENT_TEXTURE;
+                else if (strcmp(eventType, "sound")   == 0) ev->type = ANIM_EVENT_SOUND;
+                else                                         ev->type = ANIM_EVENT_CUSTOM;
+
+                char tmp[BONES_AE_MAX_NAME] = {0};
+                ParseJSONString(eventPos, "bone",    tmp, BONES_AE_MAX_NAME); strncpy(ev->boneName,    tmp, BONES_AE_MAX_NAME - 1);
+                ParseJSONString(eventPos, "variant", tmp, BONES_AE_MAX_NAME); strncpy(ev->variantName, tmp, BONES_AE_MAX_NAME - 1);
+                ParseJSONString(eventPos, "person",  tmp, BONES_AE_MAX_NAME); strncpy(ev->personId,    tmp, BONES_AE_MAX_NAME - 1);
+                ev->processed = false;
+                ev->valid     = true;
+                clip->eventCount++;
+            }
+        }
+    }
+
+    clip->valid = true;
+    controller->clipCount++;
+    free(jsonData);
+    return true;
+}
+
+static inline bool AnimController_PlayClip(AnimationController* controller, const char* clipName) {
+    if (!controller || !clipName || !controller->clips) return false;
+
+    int foundIndex = -1;
+    for (int i = 0; i < controller->clipCount; i++) {
+        if (strcmp(controller->clips[i].name, clipName) == 0) { foundIndex = i; break; }
+    }
+    if (foundIndex < 0) {
+        if (controller->clipCount > 0) {
+            foundIndex = 0;
+            TraceLog(LOG_WARNING, "AnimController_PlayClip: '%s' no encontrado, usando '%s'",
+                     clipName, controller->clips[0].name);
+        } else {
+            TraceLog(LOG_ERROR, "AnimController_PlayClip: '%s' no encontrado y no hay clips", clipName);
+            return false;
+        }
+    }
+
+    controller->currentClipIndex = foundIndex;
+    controller->localTime        = 0.0f;
+    controller->playing          = true;
+
+    if (controller->bonesAnimation) {
+        BonesAnimation* anim = (BonesAnimation*)controller->bonesAnimation;
+        if (anim->isLoaded && anim->frameCount > 0) {
+            int minFrame = anim->frames[0].frameNumber;
+            int maxFrame = anim->frames[0].frameNumber;
+            for (int f = 1; f < anim->frameCount; f++) {
+                if (anim->frames[f].frameNumber < minFrame) minFrame = anim->frames[f].frameNumber;
+                if (anim->frames[f].frameNumber > maxFrame) maxFrame = anim->frames[f].frameNumber;
+            }
+            controller->clips[foundIndex].startFrame = minFrame;
+            controller->clips[foundIndex].endFrame   = maxFrame;
+        }
+    }
+
+    controller->currentFrameInJSON = controller->clips[foundIndex].startFrame;
+    for (int j = 0; j < controller->clips[foundIndex].eventCount; j++)
+        controller->clips[foundIndex].events[j].processed = false;
+
+    return true;
 }
 
 static inline int AnimController_GetCurrentFrame(const AnimationController* controller) {
-	if (!controller || controller->currentClipIndex < 0) return 0;
-	return controller->currentFrameInJSON;
+    if (!controller || controller->currentClipIndex < 0) return 0;
+    return controller->currentFrameInJSON;
 }
-
 
 static inline void AnimController_Update(AnimationController* controller, float deltaTime) {
-	if (!controller || !controller->playing || controller->currentClipIndex < 0) return;
-	if (!controller->clips) return;
+    if (!controller || !controller->playing || controller->currentClipIndex < 0 || !controller->clips) return;
 
-	AnimationClipMetadata* clip = &controller->clips[controller->currentClipIndex];
-	if (!clip->valid) return;
+    AnimationClipMetadata* clip = &controller->clips[controller->currentClipIndex];
+    if (!clip->valid) return;
 
-	controller->localTime += deltaTime;
-	int   totalFrames  = clip->endFrame - clip->startFrame + 1;
-	float clipDuration = (float)totalFrames / clip->fps;
+    controller->localTime += deltaTime;
+    int   totalFrames  = clip->endFrame - clip->startFrame + 1;
+    float clipDuration = (float)totalFrames / clip->fps;
 
-	if (controller->localTime >= clipDuration) {
-		if (clip->loop) {
-			controller->localTime = fmodf(controller->localTime, clipDuration);
-			for (int i = 0; i < clip->eventCount; i++)
-				clip->events[i].processed = false;
-		} else {
-			controller->localTime = clipDuration - 0.001f;
-			controller->playing   = false;
-		}
-	}
+    if (controller->localTime >= clipDuration) {
+        if (clip->loop) {
+            controller->localTime = fmodf(controller->localTime, clipDuration);
+            for (int i = 0; i < clip->eventCount; i++) clip->events[i].processed = false;
+        } else {
+            controller->localTime = clipDuration - 0.001f;
+            controller->playing   = false;
+        }
+    }
 
-	controller->currentFrameInJSON = clip->startFrame +
-		(int)roundf(controller->localTime * clip->fps);
-	if (controller->currentFrameInJSON > clip->endFrame)
-		controller->currentFrameInJSON = clip->endFrame;
+    controller->currentFrameInJSON = clip->startFrame + (int)roundf(controller->localTime * clip->fps);
+    if (controller->currentFrameInJSON > clip->endFrame)
+        controller->currentFrameInJSON = clip->endFrame;
 
-	for (int i = 0; i < clip->eventCount; i++) {
-		AnimationEvent* event = &clip->events[i];
-		if (!event->valid || event->processed) continue;
-		if (controller->localTime >= event->time) {
-			if (event->type == ANIM_EVENT_TEXTURE && controller->textureSets)
-				BonesTextureSets_SetVariant(controller->textureSets,
-						event->boneName, event->variantName);
-			event->processed = true;
-		}
-	}
+    for (int i = 0; i < clip->eventCount; i++) {
+        AnimationEvent* ev = &clip->events[i];
+        if (!ev->valid || ev->processed || controller->localTime < ev->time) continue;
+        if (ev->type == ANIM_EVENT_TEXTURE && controller->textureSets)
+            BonesTextureSets_SetVariant(controller->textureSets, ev->boneName, ev->variantName);
+        ev->processed = true;
+    }
 }
 
+static inline SlashHitboxInfo AnimController_GetActiveSlashHitbox(
+        const AnimationController* controller,
+        const AnimationFrame*      frame,
+        const char*                personId,
+        Vector3                    worldPos,
+        Vector3                    pivot,
+        Matrix                     rot,
+        bool                       applyWorldTransform,
+        int                        slashIndexHint)
+{
+    SlashHitboxInfo result = {0};
+    if (!controller || !frame || controller->currentClipIndex < 0) return result;
 
-// ----------------------------------------------------------------------------
-// Renderer
-// ----------------------------------------------------------------------------
+    const AnimationClipMetadata* clip = &controller->clips[controller->currentClipIndex];
+    if (!clip->valid || clip->slashEventCount == 0) return result;
+
+    int currentFrame = controller->currentFrameInJSON;
+    int found = 0;
+
+    for (int s = 0; s < clip->slashEventCount; s++) {
+        const SlashEventConfig* se = &clip->slashEvents[s];
+        if (currentFrame < se->frameStart || currentFrame > se->frameEnd) continue;
+        if (found < slashIndexHint) { found++; continue; }
+
+        Vector3 bonePos = SlashTrail__GetBonePos(frame, personId, se->boneName);
+        if (applyWorldTransform) {
+            Vector3 rel    = Vector3Subtract(bonePos, pivot);
+            Vector3 rotated = Vector3Transform(rel, rot);
+            bonePos = Vector3Add(Vector3Add(worldPos, pivot), rotated);
+        }
+
+        result.active       = true;
+        result.bonePosition = bonePos;
+        result.frameStart   = se->frameStart;
+        result.frameEnd     = se->frameEnd;
+        result.slashIndex   = s;
+        strncpy(result.boneName, se->boneName, BONES_AE_MAX_NAME - 1);
+        result.boneName[BONES_AE_MAX_NAME - 1] = '\0';
+        return result;
+    }
+    return result;
+}
 
 static inline BonesRenderer* BonesRenderer_Create(void) {
-	BonesRenderer* renderer = (BonesRenderer*)calloc(1, sizeof(BonesRenderer));
-	if (!renderer) return NULL;
-	renderer->textureCount = 0;
-	renderer->physCols = 4;
-	renderer->physRows = 4;
-	return renderer;
+    BonesRenderer* r = (BonesRenderer*)calloc(1, sizeof(BonesRenderer));
+    if (r) { r->physCols = 4; r->physRows = 4; }
+    return r;
 }
 
 static inline void BonesRenderer_Free(BonesRenderer* renderer) {
-	if (!renderer) return;
-	for (int i = 0; i < renderer->textureCount; i++) UnloadTexture(renderer->textures[i]);
-	free(renderer);
+    if (!renderer) return;
+    for (int i = 0; i < renderer->textureCount; i++) UnloadTexture(renderer->textures[i]);
+    free(renderer);
 }
 
 static inline bool BonesRenderer_Init(BonesRenderer* renderer) {
-	if (!renderer) return false;
-	renderer->camera = (Camera){
-		.position = {0.0f, 0.6f, 2.5f},
-			.target = {0.0f, 0.6f, 0.0f},
-			.up = {0.0f, 1.0f, 0.0f},
-			.fovy = 45.0f,
-			.projection = CAMERA_PERSPECTIVE
-	};
-	return true;
+    if (!renderer) return false;
+    renderer->camera = (Camera){
+        .position   = {0.0f, 0.6f, 2.5f},
+        .target     = {0.0f, 0.6f, 0.0f},
+        .up         = {0.0f, 1.0f, 0.0f},
+        .fovy       = 45.0f,
+        .projection = CAMERA_PERSPECTIVE
+    };
+    return true;
 }
 
 static inline int BonesRenderer_LoadTexture(BonesRenderer* renderer, const char* path) {
-	if (!renderer || !path) return 0;
+    if (!renderer || !path) return 0;
 
-	for (int i = 0; i < renderer->textureCount; i++)
-		if (strcmp(renderer->texturePaths[i], path) == 0) return i;
+    for (int i = 0; i < renderer->textureCount; i++)
+        if (strcmp(renderer->texturePaths[i], path) == 0) return i;
 
-	if (renderer->textureCount >= MAX_TEXTURES) return 0;
+    if (renderer->textureCount >= MAX_TEXTURES) return 0;
 
-	Image img = LoadImage(path);
-	if (img.data == NULL) {
-		img = GenImageColor(1024, 1024, CLITERAL(Color){60, 120, 220, 255});
-		ImageDrawText(&img, path, 8, 8, 128, WHITE);
-	}
-	ImageAlphaPremultiply(&img);
-
-	renderer->textures[renderer->textureCount] = LoadTextureFromImage(img);
-	UnloadImage(img);
-	SetTextureFilter(renderer->textures[renderer->textureCount], TEXTURE_FILTER_POINT);
-	strncpy(renderer->texturePaths[renderer->textureCount], path, MAX_FILE_PATH_LENGTH - 1);
-	renderer->texturePaths[renderer->textureCount][MAX_FILE_PATH_LENGTH - 1] = '\0';
-
-	return renderer->textureCount++;
+    Image img = LoadImage(path);
+    if (img.data == NULL) {
+        img = GenImageColor(1024, 1024, CLITERAL(Color){60, 120, 220, 255});
+        ImageDrawText(&img, path, 8, 8, 128, WHITE);
+    }
+    ImageAlphaPremultiply(&img);
+    renderer->textures[renderer->textureCount] = LoadTextureFromImage(img);
+    UnloadImage(img);
+    SetTextureFilter(renderer->textures[renderer->textureCount], TEXTURE_FILTER_POINT);
+    strncpy(renderer->texturePaths[renderer->textureCount], path, MAX_FILE_PATH_LENGTH - 1);
+    renderer->texturePaths[renderer->textureCount][MAX_FILE_PATH_LENGTH - 1] = '\0';
+    return renderer->textureCount++;
 }
 
-static inline void BonesRenderer_SetAtlasDimensions(BonesRenderer* renderer, int cols, int rows) {
-	if (renderer) {
-		renderer->physCols = cols;
-		renderer->physRows = rows;
-	}
-}
+static inline BonesRenderConfig BonesGetDefaultRenderConfig(void) { return g_renderConfig; }
+static inline void BonesSetRenderConfig(const BonesRenderConfig* config) { if (config) g_renderConfig = *config; }
 
 static void DrawQuadTextured3D(Texture2D tex, Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3,
-		float u0, float v0t, float u1, float v1t) {
-	rlSetTexture(tex.id);
-	rlBegin(RL_QUADS);
-	rlColor4ub(255, 255, 255, 255);
-	rlTexCoord2f(u0, v0t); rlVertex3f(v0.x, v0.y, v0.z);
-	rlTexCoord2f(u1, v0t); rlVertex3f(v1.x, v1.y, v1.z);
-	rlTexCoord2f(u1, v1t); rlVertex3f(v2.x, v2.y, v2.z);
-	rlTexCoord2f(u0, v1t); rlVertex3f(v3.x, v3.y, v3.z);
-	rlEnd();
-	rlSetTexture(0);
+                                float u0, float v0t, float u1, float v1t) {
+    rlSetTexture(tex.id);
+    rlBegin(RL_QUADS);
+    rlColor4ub(255, 255, 255, 255);
+    rlTexCoord2f(u0, v0t); rlVertex3f(v0.x, v0.y, v0.z);
+    rlTexCoord2f(u1, v0t); rlVertex3f(v1.x, v1.y, v1.z);
+    rlTexCoord2f(u1, v1t); rlVertex3f(v2.x, v2.y, v2.z);
+    rlTexCoord2f(u0, v1t); rlVertex3f(v3.x, v3.y, v3.z);
+    rlEnd();
+    rlSetTexture(0);
 }
 
 static void DrawQuadTextured3D_UVs(Texture2D tex, Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3,
-		Vector2 uv0, Vector2 uv1, Vector2 uv2, Vector2 uv3) {
-	rlSetTexture(tex.id);
-	rlBegin(RL_QUADS);
-	rlColor4ub(255, 255, 255, 255);
-	rlTexCoord2f(uv0.x, uv0.y); rlVertex3f(v0.x, v0.y, v0.z);
-	rlTexCoord2f(uv1.x, uv1.y); rlVertex3f(v1.x, v1.y, v1.z);
-	rlTexCoord2f(uv2.x, uv2.y); rlVertex3f(v2.x, v2.y, v2.z);
-	rlTexCoord2f(uv3.x, uv3.y); rlVertex3f(v3.x, v3.y, v3.z);
-	rlEnd();
-	rlSetTexture(0);
+                                    Vector2 uv0, Vector2 uv1, Vector2 uv2, Vector2 uv3) {
+    rlSetTexture(tex.id);
+    rlBegin(RL_QUADS);
+    rlColor4ub(255, 255, 255, 255);
+    rlTexCoord2f(uv0.x, uv0.y); rlVertex3f(v0.x, v0.y, v0.z);
+    rlTexCoord2f(uv1.x, uv1.y); rlVertex3f(v1.x, v1.y, v1.z);
+    rlTexCoord2f(uv2.x, uv2.y); rlVertex3f(v2.x, v2.y, v2.z);
+    rlTexCoord2f(uv3.x, uv3.y); rlVertex3f(v3.x, v3.y, v3.z);
+    rlEnd();
+    rlSetTexture(0);
+}
+
+static inline Vector3 SafeNormalize(Vector3 v) {
+    float len = Vector3Length(v);
+    return (len < 1e-6f) ? (Vector3){0, 0, 1} : Vector3Scale(v, 1.0f / len);
+}
+
+static inline bool IsWristBone(const char* boneName) {
+    return boneName && (strcmp(boneName, "LWrist") == 0 || strcmp(boneName, "RWrist") == 0);
+}
+
+static inline Vector3 RotateVectorAroundAxis(Vector3 vector, Vector3 axis, float angle) {
+    if (fabsf(angle) < 1e-6f) return vector;
+    float cosA = cosf(angle), sinA = sinf(angle), omC = 1.0f - cosA;
+    axis = SafeNormalize(axis);
+    return (Vector3){
+        vector.x * (cosA + axis.x*axis.x*omC) + vector.y * (axis.x*axis.y*omC - axis.z*sinA) + vector.z * (axis.x*axis.z*omC + axis.y*sinA),
+        vector.x * (axis.y*axis.x*omC + axis.z*sinA) + vector.y * (cosA + axis.y*axis.y*omC) + vector.z * (axis.y*axis.z*omC - axis.x*sinA),
+        vector.x * (axis.z*axis.x*omC - axis.y*sinA) + vector.y * (axis.z*axis.y*omC + axis.x*sinA) + vector.z * (cosA + axis.z*axis.z*omC)
+    };
+}
+
+static inline Vector3 GetStablePerpendicularVector(Vector3 forward) {
+    forward = SafeNormalize(forward);
+    Vector3 candidates[3] = {{1,0,0},{0,1,0},{0,0,1}};
+    Vector3 best = candidates[1];
+    float minDot = fabsf(Vector3DotProduct(forward, candidates[1]));
+    for (int i = 0; i < 3; i++) {
+        float dot = fabsf(Vector3DotProduct(forward, candidates[i]));
+        if (dot < minDot) { minDot = dot; best = candidates[i]; }
+    }
+    return best;
+}
+
+static inline CachedBones CacheBones(const Person* person) {
+    CachedBones cache = {0};
+    for (int i = 0; i < person->boneCount; i++) {
+        const Bone* bone = &person->bones[i];
+        if (!bone->position.valid) continue;
+        const char* n = bone->name;
+        Vector3     p = bone->position.position;
+        if      (strcmp(n,"Neck")       == 0) { cache.neck       = p; cache.hasNeck       = true; }
+        else if (strcmp(n,"LShoulder")  == 0) { cache.lShoulder  = p; cache.hasLShoulder  = true; cache.shoulderCount++; }
+        else if (strcmp(n,"RShoulder")  == 0) { cache.rShoulder  = p; cache.hasRShoulder  = true; cache.shoulderCount++; }
+        else if (strcmp(n,"LHip")       == 0) { cache.lHip       = p; cache.hasLHip       = true; cache.hipCount++; }
+        else if (strcmp(n,"RHip")       == 0) { cache.rHip       = p; cache.hasRHip       = true; cache.hipCount++; }
+    }
+    return cache;
+}
+
+static inline Vector3 GetBonePositionByName(const Person* person, const char* boneName) {
+    if (!person || !boneName) return (Vector3){0,0,0};
+
+    if (strcmp(boneName, "FRONT_CALCULATED") == 0) {
+        Vector3 head = GetBonePositionByName(person, "Nose");
+        Vector3 neck = GetBonePositionByName(person, "Neck");
+        Vector3 dir  = Vector3Subtract(neck, head);
+        dir.y = 0.0f;
+        if (Vector3Length(dir) < 1e-6f) dir = (Vector3){0,0,1};
+        return Vector3Add(head, Vector3Scale(SafeNormalize(dir), -10.15f));
+    }
+    if (strcmp(boneName, "REAR_CALCULATED") == 0) {
+        Vector3 head = GetBonePositionByName(person, "HEAD_CALCULATED");
+        Vector3 neck = GetBonePositionByName(person, "Neck");
+        Vector3 dir  = SafeNormalize((Vector3){
+            -(neck.z - head.z), 0, neck.x - head.x
+        });
+        return Vector3Add(head, Vector3Scale(dir, 10.15f));
+    }
+    if (strcmp(boneName, "HEAD_CALCULATED") == 0) return CalculateHeadPosition(person);
+
+    for (int i = 0; i < person->boneCount; i++) {
+        const Bone* bone = &person->bones[i];
+        if (bone->position.valid && strcmp(bone->name, boneName) == 0)
+            return bone->position.position;
+    }
+    return (Vector3){0,0,0};
+}
+
+static inline Vector3 CalculateHeadPosition(const Person* person) {
+    if (!person || person->boneCount == 0) return (Vector3){0,0,0};
+
+    Vector3 eyeCenter = {0,0,0};
+    int     eyeCount  = 0;
+    Vector3 neckPos   = {0,0,0};
+    bool    hasNeck   = false;
+    Vector3 nosePos   = {0,0,0};
+    bool    hasNose   = false;
+    Vector3 lEar = {0,0,0}, rEar = {0,0,0};
+    bool    hasLEar = false, hasREar = false;
+
+    for (int i = 0; i < person->boneCount; i++) {
+        const Bone* bone = &person->bones[i];
+        if (!bone->position.valid) continue;
+        const char* n = bone->name;
+        Vector3     p = bone->position.position;
+        if      (strcmp(n,"Neck") == 0)   { neckPos = p; hasNeck = true; }
+        else if (strcmp(n,"Nose") == 0)   { nosePos = p; hasNose = true; }
+        else if (strcmp(n,"LEye") == 0 || strcmp(n,"REye") == 0) { eyeCenter = Vector3Add(eyeCenter, p); eyeCount++; }
+        else if (strcmp(n,"LEar") == 0)   { lEar = p; hasLEar = true; }
+        else if (strcmp(n,"REar") == 0)   { rEar = p; hasREar = true; }
+    }
+    if (eyeCount > 0) eyeCenter = Vector3Scale(eyeCenter, 1.0f / eyeCount);
+
+    if (hasNose && eyeCount >= 2) {
+        Vector3 earCenter = (hasLEar && hasREar) ? Vector3Scale(Vector3Add(lEar, rEar), 0.5f) : eyeCenter;
+        Vector3 faceCenter = Vector3Scale(Vector3Add(eyeCenter, earCenter), 0.5f);
+        Vector3 frontDir = SafeNormalize(Vector3Subtract(nosePos, earCenter));
+
+        Vector3 headPos = Vector3Add(faceCenter, Vector3Scale(frontDir, HEAD_DEPTH_OFFSET));
+        float   vertComp = Vector3Subtract(nosePos, eyeCenter).y;
+        float   upOff    = (vertComp < -0.01f) ? 0.015f : (vertComp > 0.01f) ? 0.045f : 0.03f;
+        headPos.y += upOff;
+        return headPos;
+    }
+    if (eyeCount > 0 && hasNeck) {
+        return (Vector3){
+            neckPos.x * 0.7f + eyeCenter.x * 0.3f,
+            eyeCenter.y + 0.03f,
+            hasNose ? neckPos.z * 0.8f + nosePos.z * 0.2f : neckPos.z * 0.9f + eyeCenter.z * 0.1f - 0.01f
+        };
+    }
+    return (Vector3){0,0,0};
+}
+
+static inline Vector3 CalculateChestPosition(const Person* person) {
+    if (!person || person->boneCount == 0) return (Vector3){0,0,0};
+    CachedBones c = CacheBones(person);
+
+    if (c.hasNeck && c.shoulderCount > 0) {
+        Vector3 shoulderCenter = (c.hasLShoulder && c.hasRShoulder)
+            ? Vector3Scale(Vector3Add(c.lShoulder, c.rShoulder), 0.5f)
+            : (c.hasLShoulder ? c.lShoulder : c.rShoulder);
+        return (Vector3){
+            (c.neck.x + shoulderCenter.x) * 0.5f,
+            c.neck.y + CHEST_OFFSET_Y,
+            c.neck.z + CHEST_OFFSET_Z
+        };
+    }
+    if (c.shoulderCount > 0 || c.hasNeck) {
+        Vector3 total = {0,0,0}; int count = 0;
+        if (c.hasNeck)       { total = Vector3Add(total, c.neck);       count++; }
+        if (c.hasLShoulder)  { total = Vector3Add(total, c.lShoulder);  count++; }
+        if (c.hasRShoulder)  { total = Vector3Add(total, c.rShoulder);  count++; }
+        Vector3 result = Vector3Scale(total, 1.0f / count);
+        result.y += CHEST_FALLBACK_Y;
+        return result;
+    }
+    return (Vector3){0,0,0};
+}
+
+static inline Vector3 CalculateHipPosition(const Person* person) {
+    if (!person || person->boneCount == 0) return (Vector3){0,0,0};
+    CachedBones c = CacheBones(person);
+    if (c.hipCount == 0) return (Vector3){0,0,0};
+
+    Vector3 hipCenter = {0,0,0}; int hipPtCount = 0;
+    if (c.hasLHip) { hipCenter = Vector3Add(hipCenter, c.lHip); hipPtCount++; }
+    if (c.hasRHip) { hipCenter = Vector3Add(hipCenter, c.rHip); hipPtCount++; }
+    hipCenter = Vector3Scale(hipCenter, 1.0f / hipPtCount);
+
+    Vector3 torsoCenter = Vector3Add(hipCenter, hipCenter); int tcc = 2;
+    if (c.shoulderCount > 0) {
+        Vector3 sc = {0,0,0}; int spc = 0;
+        if (c.hasLShoulder) { sc = Vector3Add(sc, c.lShoulder); spc++; }
+        if (c.hasRShoulder) { sc = Vector3Add(sc, c.rShoulder); spc++; }
+        torsoCenter = Vector3Add(torsoCenter, Vector3Scale(sc, 1.0f / spc)); tcc++;
+    }
+    torsoCenter = Vector3Scale(torsoCenter, 1.0f / tcc);
+
+    Vector3 hipDir = {0,0,1};
+    if (c.shoulderCount > 0) {
+        Vector3 sc = {0,0,0}; int spc = 0;
+        if (c.hasLShoulder) { sc = Vector3Add(sc, c.lShoulder); spc++; }
+        if (c.hasRShoulder) { sc = Vector3Add(sc, c.rShoulder); spc++; }
+        sc = Vector3Scale(sc, 1.0f / spc);
+        Vector3 spineVec = Vector3Subtract(hipCenter, sc);
+        float   len      = Vector3Length(spineVec);
+        if (len > 1e-6f) hipDir = Vector3Scale(spineVec, 1.0f / len);
+    }
+
+    Vector3 hipPos   = Vector3Add(torsoCenter, Vector3Scale(hipDir, 0.01f));
+    Vector3 chestPos = CalculateChestPosition(person);
+    if (Vector3Length(chestPos) > 0.0f) {
+        Vector3 chestToHip = Vector3Subtract(hipCenter, chestPos);
+        float   dist       = Vector3Length(chestToHip);
+        if (dist > 0.12f)
+            hipPos = Vector3Add(chestPos, Vector3Scale(Vector3Scale(chestToHip, 1.0f/dist), 0.10f));
+    }
+    hipPos.y += HIP_OFFSET_Y;
+    return hipPos;
+}
+
+static inline VirtualSpine CalculateVirtualSpine(const Person* person) {
+    VirtualSpine spine = {0};
+    if (!person || person->boneCount == 0) return spine;
+    CachedBones c = CacheBones(person);
+    if (!c.hasLShoulder || !c.hasRShoulder || !c.hasLHip || !c.hasRHip) return spine;
+
+    spine.chestPosition = CalculateChestPosition(person);
+    spine.hipPosition   = CalculateHipPosition(person);
+
+    Vector3 spineVec = Vector3Subtract(spine.chestPosition, spine.hipPosition);
+    float   spineLen = Vector3Length(spineVec);
+    if (spineLen < 1e-6f) return spine;
+    spine.spineDirection = Vector3Scale(spineVec, 1.0f / spineLen);
+
+    Vector3 shoulderLine = Vector3Subtract(c.rShoulder, c.lShoulder);
+    float   shoulderLen  = Vector3Length(shoulderLine);
+    if (shoulderLen < 1e-6f) return spine;
+    spine.spineRight   = Vector3Scale(shoulderLine, 1.0f / shoulderLen);
+    spine.spineForward = Vector3CrossProduct(spine.spineRight, spine.spineDirection);
+
+    float fwdLen = Vector3Length(spine.spineForward);
+    if (fwdLen < 1e-6f) return spine;
+    spine.spineForward = Vector3Scale(spine.spineForward, 1.0f / fwdLen);
+    spine.spineRight   = Vector3CrossProduct(spine.spineDirection, spine.spineForward);
+    float rightLen = Vector3Length(spine.spineRight);
+    if (rightLen > 1e-6f) spine.spineRight = Vector3Scale(spine.spineRight, 1.0f / rightLen);
+
+    spine.valid = true;
+    return spine;
+}
+
+static inline TorsoOrientation CreateOrientation(Vector3 pos, Vector3 forward, Vector3 up, Vector3 right) {
+    TorsoOrientation o = {0};
+    o.position = pos; o.forward = forward; o.up = up; o.right = right;
+    o.yaw      = atan2f(forward.x, forward.z);
+    o.pitch    = atan2f(-forward.y, sqrtf(forward.x*forward.x + forward.z*forward.z));
+    o.roll     = atan2f(right.y,    sqrtf(right.x*right.x     + right.z*right.z));
+    o.valid    = true;
+    return o;
+}
+
+static inline TorsoOrientation CalculateChestOrientation(const Person* person) {
+    VirtualSpine spine = CalculateVirtualSpine(person);
+    if (!spine.valid) {
+        Vector3 pos = CalculateChestPosition(person);
+        return (Vector3Length(pos) > 0.0f)
+            ? CreateOrientation(pos, (Vector3){0,0,1}, (Vector3){0,1,0}, (Vector3){1,0,0})
+            : (TorsoOrientation){0};
+    }
+    return CreateOrientation(spine.chestPosition, spine.spineForward, spine.spineDirection, spine.spineRight);
+}
+
+static inline TorsoOrientation CalculateHipOrientation(const Person* person) {
+    VirtualSpine spine = CalculateVirtualSpine(person);
+    if (!spine.valid) {
+        Vector3 pos = CalculateHipPosition(person);
+        return (Vector3Length(pos) > 0.0f)
+            ? CreateOrientation(pos, (Vector3){0,0,1}, (Vector3){0,1,0}, (Vector3){1,0,0})
+            : (TorsoOrientation){0};
+    }
+    return CreateOrientation(spine.hipPosition, spine.spineForward, spine.spineDirection, spine.spineRight);
+}
+
+static inline HeadOrientation CalculateHeadOrientation(const Person* person) {
+    HeadOrientation o = {.valid = false};
+    if (!person || person->boneCount == 0) return o;
+
+    Vector3 nose = {0,0,0}, lEye = {0,0,0}, rEye = {0,0,0}, lEar = {0,0,0}, rEar = {0,0,0};
+    bool hasNose = false, hasLEye = false, hasREye = false, hasLEar = false, hasREar = false;
+
+    for (int i = 0; i < person->boneCount; i++) {
+        const Bone* bone = &person->bones[i];
+        if (!bone->position.valid) continue;
+        const char* n = bone->name;
+        if      (strcmp(n,"Nose") == 0) { nose = bone->position.position; hasNose = true; }
+        else if (strcmp(n,"LEye") == 0) { lEye = bone->position.position; hasLEye = true; }
+        else if (strcmp(n,"REye") == 0) { rEye = bone->position.position; hasREye = true; }
+        else if (strcmp(n,"LEar") == 0) { lEar = bone->position.position; hasLEar = true; }
+        else if (strcmp(n,"REar") == 0) { rEar = bone->position.position; hasREar = true; }
+    }
+
+    if (!hasNose || !((hasLEye && hasREye) || (hasLEar && hasREar))) {
+        Vector3 fallback = CalculateHeadPosition(person);
+        if (Vector3Length(fallback) > 0.0f) { o.position = fallback; o.valid = true; }
+        return o;
+    }
+
+    o.position = CalculateHeadPosition(person);
+    Vector3 rightVec, backRef;
+
+    if (hasLEar && hasREar)       { rightVec = Vector3Normalize(Vector3Subtract(rEar, lEar));  backRef = Vector3Scale(Vector3Add(lEar, rEar), 0.5f); }
+    else if (hasLEye && hasREye)  { rightVec = Vector3Normalize(Vector3Subtract(rEye, lEye));  backRef = Vector3Scale(Vector3Add(lEye, rEye), 0.5f); }
+    else                          { rightVec = (Vector3){1,0,0}; backRef = o.position; }
+
+    Vector3 forward = Vector3Normalize(Vector3Subtract(nose, backRef));
+    if (Vector3Length(forward) < 1e-6f) forward = (Vector3){0,0,1};
+    Vector3 up = Vector3Normalize(Vector3CrossProduct(rightVec, forward));
+    if (Vector3Length(up) < 1e-6f) up = (Vector3){0,1,0};
+    rightVec = Vector3Normalize(Vector3CrossProduct(forward, up));
+
+    o.forward = forward; o.up = up; o.right = rightVec;
+    o.yaw     = atan2f(forward.x, forward.z);
+    o.pitch   = atan2f(-forward.y, sqrtf(forward.x*forward.x + forward.z*forward.z));
+    o.roll    = atan2f(up.x, sqrtf(up.y*up.y + up.z*up.z));
+    o.valid   = true;
+    return o;
+}
+
+static inline BoneOrientation CalculateBoneOrientation(const char* boneName, const Person* person, Vector3 bonePosition) {
+    BoneOrientation o = {0};
+    o.position = bonePosition;
+    if (!boneName || !person) return o;
+
+    const char* primaryConn   = NULL;
+    const char* secondaryConn = NULL;
+    bool        reverseForward = false;
+    for (int i = 0; BONE_ORIENTATIONS[i].boneName[0] != '\0'; i++) {
+        if (strcmp(BONE_ORIENTATIONS[i].boneName, boneName) == 0) {
+            primaryConn    = BONE_ORIENTATIONS[i].primaryConnection;
+            secondaryConn  = BONE_ORIENTATIONS[i].secondaryConnection;
+            reverseForward = BONE_ORIENTATIONS[i].reverseForward;
+            break;
+        }
+    }
+
+    Vector3 forward = {0,0,1}, up = {0,1,0}, right = {1,0,0};
+
+    if (primaryConn && primaryConn[0]) {
+        Vector3 primaryPos  = GetBonePositionByName(person, primaryConn);
+        float   primaryDist = Vector3Length(Vector3Subtract(primaryPos, bonePosition));
+        if (primaryDist > 1e-4f) {
+            forward = Vector3Subtract(primaryPos, bonePosition);
+            if (reverseForward) forward = Vector3Scale(forward, -1.0f);
+            forward = SafeNormalize(forward);
+
+            if (secondaryConn && secondaryConn[0]) {
+                Vector3 secPos  = GetBonePositionByName(person, secondaryConn);
+                float   secDist = Vector3Length(Vector3Subtract(secPos, bonePosition));
+                if (secDist > 1e-4f) {
+                    Vector3 toSec = SafeNormalize(Vector3Subtract(secPos, bonePosition));
+                    right = Vector3CrossProduct(forward, toSec);
+                    if (Vector3Length(right) > 1e-4f) {
+                        right = SafeNormalize(right);
+                        up    = SafeNormalize(Vector3CrossProduct(right, forward));
+                    } else {
+                        Vector3 tmp = GetStablePerpendicularVector(forward);
+                        right = SafeNormalize(Vector3CrossProduct(forward, tmp));
+                        up    = SafeNormalize(Vector3CrossProduct(right, forward));
+                    }
+                } else {
+                    Vector3 tmp = GetStablePerpendicularVector(forward);
+                    right = SafeNormalize(Vector3CrossProduct(forward, tmp));
+                    up    = SafeNormalize(Vector3CrossProduct(right, forward));
+                }
+            } else {
+                Vector3 tmp = GetStablePerpendicularVector(forward);
+                right = SafeNormalize(Vector3CrossProduct(forward, tmp));
+                up    = SafeNormalize(Vector3CrossProduct(right, forward));
+            }
+        }
+    }
+
+    for (int i = 0; BONE_ANGLE_OFFSETS[i].boneName[0] != '\0'; i++) {
+        if (strcmp(BONE_ANGLE_OFFSETS[i].boneName, boneName) != 0) continue;
+        float yawR   = BONE_ANGLE_OFFSETS[i].yawOffset   * (PI / 180.0f);
+        float pitchR = BONE_ANGLE_OFFSETS[i].pitchOffset * (PI / 180.0f);
+        float rollR  = BONE_ANGLE_OFFSETS[i].rollOffset  * (PI / 180.0f);
+        if (fabsf(yawR)   > 1e-6f) { forward = RotateVectorAroundAxis(forward, up,      yawR);   right = RotateVectorAroundAxis(right, up,      yawR);   }
+        if (fabsf(pitchR) > 1e-6f) { forward = RotateVectorAroundAxis(forward, right,   pitchR); up    = RotateVectorAroundAxis(up,    right,   pitchR); }
+        if (fabsf(rollR)  > 1e-6f) { right   = RotateVectorAroundAxis(right,   forward, rollR);  up    = RotateVectorAroundAxis(up,    forward, rollR);  }
+        break;
+    }
+
+    forward = SafeNormalize(forward);
+    right   = SafeNormalize(Vector3CrossProduct(forward, up));
+    up      = SafeNormalize(Vector3CrossProduct(right, forward));
+
+    o.forward = forward; o.up = up; o.right = right;
+    o.yaw   = atan2f(forward.x, forward.z);
+    float horizDist = sqrtf(forward.x*forward.x + forward.z*forward.z);
+    o.pitch = atan2f(-forward.y, fmaxf(horizDist, 1e-6f));
+    Vector3 worldUp = {0,1,0};
+    Vector3 projR   = SafeNormalize(Vector3Subtract(right, Vector3Scale(forward, Vector3DotProduct(right, forward))));
+    o.roll  = atan2f(Vector3DotProduct(projR, worldUp), Vector3DotProduct(projR, Vector3CrossProduct(forward, worldUp)));
+    o.valid = true;
+    return o;
+}
+
+static inline bool ShouldUseVariableHeight(const char* boneName) {
+    if (!boneName) return false;
+    static const char* bones[] = {"LShoulder","LElbow","RShoulder","RElbow","LHip","LKnee","RHip","RKnee"};
+    for (int i = 0; i < 8; i++) if (strcmp(boneName, bones[i]) == 0) return true;
+    return false;
+}
+
+static inline bool ShouldFlipBoneTexture(const char* boneName) {
+    if (!boneName) return false;
+    static const char* bones[] = {"LShoulder","LElbow","RShoulder","RElbow","LHip","LKnee","RHip","RKnee"};
+    for (int i = 0; i < 8; i++) if (strcmp(boneName, bones[i]) == 0) return true;
+    return false;
+}
+
+static inline bool ShouldRenderHead(const Person* person) {
+    if (!person || !person->active) return false;
+    int n = 0;
+    for (int i = 0; i < person->boneCount; i++) {
+        const Bone* b = &person->bones[i];
+        if (!b->position.valid) continue;
+        char c = b->name[0];
+        if ((c == 'N' && strcmp(b->name,"Nose") == 0) ||
+            ((c == 'L' || c == 'R') && (strstr(b->name,"Eye") || strstr(b->name,"Ear")))) n++;
+    }
+    return n >= 2;
+}
+
+static inline bool ShouldRenderChest(const Person* person) {
+    return person && person->active && CacheBones(person).shoulderCount >= 1;
+}
+
+static inline bool ShouldRenderHip(const Person* person) {
+    return person && person->active && CacheBones(person).hipCount >= 1;
+}
+
+static inline bool GetBoneConnectionsWithPriority(const char* boneName, char connections[3][32], float priorities[3]) {
+    for (int i = 0; BONE_CONNECTIONS[i].boneName[0]; i++) {
+        if (strcmp(BONE_CONNECTIONS[i].boneName, boneName) != 0) continue;
+        for (int j = 0; j < 3; j++) {
+            strncpy(connections[j], BONE_CONNECTIONS[i].connections[j], 31);
+            connections[j][31] = '\0';
+            priorities[j] = BONE_CONNECTIONS[i].priority[j];
+        }
+        return true;
+    }
+    return false;
+}
+
+static inline Vector3 CalculateBoneMidpoint(const char* boneName, const Person* person) {
+    if (!person || !boneName) return (Vector3){0,0,0};
+    if (ShouldUseVariableHeight(boneName)) return GetBonePositionByName(person, boneName);
+
+    if (strcmp(boneName, "Neck") == 0) {
+        Vector3 neck = GetBonePositionByName(person, "Neck");
+        if (neck.x == 0 && neck.y == 0 && neck.z == 0) return neck;
+        Vector3 head = CalculateHeadPosition(person);
+        if (head.x == 0 && head.y == 0 && head.z == 0) return neck;
+
+        Vector3 lS = GetBonePositionByName(person, "LShoulder");
+        Vector3 rS = GetBonePositionByName(person, "RShoulder");
+        Vector3 center = neck;
+        if ((lS.x||lS.y||lS.z) && (rS.x||rS.y||rS.z))
+            center = (Vector3){(lS.x+rS.x)*0.5f, (lS.y+rS.y)*0.5f, (lS.z+rS.z)*0.5f};
+        return (Vector3){(center.x+head.x)*0.5f, (center.y+head.y)*0.5f, (center.z+head.z)*0.5f};
+    }
+
+    const char* connName = NULL; float projFactor = 1.0f;
+    for (int i = 0; MIDPOINT_CONNECTIONS[i].boneName[0] != '\0'; i++) {
+        if (strcmp(MIDPOINT_CONNECTIONS[i].boneName, boneName) == 0) {
+            connName   = MIDPOINT_CONNECTIONS[i].connectedBone;
+            projFactor = MIDPOINT_CONNECTIONS[i].projectionFactor;
+            break;
+        }
+    }
+    if (!connName) return GetBonePositionByName(person, boneName);
+
+    Vector3 bonePos = GetBonePositionByName(person, boneName);
+    Vector3 connPos = GetBonePositionByName(person, connName);
+
+    if (strstr(boneName, "Wrist") && projFactor != 1.0f) {
+        if ((bonePos.x||bonePos.y||bonePos.z) && (connPos.x||connPos.y||connPos.z)) {
+            Vector3 dir = Vector3Subtract(bonePos, connPos);
+            return Vector3Add(connPos, Vector3Scale(dir, projFactor));
+        }
+        return bonePos;
+    }
+    if (strstr(boneName, "Ankle") && strstr(connName, "FOOT_FORWARD")) {
+        if (bonePos.x||bonePos.y||bonePos.z)
+            return (Vector3){bonePos.x, bonePos.y - 0.025f, bonePos.z + 0.008f};
+        return bonePos;
+    }
+    if (!(bonePos.x||bonePos.y||bonePos.z)) return (Vector3){0,0,0};
+    if (!(connPos.x||connPos.y||connPos.z))  return bonePos;
+    return (Vector3){(bonePos.x+connPos.x)*0.5f, (bonePos.y+connPos.y)*0.5f, (bonePos.z+connPos.z)*0.5f};
+}
+
+static inline bool ResizeRenderBonesArray(BoneRenderData** renderBones, int* renderBonesCapacity, int newCapacity) {
+    if (newCapacity <= 0 || newCapacity > 10000 || newCapacity <= *renderBonesCapacity) return true;
+    BoneRenderData* newArr = realloc(*renderBones, sizeof(BoneRenderData) * newCapacity);
+    if (!newArr) return false;
+    memset(newArr + *renderBonesCapacity, 0, sizeof(BoneRenderData) * (newCapacity - *renderBonesCapacity));
+    *renderBones         = newArr;
+    *renderBonesCapacity = newCapacity;
+    return true;
+}
+
+static inline void EnrichBoneRenderDataWithOrientation(BoneRenderData* renderBone, const Person* person) {
+    if (!renderBone || !person) return;
+    if (IsWristBone(renderBone->boneName)) { renderBone->orientation.valid = false; return; }
+
+    BoneOrientation orient = CalculateBoneOrientation(renderBone->boneName, person, renderBone->position);
+    if (orient.valid) {
+        renderBone->orientation = orient;
+    } else {
+        renderBone->orientation.position = renderBone->position;
+        renderBone->orientation.forward  = (Vector3){0,0,1};
+        renderBone->orientation.up       = (Vector3){0,1,0};
+        renderBone->orientation.right    = (Vector3){1,0,0};
+        renderBone->orientation.valid    = true;
+    }
+}
+
+static inline BoneRenderData* FindRenderBoneByName(BoneRenderData* bones, int boneCount, const char* boneName) {
+    for (int i = 0; i < boneCount; i++)
+        if (strcmp(bones[i].boneName, boneName) == 0) return &bones[i];
+    return NULL;
+}
+
+static inline const Person* FindPersonByBoneName(const AnimationFrame* frame, const char* boneName) {
+    if (!frame || !boneName) return NULL;
+    for (int p = 0; p < frame->personCount; p++) {
+        const Person* person = &frame->persons[p];
+        if (!person->active) continue;
+        for (int b = 0; b < person->boneCount; b++)
+            if (strcmp(person->bones[b].name, boneName) == 0) return person;
+    }
+    return NULL;
+}
+
+static inline BoneConnectionPositions GetBoneConnectionPositionsEx(const BoneRenderData* boneData, const Person* person) {
+    BoneConnectionPositions result = {0};
+    if (!boneData || !boneData->valid) return result;
+    result.pos0 = boneData->position;
+    result.pos1 = result.pos0;
+
+    for (int i = 0; BONE_CONNECTIONS[i].boneName[0] != '\0'; i++) {
+        if (strcmp(BONE_CONNECTIONS[i].boneName, boneData->boneName) != 0) continue;
+        for (int k = 1; k < 3; k++) {
+            const char* neighborName = BONE_CONNECTIONS[i].connections[k];
+            if (!neighborName || !neighborName[0] || strcmp(neighborName, boneData->boneName) == 0) continue;
+            if (person) {
+                Vector3 p = GetBonePositionByName(person, neighborName);
+                if (Vector3Length(p) > 1e-6f) { result.pos1 = p; return result; }
+            }
+        }
+        return result;
+    }
+    return result;
+}
+
+static inline void CollectBonesForRendering(const BonesAnimation* animation, Camera camera,
+        BoneRenderData** renderBones, int* renderBonesCount, int* renderBonesCapacity,
+        BoneConfig* boneConfigs, int boneConfigCount, TextureSetCollection* textureSets, OrnamentSystem* ornaments)
+{
+    *renderBonesCount = 0;
+    if (!animation->isLoaded) return;
+    int curFrame = BonesGetCurrentFrame(animation);
+    if (!BonesIsValidFrame(animation, curFrame)) return;
+    const AnimationFrame* frame = &animation->frames[curFrame];
+
+    int estimatedBones = 0;
+    for (int p = 0; p < frame->personCount; p++)
+        if (frame->persons[p].active) estimatedBones += frame->persons[p].boneCount;
+    if (!ResizeRenderBonesArray(renderBones, renderBonesCapacity, estimatedBones + 10)) return;
+
+    static char processedBones[2000][MAX_BONE_NAME_LENGTH + 20];
+    int processedCount = 0;
+
+    for (int p = 0; p < frame->personCount; p++) {
+        const Person* person = &frame->persons[p];
+        if (!person->active) continue;
+
+        for (int b = 0; b < person->boneCount; b++) {
+            const Bone* bone = &person->bones[b];
+            if (!bone->position.valid || !bone->visible || !BonesIsPositionValid(bone->position.position)) continue;
+
+            BoneConfig* cfg = FindBoneConfig(boneConfigs, boneConfigCount, bone->name);
+            if (!cfg) {
+                char fc = bone->name[0];
+                bool known = (fc == 'N' && strstr(bone->name,"Nose")) ||
+                    ((fc == 'L' || fc == 'R') && (strstr(bone->name,"Eye") || strstr(bone->name,"Ear") ||
+                     strstr(bone->name,"Shoulder") || strstr(bone->name,"Elbow") ||
+                     strstr(bone->name,"Wrist") || strstr(bone->name,"Hip") ||
+                     strstr(bone->name,"Knee") || strstr(bone->name,"Ankle"))) ||
+                    (fc == 'H' && (strstr(bone->name,"Head") || strstr(bone->name,"Hip"))) ||
+                    (fc == 'C' && strstr(bone->name,"Chest")) ||
+                    (fc == 'S' && (strstr(bone->name,"Shoulder") || strstr(bone->name,"Spine")));
+                if (!known) continue;
+            } else if (cfg->visibleMode == 0) continue;
+
+            char boneKey[MAX_BONE_NAME_LENGTH + 20];
+            int keyLen = snprintf(boneKey, sizeof(boneKey), "%s_%s", person->personId, bone->name);
+            bool alreadyProcessed = false;
+            for (int i = 0; i < processedCount; i++) {
+                if (memcmp(processedBones[i], boneKey, keyLen + 1) == 0) { alreadyProcessed = true; break; }
+            }
+            if (alreadyProcessed) continue;
+            if (processedCount < 2000) { memcpy(processedBones[processedCount++], boneKey, keyLen + 1); }
+
+            Vector3 midPos = CalculateBoneMidpoint(bone->name, person);
+            if (!BonesIsPositionValid(midPos)) continue;
+            float distance = Vector3Distance(camera.position, midPos);
+            if (distance > 50.0f) continue;
+
+            BoneRenderData* rd = &(*renderBones)[*renderBonesCount];
+            rd->position = midPos;
+            rd->distance = distance;
+            rd->valid    = true;
+
+            const char* activeTexture = (textureSets && textureSets->loaded)
+                ? BonesTextureSets_GetActiveTexture(textureSets, bone->name) : NULL;
+
+            if (activeTexture) {
+                strncpy(rd->texturePath, activeTexture, MAX_FILE_PATH_LENGTH - 1);
+                rd->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
+                rd->visible       = cfg ? (cfg->visibleMode != 0) : true;
+                rd->isAsymmetric  = cfg ? (cfg->visibleMode == 2) : false;
+                rd->size          = cfg ? cfg->size : 0.35f;
+            } else if (cfg) {
+                strncpy(rd->texturePath, cfg->texturePath, MAX_FILE_PATH_LENGTH - 1);
+                rd->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
+                rd->visible      = (cfg->visibleMode != 0);
+                rd->isAsymmetric = (cfg->visibleMode == 2);
+                rd->size         = cfg->size;
+            } else {
+                strncpy(rd->texturePath, GetTexturePathForBone(boneConfigs, boneConfigCount, bone->name, textureSets), MAX_FILE_PATH_LENGTH - 1);
+                rd->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
+                rd->visible      = IsBoneVisible(boneConfigs, boneConfigCount, bone->name);
+                rd->isAsymmetric = false;
+                rd->size         = GetBoneSize(boneConfigs, boneConfigCount, bone->name);
+            }
+
+            strncpy(rd->boneName,  bone->name,       MAX_BONE_NAME_LENGTH - 1); rd->boneName[MAX_BONE_NAME_LENGTH - 1] = '\0';
+            strncpy(rd->personId,  person->personId, 15);                        rd->personId[15] = '\0';
+            EnrichBoneRenderDataWithOrientation(rd, person);
+            (*renderBonesCount)++;
+        }
+    }
+
+    if (ornaments && ornaments->loaded)
+        Ornaments_CollectForRendering(ornaments, renderBones, renderBonesCount, renderBonesCapacity, camera);
+
+    for (int i = 0; i < *renderBonesCount - 1; i++)
+        for (int j = 0; j < *renderBonesCount - i - 1; j++)
+            if ((*renderBones)[j].distance < (*renderBones)[j+1].distance) {
+                BoneRenderData tmp = (*renderBones)[j];
+                (*renderBones)[j]   = (*renderBones)[j+1];
+                (*renderBones)[j+1] = tmp;
+            }
+}
+
+static inline void CollectHeadsForRendering(const BonesAnimation* animation, HeadRenderData** heads,
+        int* headCount, int* headCapacity, BoneConfig* boneConfigs, int boneConfigCount, TextureSetCollection* textureSets)
+{
+    *headCount = 0;
+    if (!animation->isLoaded) return;
+    int curFrame = BonesGetCurrentFrame(animation);
+    if (!BonesIsValidFrame(animation, curFrame)) return;
+    const AnimationFrame* frame = &animation->frames[curFrame];
+
+    if (*headCapacity < frame->personCount) {
+        HeadRenderData* newArr = (HeadRenderData*)realloc(*heads, sizeof(HeadRenderData) * frame->personCount);
+        if (!newArr) return;
+        *heads        = newArr;
+        *headCapacity = frame->personCount;
+    }
+
+    static char processed[200][25]; int processedCount = 0;
+
+    for (int p = 0; p < frame->personCount; p++) {
+        const Person* person = &frame->persons[p];
+        if (!ShouldRenderHead(person)) continue;
+
+        char key[25]; snprintf(key, sizeof(key), "%s_head", person->personId);
+        bool already = false;
+        for (int i = 0; i < processedCount; i++) if (strcmp(processed[i], key) == 0) { already = true; break; }
+        if (already) continue;
+        if (processedCount < 200) { strncpy(processed[processedCount], key, 24); processed[processedCount++][24] = '\0'; }
+
+        HeadRenderData* head = &(*heads)[*headCount];
+        memset(head, 0, sizeof(HeadRenderData));
+        head->position    = CalculateHeadPosition(person);
+        head->orientation = CalculateHeadOrientation(person);
+        head->valid       = true;
+        head->visible     = true;
+
+        const char* activeTexture = (textureSets && textureSets->loaded)
+            ? BonesTextureSets_GetActiveTexture(textureSets, "Head") : NULL;
+
+        if (activeTexture) {
+            strncpy(head->texturePath, activeTexture, MAX_FILE_PATH_LENGTH - 1);
+            head->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
+        } else {
+            BoneConfig* cfg = FindBoneConfig(boneConfigs, boneConfigCount, "Head");
+            if (cfg) { strncpy(head->texturePath, cfg->texturePath, MAX_FILE_PATH_LENGTH - 1); head->size = cfg->size; }
+            else      { strncpy(head->texturePath, "data/textures/hil/Head.png", MAX_FILE_PATH_LENGTH - 1); head->size = 0.25f; }
+            head->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
+        }
+        if (activeTexture) {
+            BoneConfig* cfg = FindBoneConfig(boneConfigs, boneConfigCount, "Head");
+            head->size = cfg ? cfg->size : 0.25f;
+        }
+
+        strncpy(head->personId, person->personId, 15); head->personId[15] = '\0';
+        (*headCount)++;
+    }
+}
+
+static inline void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData** torsos,
+        int* torsoCount, int* torsoCapacity, BoneConfig* boneConfigs, int boneConfigCount, TextureSetCollection* textureSets)
+{
+    *torsoCount = 0;
+    if (!animation->isLoaded) return;
+    int curFrame = BonesGetCurrentFrame(animation);
+    if (!BonesIsValidFrame(animation, curFrame)) return;
+    const AnimationFrame* frame = &animation->frames[curFrame];
+
+    int estimated = frame->personCount * 2;
+    if (*torsoCapacity < estimated) {
+        TorsoRenderData* newArr = (TorsoRenderData*)realloc(*torsos, sizeof(TorsoRenderData) * estimated);
+        if (!newArr) return;
+        *torsos        = newArr;
+        *torsoCapacity = estimated;
+    }
+
+    static char processed[200][25]; int processedCount = 0;
+
+    for (int p = 0; p < frame->personCount; p++) {
+        const Person* person = &frame->persons[p];
+
+        for (int isHip = 0; isHip <= 1; isHip++) {
+            if (isHip ? !ShouldRenderHip(person) : !ShouldRenderChest(person)) continue;
+
+            char key[25]; snprintf(key, sizeof(key), "%s_%s", person->personId, isHip ? "hip" : "chest");
+            bool already = false;
+            for (int i = 0; i < processedCount; i++) if (strcmp(processed[i], key) == 0) { already = true; break; }
+            if (already) continue;
+            if (processedCount < 200) { strncpy(processed[processedCount], key, 24); processed[processedCount++][24] = '\0'; }
+
+            TorsoRenderData* td = &(*torsos)[*torsoCount];
+            memset(td, 0, sizeof(TorsoRenderData));
+
+            if (isHip) {
+                td->position    = CalculateHipPosition(person);
+                td->orientation = CalculateHipOrientation(person);
+                td->type        = TORSO_HIP;
+            } else {
+                td->position    = CalculateChestPosition(person);
+                td->orientation = CalculateChestOrientation(person);
+                td->type        = TORSO_CHEST;
+            }
+            td->person = person;
+            if (!td->orientation.valid && Vector3Length(td->position) < 1e-6f) continue;
+            td->valid = true; td->visible = true;
+
+            const char* bonePart = isHip ? "Hip" : "Chest";
+            const char* defTex   = isHip ? "tex/Hip.png" : "tex/Chest.png";
+            float       defSize  = isHip ? 0.35f : 0.4f;
+
+            const char* activeTexture = (textureSets && textureSets->loaded)
+                ? BonesTextureSets_GetActiveTexture(textureSets, bonePart) : NULL;
+
+            BoneConfig* cfgPart = FindBoneConfig(boneConfigs, boneConfigCount, bonePart);
+            td->isAsymmetric = cfgPart ? (cfgPart->visibleMode == 2) : false;
+
+            if (activeTexture) {
+                strncpy(td->texturePath, activeTexture, MAX_FILE_PATH_LENGTH - 1);
+                td->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
+            } else {
+                BoneConfig* cfg = FindBoneConfig(boneConfigs, boneConfigCount, bonePart);
+                if (cfg) { strncpy(td->texturePath, cfg->texturePath, MAX_FILE_PATH_LENGTH - 1); td->size = cfg->size; td->visible = (cfg->visibleMode != 0); }
+                else      { strncpy(td->texturePath, defTex,           MAX_FILE_PATH_LENGTH - 1); td->size = defSize; }
+                td->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
+            }
+            if (activeTexture) {
+                BoneConfig* cfg = FindBoneConfig(boneConfigs, boneConfigCount, bonePart);
+                td->size    = cfg ? cfg->size                : defSize;
+                td->visible = cfg ? (cfg->visibleMode != 0) : true;
+            }
+
+            strncpy(td->personId, person->personId, 15); td->personId[15] = '\0';
+            (*torsoCount)++;
+        }
+    }
 }
 
 static inline Rectangle SrcFromLogical(Texture2D tex, int logicalCol, int logicalRow, int physCols, int physRows,
-		bool mirrored, bool* outMirrored) {
-	if (logicalCol < 0) logicalCol = 0;
-	if (logicalRow < 0) logicalRow = 0;
-	if (physCols <= 0) physCols = ATLAS_COLS;
-	if (physRows <= 0) physRows = ATLAS_ROWS;
+                                        bool mirrored, bool* outMirrored) {
+    if (logicalCol < 0)  logicalCol  = 0;
+    if (logicalRow < 0)  logicalRow  = 0;
+    if (physCols   <= 0) physCols    = ATLAS_COLS;
+    if (physRows   <= 0) physRows    = ATLAS_ROWS;
+    if (logicalCol >= physCols) logicalCol = physCols - 1;
+    if (logicalRow >= physRows) logicalRow = physRows - 1;
 
-	float cellW = (float)tex.width / (float)physCols;
-	float cellH = (float)tex.height / (float)physRows;
-
-	if (logicalCol >= physCols) logicalCol = physCols - 1;
-	if (logicalRow >= physRows) logicalRow = physRows - 1;
-
-	if (outMirrored) *outMirrored = mirrored;
-	return (Rectangle){logicalCol * cellW, logicalRow * cellH, cellW, cellH};
+    float cellW = (float)tex.width  / (float)physCols;
+    float cellH = (float)tex.height / (float)physRows;
+    if (outMirrored) *outMirrored = mirrored;
+    return (Rectangle){logicalCol * cellW, logicalRow * cellH, cellW, cellH};
 }
 
 static inline void DrawBonetileCustom(Texture2D tex, Camera camera, Rectangle src, Vector3 pos, Vector2 size,
-		float rotationDeg, bool mirrored, const char* boneName) {
-	Vector3 camForward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
-	Vector3 right = Vector3Normalize(Vector3CrossProduct(camForward, camera.up));
-	Vector3 up = Vector3Normalize(Vector3CrossProduct(right, camForward));
+                                       float rotationDeg, bool mirrored, const char* boneName) {
+    Vector3 camFwd = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+    Vector3 right  = Vector3Normalize(Vector3CrossProduct(camFwd, camera.up));
+    Vector3 up     = Vector3Normalize(Vector3CrossProduct(right, camFwd));
 
-	float a = rotationDeg * (PI / 180.0f);
-	Vector3 newRight = Vector3Subtract(Vector3Scale(right, cosf(a)), Vector3Scale(up, sinf(a)));
-	Vector3 newUp = Vector3Add(Vector3Scale(right, sinf(a)), Vector3Scale(up, cosf(a)));
+    float a = rotationDeg * (PI / 180.0f);
+    Vector3 newRight = Vector3Subtract(Vector3Scale(right, cosf(a)), Vector3Scale(up, sinf(a)));
+    Vector3 newUp    = Vector3Add(Vector3Scale(right, sinf(a)),      Vector3Scale(up, cosf(a)));
 
-	Vector3 halfX = Vector3Scale(newRight, size.x * 0.5f);
-	Vector3 halfY = Vector3Scale(newUp, size.y * 0.5f);
+    Vector3 halfX = Vector3Scale(newRight, size.x * 0.5f);
+    Vector3 halfY = Vector3Scale(newUp,    size.y * 0.5f);
+    Vector3 p0 = Vector3Subtract(Vector3Subtract(pos, halfX), halfY);
+    Vector3 p1 = Vector3Add(Vector3Subtract(pos, halfY), halfX);
+    Vector3 p2 = Vector3Add(Vector3Add(pos, halfX), halfY);
+    Vector3 p3 = Vector3Subtract(Vector3Add(pos, halfY), halfX);
 
-	Vector3 p0 = Vector3Subtract(Vector3Subtract(pos, halfX), halfY);
-	Vector3 p1 = Vector3Add(Vector3Subtract(pos, halfY), halfX);
-	Vector3 p2 = Vector3Add(Vector3Add(pos, halfX), halfY);
-	Vector3 p3 = Vector3Subtract(Vector3Add(pos, halfY), halfX);
+    float texW = (float)tex.width, texH = (float)tex.height;
+    float uL = src.x / texW, uR = (src.x + src.width)  / texW;
+    float vT = src.y / texH, vB = (src.y + src.height) / texH;
+    if (src.width  < 0) { float t = uL; uL = uR; uR = t; }
+    if (src.height < 0) { float t = vT; vT = vB; vB = t; }
 
-	float texW = (float)tex.width, texH = (float)tex.height;
-	float u_left = src.x / texW, u_right = (src.x + src.width) / texW;
-	float v_top = src.y / texH, v_bottom = (src.y + src.height) / texH;
+    bool needsVFlip = ShouldFlipBoneTexture(boneName);
+    float v0t = needsVFlip ? vT : vB;
+    float v1t = needsVFlip ? vB : vT;
+    if (mirrored) { float t = uL; uL = uR; uR = t; }
 
-	if (src.width < 0) { float tmp = u_left; u_left = u_right; u_right = tmp; }
-	if (src.height < 0) { float tmp = v_top; v_top = v_bottom; v_bottom = tmp; }
-
-	bool needsVFlip = ShouldFlipBoneTexture(boneName);
-	float v0t = needsVFlip ? v_top : v_bottom;
-	float v1t = needsVFlip ? v_bottom : v_top;
-
-	if (mirrored) { float tmp = u_left; u_left = u_right; u_right = tmp; }
-
-	DrawQuadTextured3D(tex, p0, p1, p2, p3, u_left, v0t, u_right, v1t);
+    DrawQuadTextured3D(tex, p0, p1, p2, p3, uL, v0t, uR, v1t);
 }
 
 static inline void DrawBonetileCustomWithRoll(Texture2D tex, Camera camera, Rectangle src, Vector3 pos, Vector2 size,
-		float rotationDeg, bool mirrored, bool neighborValid, Vector3 neighborPos, 
-		const BoneRenderData* boneData, const Person* person) {
-	Vector3 camToPos = Vector3Subtract(pos, camera.position);
-	float distance = Vector3Length(camToPos);
-	if (distance > 0.0f) {
-		camToPos = Vector3Scale(camToPos, 1.0f / distance);
-		float cameraPitchDeg = atan2f(-camToPos.y, sqrtf(camToPos.x * camToPos.x + camToPos.z * camToPos.z)) * RAD2DEG;
+        float rotationDeg, bool mirrored, bool neighborValid, Vector3 neighborPos,
+        const BoneRenderData* boneData, const Person* person)
+{
+    Vector3 camToPos = Vector3Subtract(pos, camera.position);
+    float dist = Vector3Length(camToPos);
+    if (dist > 0.0f) {
+        camToPos = Vector3Scale(camToPos, 1.0f / dist);
+        float camPitch = atan2f(-camToPos.y, sqrtf(camToPos.x*camToPos.x + camToPos.z*camToPos.z)) * RAD2DEG;
+        if (fabsf(camPitch) > 50.0f && strcmp(boneData->boneName, "Neck") != 0) {
+            Vector3 center   = GetBonePositionByName(person, "Neck");
+            Vector3 camFwd   = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+            Vector3 camRight = Vector3Normalize(Vector3CrossProduct(camFwd, camera.up));
+            Vector3 camUp    = Vector3Normalize(Vector3CrossProduct(camRight, camFwd));
+            Vector3 toCenter = Vector3Normalize(Vector3Subtract(center, boneData->position));
+            Vector3 proj     = Vector3Subtract(toCenter, Vector3Scale(camFwd, Vector3DotProduct(toCenter, camFwd)));
+            float   projLen  = Vector3Length(proj);
+            proj = Vector3Scale(proj, 1.0f / projLen);
+            rotationDeg   = atan2f(Vector3DotProduct(proj, camRight), Vector3DotProduct(proj, camUp)) * RAD2DEG + 180.0f;
+            neighborValid = false;
+        }
+    }
 
-		if (fabs(cameraPitchDeg) > 50.0f && strcmp(boneData->boneName, "Neck") != 0) {
-			Vector3 personCenter = GetBonePositionByName(person, "Neck");
-			Vector3 toCenter = Vector3Normalize(Vector3Subtract(personCenter, boneData->position));
-			Vector3 camForward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
-			Vector3 camRight = Vector3Normalize(Vector3CrossProduct(camForward, camera.up));
-			Vector3 camUp = Vector3Normalize(Vector3CrossProduct(camRight, camForward));
-			Vector3 projectedToCenter = Vector3Subtract(toCenter, Vector3Scale(camForward, Vector3DotProduct(toCenter, camForward)));
-			float projLength = Vector3Length(projectedToCenter);
-			projectedToCenter = Vector3Scale(projectedToCenter, 1.0f / projLength);
-			float rightComponent = Vector3DotProduct(projectedToCenter, camRight);
-			float upComponent = Vector3DotProduct(projectedToCenter, camUp);
+    Vector3 camFwd = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+    Vector3 right  = Vector3Normalize(Vector3CrossProduct(camFwd, camera.up));
+    Vector3 up     = Vector3Normalize(Vector3CrossProduct(right, camFwd));
 
-			rotationDeg = atan2f(rightComponent, upComponent) * RAD2DEG + 180.0f;
-			neighborValid = false;
-		}
-	}
+    float rollExtraDeg = 0.0f;
+    if (neighborValid) {
+        Vector3 dir = Vector3Subtract(neighborPos, pos);
+        if (Vector3Length(dir) > 0.0001f) {
+            dir = Vector3Normalize(dir);
+            rollExtraDeg = atan2f(Vector3DotProduct(dir, right), Vector3DotProduct(dir, up)) * (180.0f / PI);
+        }
+    }
 
-	Vector3 camForward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
-	Vector3 right = Vector3Normalize(Vector3CrossProduct(camForward, camera.up));
-	Vector3 up = Vector3Normalize(Vector3CrossProduct(right, camForward));
+    float scaleUp = 0.5f, scaleDown = 0.5f;
+    for (int i = 0; BONE_SCALE_FACTORS[i].boneName[0] != '\0'; i++) {
+        if (strcmp(BONE_SCALE_FACTORS[i].boneName, boneData->boneName) == 0) {
+            scaleUp   = BONE_SCALE_FACTORS[i].scaleFactorUp;
+            scaleDown = BONE_SCALE_FACTORS[i].scaleFactorDown;
+            break;
+        }
+    }
 
-	float rollExtraDeg = 0.0f;
-	if (neighborValid) {
-		Vector3 dir = Vector3Subtract(neighborPos, pos);
-		if (Vector3Length(dir) > 0.0001f) {
-			dir = Vector3Normalize(dir);
-			rollExtraDeg = atan2f(Vector3DotProduct(dir, right), Vector3DotProduct(dir, up)) * (180.0f / PI);
-		}
-	}
+    Vector2 actualSize = size;
+    Vector3 actualPos  = pos;
 
-	float a = (rotationDeg + rollExtraDeg) * (PI / 180.0f);
-	Vector3 newRight = Vector3Subtract(Vector3Scale(right, cosf(a)), Vector3Scale(up, sinf(a)));
-	Vector3 newUp = Vector3Add(Vector3Scale(right, sinf(a)), Vector3Scale(up, cosf(a)));
+    if (ShouldUseVariableHeight(boneData->boneName) && neighborValid) {
+        float   neighborDist = Vector3Distance(pos, neighborPos);
+        Vector3 boneDir      = Vector3Normalize(Vector3Subtract(neighborPos, pos));
+        Vector3 camDir       = Vector3Normalize(Vector3Subtract(camera.position, pos));
+        float   parallel     = Vector3DotProduct(boneDir, camDir);
+        Vector3 projBone     = Vector3Subtract(boneDir, Vector3Scale(camDir, parallel));
+        float   visRatio     = fmaxf(0.3f, Vector3Length(projBone));
 
-	Vector2 actualSize = size;
-	Vector3 actualPos = pos;
+        actualSize.y = neighborDist * visRatio * (scaleUp + scaleDown);
+        float   offsetFactor = scaleDown - scaleUp;
+        Vector3 toNeighbor   = Vector3Normalize(Vector3Subtract(neighborPos, pos));
+        actualPos = Vector3Add(pos, Vector3Scale(toNeighbor, neighborDist * offsetFactor * 0.5f));
+    }
 
-	float scaleUp = 0.5f;
-	float scaleDown = 0.5f;
+    float a = (rotationDeg + rollExtraDeg) * (PI / 180.0f);
+    Vector3 newRight = Vector3Subtract(Vector3Scale(right, cosf(a)), Vector3Scale(up, sinf(a)));
+    Vector3 newUp    = Vector3Add(Vector3Scale(right, sinf(a)),      Vector3Scale(up, cosf(a)));
+    Vector3 halfX = Vector3Scale(newRight, actualSize.x * 0.5f);
+    Vector3 halfY = Vector3Scale(newUp,    actualSize.y * 0.5f);
+    Vector3 p0 = Vector3Subtract(Vector3Subtract(actualPos, halfX), halfY);
+    Vector3 p1 = Vector3Add(Vector3Subtract(actualPos, halfY), halfX);
+    Vector3 p2 = Vector3Add(Vector3Add(actualPos, halfX), halfY);
+    Vector3 p3 = Vector3Subtract(Vector3Add(actualPos, halfY), halfX);
 
-	for (int i = 0; BONE_SCALE_FACTORS[i].boneName[0] != '\0'; i++) {
-		if (strcmp(BONE_SCALE_FACTORS[i].boneName, boneData->boneName) == 0) {
-			scaleUp = BONE_SCALE_FACTORS[i].scaleFactorUp;
-			scaleDown = BONE_SCALE_FACTORS[i].scaleFactorDown;
-			break;
-		}
-	}
+    float texW = (float)tex.width, texH = (float)tex.height;
+    float uL = src.x / texW, uR = (src.x + src.width)  / texW;
+    float vT = src.y / texH, vB = (src.y + src.height) / texH;
+    if (src.width  < 0) { float t = uL; uL = uR; uR = t; }
+    if (src.height < 0) { float t = vT; vT = vB; vB = t; }
 
-	if (ShouldUseVariableHeight(boneData->boneName) && neighborValid) {
-		float neighborDistance = Vector3Distance(pos, neighborPos);
-		Vector3 boneDir = Vector3Normalize(Vector3Subtract(neighborPos, pos));
-		Vector3 camDir = Vector3Normalize(Vector3Subtract(camera.position, pos));
+    bool needsVFlip = ShouldFlipBoneTexture(boneData->boneName);
+    float v0t = needsVFlip ? vT : vB;
+    float v1t = needsVFlip ? vB : vT;
+    if (mirrored) { float t = uL; uL = uR; uR = t; }
 
-		float parallelComponent = Vector3DotProduct(boneDir, camDir);
-		Vector3 projectedBone = Vector3Subtract(boneDir, Vector3Scale(camDir, parallelComponent));
-		float visibleLengthRatio = Vector3Length(projectedBone);
-		visibleLengthRatio = fmaxf(0.3f, visibleLengthRatio);
-
-		float totalExtension = scaleUp + scaleDown;
-		actualSize.y = neighborDistance * visibleLengthRatio * totalExtension;
-
-		float offsetFactor = scaleDown - scaleUp;
-		Vector3 toNeighbor = Vector3Subtract(neighborPos, pos);
-		if (Vector3Length(toNeighbor) > 0.0001f) {
-			toNeighbor = Vector3Normalize(toNeighbor);
-			actualPos = Vector3Add(pos, Vector3Scale(toNeighbor, neighborDistance * offsetFactor * 0.5f));
-		}
-	}
-
-	Vector3 halfX = Vector3Scale(newRight, actualSize.x * 0.5f);
-	Vector3 halfY = Vector3Scale(newUp, actualSize.y * 0.5f);
-
-	Vector3 p0 = Vector3Subtract(Vector3Subtract(actualPos, halfX), halfY);
-	Vector3 p1 = Vector3Add(Vector3Subtract(actualPos, halfY), halfX);
-	Vector3 p2 = Vector3Add(Vector3Add(actualPos, halfX), halfY);
-	Vector3 p3 = Vector3Subtract(Vector3Add(actualPos, halfY), halfX);
-
-	float texW = (float)tex.width, texH = (float)tex.height;
-	float u_left = src.x / texW, u_right = (src.x + src.width) / texW;
-	float v_top = src.y / texH, v_bottom = (src.y + src.height) / texH;
-
-	if (src.width < 0) { float tmp = u_left; u_left = u_right; u_right = tmp; }
-	if (src.height < 0) { float tmp = v_top; v_top = v_bottom; v_bottom = tmp; }
-
-	bool needsVFlip = ShouldFlipBoneTexture(boneData->boneName);
-	float v0t = needsVFlip ? v_top : v_bottom;
-	float v1t = needsVFlip ? v_bottom : v_top;
-
-	if (mirrored) { float tmp = u_left; u_left = u_right; u_right = tmp; }
-
-	Vector2 uv0 = { u_left, v0t }, uv1 = { u_right, v0t }, uv2 = { u_right, v1t }, uv3 = { u_left, v1t };
-	DrawQuadTextured3D_UVs(tex, p0, p1, p2, p3, uv0, uv1, uv2, uv3);
+    Vector2 uv0 = {uL,v0t}, uv1 = {uR,v0t}, uv2 = {uR,v1t}, uv3 = {uL,v1t};
+    DrawQuadTextured3D_UVs(tex, p0, p1, p2, p3, uv0, uv1, uv2, uv3);
 }
 
-static inline void DrawTorsoBillboard(Texture2D texture, Camera camera, const TorsoRenderData* torsoData, int physCols, int physRows) {
-	if (!torsoData || !torsoData->valid || !torsoData->visible) return;
+static inline void CalculateHandBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex,
+                                                float* outRotation, bool* outMirrored, const char* boneName) {
+    static const int rightHandIndices[3][8] = {
+        {23,22, 2,15,16,17,18,24},
+        { 9, 4, 0, 5, 6, 7, 8,14},
+        {20,19, 1,10,11,12,13,21}
+    };
+    static const int leftHandIndices[3][8] = {
+        {16,15, 2,22,23,24,18,17},
+        { 6, 5, 0, 4, 9,14, 8, 7},
+        {11,10, 1,19,20,21,13,12}
+    };
 
-	int chosenIndex;
-	float rotation;
-	bool mirrored;
-	CalculateTorsoRenderData(torsoData, camera, &chosenIndex, &rotation, &mirrored);
+    Vector3 camDir = SafeNormalize(Vector3Subtract(camera.position, bonePos));
+    bool isWrist   = boneName && IsWristBone(boneName);
+    bool isLeft    = boneName && (strcmp(boneName, "LWrist") == 0);
 
-	if (torsoData->orientation.valid) {
-		Vector3 camDir = Vector3Subtract(torsoData->position, camera.position);
-		camDir = SafeNormalize(camDir);
-		Vector3 localCamDir = {
-			Vector3DotProduct(camDir, torsoData->orientation.right),
-			Vector3DotProduct(camDir, torsoData->orientation.up),
-			Vector3DotProduct(camDir, torsoData->orientation.forward)
-		};
+    float yawOffRad = 0.0f, pitchOffRad = 0.0f;
+    if (boneName) {
+        for (int i = 0; BONE_ANGLE_OFFSETS[i].boneName[0] != '\0'; i++) {
+            if (strcmp(BONE_ANGLE_OFFSETS[i].boneName, boneName) == 0) {
+                yawOffRad   = BONE_ANGLE_OFFSETS[i].yawOffset   * (PI / 180.0f);
+                pitchOffRad = BONE_ANGLE_OFFSETS[i].pitchOffset * (PI / 180.0f);
+                break;
+            }
+        }
+    }
 
-		float localYaw = atan2f(localCamDir.x, localCamDir.z);
-		if (localYaw < 0.0f) localYaw += 2.0f * PI;
+    if (fabsf(yawOffRad) > 1e-6f) {
+        float cY = cosf(yawOffRad), sY = sinf(yawOffRad);
+        float nx = camDir.x*cY - camDir.z*sY, nz = camDir.x*sY + camDir.z*cY;
+        camDir.x = nx; camDir.z = nz;
+    }
+    if (fabsf(pitchOffRad) > 1e-6f) {
+        float hD = sqrtf(camDir.x*camDir.x + camDir.z*camDir.z);
+        if (hD > 1e-6f) {
+            float cP = cosf(pitchOffRad), sP = sinf(pitchOffRad);
+            float nY  = camDir.y * cP - hD * sP;
+            float nH  = camDir.y * sP + hD * cP;
+            float sc  = nH / hD;
+            camDir.x *= sc; camDir.z *= sc; camDir.y = nY;
+        }
+    }
 
-		float localPitchDeg = atan2f(localCamDir.y, sqrtf(localCamDir.x * localCamDir.x + localCamDir.z * localCamDir.z)) * RAD2DEG;
-		localPitchDeg = -localPitchDeg;
+    if (!isWrist) { float t = camDir.x; camDir.x = camDir.z; camDir.z = t; }
 
-		float normalizedYaw = localYaw * RAD2DEG + 22.5f;
-		if (normalizedYaw >= 360.0f) normalizedYaw -= 360.0f;
-		int sector = (int)(normalizedYaw / 45.0f) % 8;
+    float yaw   = atan2f(camDir.x, camDir.z);
+    if (yaw < 0.0f) yaw += 2.0f * PI;
+    float pitchDeg   = atan2f(camDir.y, sqrtf(camDir.x*camDir.x + camDir.z*camDir.z)) * RAD2DEG;
+    float normYaw    = yaw * RAD2DEG + 22.5f;
+    if (normYaw >= 360.0f) normYaw -= 360.0f;
+    int sector = (int)(normYaw / 45.0f) % 8;
 
-		if ((sector == 0 || sector == 4) && localPitchDeg < 70.0f && localPitchDeg > -70.0f)
-			rotation = 0.0f;
-	}
+    if (isWrist) {
+        int row = (pitchDeg >= 22.5f) ? 0 : (pitchDeg >= -22.5f) ? 1 : 2;
+        row    = (row < 0) ? 0 : (row > 2) ? 2 : row;
+        sector = (sector < 0) ? 0 : (sector > 7) ? 7 : sector;
+        *outChosenIndex = isLeft ? leftHandIndices[row][sector] : rightHandIndices[row][sector];
+        *outMirrored    = isLeft;
+        *outRotation    = 0.0f;
+        if (*outChosenIndex < 0) *outChosenIndex = 0;
+        if (*outChosenIndex > 24) *outChosenIndex %= 25;
+    } else {
+        *outMirrored = false;
+    }
 
-	int logicalCol = chosenIndex % ATLAS_COLS;
-	int logicalRow = chosenIndex / ATLAS_COLS;
-	bool finalMirror;
-	Rectangle src = SrcFromLogical(texture, logicalCol, logicalRow, physCols, physRows, mirrored, &finalMirror);
-	Vector2 worldSize = { torsoData->size, torsoData->size };
-	DrawBonetileCustom(texture, camera, src, torsoData->position, worldSize, rotation, finalMirror, "");
+    if (pitchDeg >= 52.5f)  { *outChosenIndex = 22; *outRotation = sector * 45.0f + 180.0f; *outMirrored = isLeft; }
+    else if (pitchDeg <= -51.0f) { *outChosenIndex = 3; *outRotation = 0.0f; *outMirrored = isLeft; }
+}
+
+static inline void CalculateHandBoneRenderDataWithOrientation(const BoneRenderData* boneData, Camera camera,
+                                                               int* outChosenIndex, float* outRotation, bool* outMirrored) {
+    static const int rightHandIndices[3][8] = {
+        {23,22, 2,15,16,17,18,24},
+        { 9, 4, 0, 5, 6, 7, 8,14},
+        {20,19, 1,10,11,12,13,21}
+    };
+    static const int leftHandIndices[3][8] = {
+        {16,15, 2,22,23,24,18,17},
+        { 6, 5, 0, 4, 9,14, 8, 7},
+        {11,10, 1,19,20,21,13,12}
+    };
+
+    bool isLeft = (strcmp(boneData->boneName, "LWrist") == 0);
+    Vector3 camDir = SafeNormalize(Vector3Subtract(boneData->position, camera.position));
+    Vector3 local  = {
+        Vector3DotProduct(camDir, boneData->orientation.right),
+        Vector3DotProduct(camDir, boneData->orientation.up),
+        Vector3DotProduct(camDir, boneData->orientation.forward)
+    };
+
+    float localYaw = atan2f(local.x, local.z);
+    if (localYaw < 0.0f) localYaw += 2.0f * PI;
+    float localPitch = -atan2f(local.y, sqrtf(local.x*local.x + local.z*local.z)) * RAD2DEG;
+    float normYaw    = localYaw * RAD2DEG + 22.5f;
+    if (normYaw >= 360.0f) normYaw -= 360.0f;
+    int sector = (8 - (int)(normYaw / 45.0f) % 8) % 8;
+
+    if (localPitch >= 52.5f)   { *outChosenIndex = 22; *outRotation = sector*45.0f+180.0f; *outMirrored = isLeft; }
+    else if (localPitch <= -51.0f) { *outChosenIndex = 3; *outRotation = 0.0f; *outMirrored = isLeft; }
+    else {
+        int row = (localPitch >= 22.5f) ? 2 : (localPitch >= -22.5f) ? 1 : 0;
+        *outChosenIndex = isLeft ? leftHandIndices[row][sector] : rightHandIndices[row][sector];
+        *outMirrored    = isLeft;
+        *outRotation    = 0.0f;
+    }
+}
+
+static inline void CalculateLimbBoneRenderData(const BoneRenderData* boneData, const Person* person, Camera camera,
+                                                int* outChosenIndex, float* outRotation, bool* outMirrored) {
+    if (!boneData->orientation.valid) {
+        CalculateHandBoneRenderData(boneData->position, camera, outChosenIndex, outRotation, outMirrored, boneData->boneName);
+        return;
+    }
+
+    static const int indices[3][8] = {
+        {0, 4, 5, 6, 7, 6, 5, 4},
+        {2,12,13,14,15,14,13,12},
+        {1, 8, 9,10,11,10, 9, 8}
+    };
+
+    Vector3 camDir  = SafeNormalize(Vector3Subtract(boneData->position, camera.position));
+    Vector3 local   = {
+        Vector3DotProduct(camDir, boneData->orientation.right),
+        Vector3DotProduct(camDir, boneData->orientation.up),
+        Vector3DotProduct(camDir, boneData->orientation.forward)
+    };
+
+    float localYaw   = atan2f(local.x, local.z);
+    if (localYaw < 0.0f) localYaw += 2.0f * PI;
+    float pitchDeg   = atan2f(local.y, sqrtf(local.x*local.x + local.z*local.z)) * RAD2DEG;
+
+    bool invertPitch = boneData->boneName[0] &&
+        strcmp(boneData->boneName,"Neck")      != 0 &&
+        strcmp(boneData->boneName,"RShoulder") != 0 &&
+        strcmp(boneData->boneName,"RHip")      != 0 &&
+        strcmp(boneData->boneName,"RElbow")    != 0 &&
+        strcmp(boneData->boneName,"RKnee")     != 0 &&
+        strcmp(boneData->boneName,"LAnkle")    != 0;
+    if (invertPitch) pitchDeg = -pitchDeg;
+
+    float compFactor = 0.0f;
+    if (person && boneData->boneName[0]) {
+        if      (strstr(boneData->boneName,"Hip")      || strstr(boneData->boneName,"Shoulder")) compFactor = strstr(boneData->boneName,"Hip") ? 0.25f : 0.15f;
+        else if (strstr(boneData->boneName,"Knee")     || strstr(boneData->boneName,"Elbow"))    compFactor = strstr(boneData->boneName,"Knee") ? 0.25f : 0.15f;
+    }
+    if (compFactor > 0.0f && person) {
+        BoneConnectionPositions bp = GetBoneConnectionPositionsEx(boneData, person);
+        Vector3 camF  = SafeNormalize(Vector3Subtract(camera.target, camera.position));
+        Vector3 camR  = SafeNormalize(Vector3CrossProduct(camF, camera.up));
+        Vector3 camU  = SafeNormalize(Vector3CrossProduct(camR, camF));
+        Vector3 bVec  = Vector3Subtract(bp.pos1, bp.pos0);
+        float   bLen  = Vector3Length(bVec);
+        if (bLen > 1e-6f) {
+            bVec = Vector3Scale(bVec, 1.0f / bLen);
+            Vector3 mid    = (Vector3){(bp.pos0.x+bp.pos1.x)*0.5f,(bp.pos0.y+bp.pos1.y)*0.5f,(bp.pos0.z+bp.pos1.z)*0.5f};
+            Vector3 toCam  = Vector3Subtract(camera.position, mid);
+            float   tCamL  = Vector3Length(toCam);
+            if (tCamL > 1e-6f) {
+                toCam = Vector3Scale(toCam, 1.0f / tCamL);
+                float d = Vector3DotProduct(bVec, toCam);
+                d = fmaxf(-1.0f, fminf(1.0f, d));
+                float angleDeg = acosf(d) * RAD2DEG;
+                if (angleDeg > 45.0f) {
+                    Vector3 bInCam = {Vector3DotProduct(bVec,camR), Vector3DotProduct(bVec,camU), Vector3DotProduct(bVec,camF)};
+                    float hLen = sqrtf(bInCam.x*bInCam.x + bInCam.z*bInCam.z);
+                    float bPitchCam = atan2f(bInCam.y, hLen) * RAD2DEG;
+                    float intensity = fminf((angleDeg - 45.0f) / 45.0f, 1.0f);
+                    float comp = fmaxf(fminf(bPitchCam * compFactor * intensity, 12.0f), -12.0f);
+                    pitchDeg += comp;
+                }
+            }
+        }
+    }
+
+    float normYaw = localYaw * RAD2DEG + 22.5f;
+    if (normYaw >= 360.0f) normYaw -= 360.0f;
+    int   sector  = (int)(normYaw / 45.0f) % 8;
+    float rotComp = 0.0f;
+
+    if (pitchDeg >= 70.5f)  { *outChosenIndex = 3;  *outRotation = 0.0f; *outMirrored = false; return; }
+    if (pitchDeg <= -60.0f) { *outChosenIndex = 15; *outRotation = (8-sector)*45.0f+180.0f; *outMirrored = true; return; }
+
+    int row = (pitchDeg >= 22.5f) ? 2 : (pitchDeg >= -22.5f) ? 0 : 1;
+    *outChosenIndex = indices[row][sector];
+    *outRotation    = 0.0f;
+    *outMirrored    = (sector >= 1 && sector <= 4);
+    if (boneData->boneName[0] == 'R') *outMirrored = !(*outMirrored);
+
+    if (strcmp(boneData->boneName, "Neck") == 0) {
+        Vector3 estHead = Vector3Add(boneData->position, Vector3Scale(boneData->orientation.up, 0.15f));
+        Vector3 dir     = SafeNormalize(Vector3Subtract(estHead, boneData->position));
+        Vector3 camFwd  = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+        Vector3 camR    = Vector3Normalize(Vector3CrossProduct(camFwd, camera.up));
+        Vector3 camU    = Vector3Normalize(Vector3CrossProduct(camR, camFwd));
+        Vector3 projDir = Vector3Subtract(dir, Vector3Scale(camFwd, Vector3DotProduct(dir, camFwd)));
+        if (Vector3Length(projDir) > 0.001f) {
+            projDir = SafeNormalize(projDir);
+            *outRotation = fmodf(atan2f(Vector3DotProduct(projDir, camR), Vector3DotProduct(projDir, camU)) * RAD2DEG + 180.0f, 360.0f);
+        }
+    }
+
+    if (person) {
+        BoneConnectionPositions bp = GetBoneConnectionPositionsEx(boneData, person);
+        Vector3 bVec = Vector3Subtract(bp.pos1, bp.pos0);
+        float   bLen = Vector3Length(bVec);
+        if (bLen > 1e-6f) {
+            bVec = SafeNormalize(bVec);
+            float dotV = Vector3DotProduct(bVec, (Vector3){0,1,0});
+            float angleDeg = acosf(fabsf(dotV)) * RAD2DEG;
+            if (angleDeg > 30.0f) {
+                Vector3 camToPos = SafeNormalize(Vector3Subtract(boneData->position, camera.position));
+                Vector3 projBone = Vector3Subtract(bVec, Vector3Scale(camToPos, Vector3DotProduct(bVec, camToPos)));
+                float   projLen  = Vector3Length(projBone);
+                if (projLen > 1e-4f) {
+                    projBone = SafeNormalize(projBone);
+                    Vector3 cR = Vector3Normalize(Vector3CrossProduct(Vector3Subtract(camera.target, camera.position), camera.up));
+                    Vector3 cU = Vector3Normalize(Vector3CrossProduct(cR, Vector3Subtract(camera.target, camera.position)));
+                    rotComp = atan2f(Vector3DotProduct(projBone, cR), Vector3DotProduct(projBone, cU)) * RAD2DEG;
+                    float diag = fminf((angleDeg - 30.0f) / 60.0f, 1.0f);
+                    float factor = 0.0f;
+                    if      (strstr(boneData->boneName,"LHip") || strstr(boneData->boneName,"RHip")) factor = -0.6f;
+                    else if (strstr(boneData->boneName,"Knee"))     factor = 0.5f;
+                    else if (strstr(boneData->boneName,"Shoulder")) factor = 0.3f;
+                    else if (strstr(boneData->boneName,"Elbow"))    factor = 0.3f;
+                    rotComp = fmaxf(fminf(rotComp * factor * diag, 45.0f), -45.0f);
+                }
+            }
+        }
+    }
+
+    if ((sector == 0 || sector == 4) && pitchDeg < 60.0f && pitchDeg > -60.0f) {
+        rotComp *= 0.01f;
+        if (strstr(boneData->boneName,"Shoulder") || strstr(boneData->boneName,"Elbow") ||
+            strstr(boneData->boneName,"Hip")       || strstr(boneData->boneName,"Knee"))
+            rotComp = 0.0f;
+    }
+    if (((sector >= 7 || sector <= 1) || (sector >= 3 && sector <= 5)) && pitchDeg < 45.0f && pitchDeg > -45.0f)
+        rotComp *= 0.3f;
+
+    *outRotation += rotComp;
+    while (*outRotation >= 360.0f) *outRotation -= 360.0f;
+    while (*outRotation <    0.0f) *outRotation += 360.0f;
+}
+
+static const int asymTorsoIndices[3][8] = {
+    {  1,  19,  20,  21,  13,  12,  11,  10  },
+    {  0,   4,   9,  14,   8,   7,   6,   5  },
+    {  2,  22,  23,  24,  18,  17,  16,  15  }
+};
+
+static inline void CalculateAsymmetricBoneRenderData(const BoneRenderData* boneData, Camera camera,
+                                                     int* outChosenIndex, float* outRotation, bool* outMirrored) {
+
+    Vector3 camDir = SafeNormalize(Vector3Subtract(boneData->position, camera.position));
+    Vector3 local;
+    if (boneData->orientation.valid) {
+        local = (Vector3){
+            Vector3DotProduct(camDir, boneData->orientation.right),
+            Vector3DotProduct(camDir, boneData->orientation.up),
+            Vector3DotProduct(camDir, boneData->orientation.forward)
+        };
+    } else {
+        local = (Vector3){ camDir.x, camDir.y, camDir.z };
+    }
+
+    float localYaw = atan2f(local.x, local.z);
+    if (localYaw < 0.0f) localYaw += 2.0f * PI;
+    float localPitch = -atan2f(local.y, sqrtf(local.x*local.x + local.z*local.z)) * RAD2DEG;
+    float normYaw    = localYaw * RAD2DEG + 22.5f;
+    if (normYaw >= 360.0f) normYaw -= 360.0f;
+    int sector = (8 - (int)(normYaw / 45.0f) % 8) % 8;
+
+    if (localPitch >= 52.5f) {
+        *outChosenIndex = 3;
+        *outRotation = sector * 45.0f + 180.0f;
+        *outMirrored = false;
+        return;
+    }
+    if (localPitch <= -51.0f) {
+        *outChosenIndex = 2;
+        *outRotation = 0.0f;
+        *outMirrored = false;
+        return;
+    }
+
+    int row = (localPitch >= 22.5f) ? 0 : (localPitch >= -22.5f) ? 1 : 2;
+    *outChosenIndex = asymTorsoIndices[row][sector];
+    *outRotation = 0.0f;
+    *outMirrored = false;
+}
+
+static inline void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
+                                             int* outChosenIndex, float* outRotation, bool* outMirrored) {
+    if (!torsoData->orientation.valid) {
+        CalculateHandBoneRenderData(torsoData->position, camera, outChosenIndex, outRotation, outMirrored, "");
+        return;
+    }
+    static const int indices[3][8] = {
+        {0, 4, 5, 6, 7, 6, 5, 4},
+        {2,12,13,14,15,14,13,12},
+        {1, 8, 9,10,11,10, 9, 8}
+    };
+
+    Vector3 camDir = SafeNormalize(Vector3Subtract(torsoData->position, camera.position));
+    Vector3 local  = {
+        Vector3DotProduct(camDir, torsoData->orientation.right),
+        Vector3DotProduct(camDir, torsoData->orientation.up),
+        Vector3DotProduct(camDir, torsoData->orientation.forward)
+    };
+    float localYaw   = atan2f(local.x, local.z);
+    if (localYaw < 0.0f) localYaw += 2.0f * PI;
+    float pitchDeg   = -atan2f(local.y, sqrtf(local.x*local.x + local.z*local.z)) * RAD2DEG;
+    float normYaw    = localYaw * RAD2DEG + 22.5f;
+    if (normYaw >= 360.0f) normYaw -= 360.0f;
+    int sector = (int)(normYaw / 45.0f) % 8;
+
+    if (pitchDeg >= 70.0f)  { *outChosenIndex = 3;  *outRotation = sector*45.0f+180.0f; *outMirrored = false; }
+    else if (pitchDeg <= -70.0f) { *outChosenIndex = 15; *outRotation = fmodf((8-sector)*45.0f+180.0f, 360.0f); *outMirrored = true; }
+    else {
+        int row = (pitchDeg >= 22.5f) ? 2 : (pitchDeg >= -22.5f) ? 0 : 1;
+        *outChosenIndex = indices[row][sector];
+        *outRotation    = 0.0f;
+        *outMirrored    = (sector >= 1 && sector <= 4);
+    }
+
+    if (torsoData->person && pitchDeg < 70.0f && pitchDeg > -70.0f) {
+        Vector3 other = (torsoData->type == TORSO_CHEST)
+            ? CalculateHipPosition(torsoData->person)
+            : CalculateChestPosition(torsoData->person);
+        if (Vector3Length(other) > 0.001f) {
+            Vector3 torsoVec = Vector3Subtract(other, torsoData->position);
+            float   tLen     = Vector3Length(torsoVec);
+            if (tLen > 0.001f) {
+                torsoVec = SafeNormalize(torsoVec);
+                float wPitch = atan2f(torsoVec.y, sqrtf(torsoVec.x*torsoVec.x + torsoVec.z*torsoVec.z)) * RAD2DEG;
+                bool viewRight = (local.x > 0.0f);
+                if (torsoData->type == TORSO_CHEST)
+                    *outRotation = viewRight ? -wPitch - 80.0f : wPitch + 80.0f;
+                else
+                    *outRotation = viewRight ? wPitch - 80.0f : -wPitch + 80.0f;
+                while (*outRotation >= 360.0f) *outRotation -= 360.0f;
+                while (*outRotation <    0.0f) *outRotation += 360.0f;
+            }
+        }
+    }
+}
+
+static inline void CalculateHeadRenderData(const HeadRenderData* headData, Camera camera,
+                                            int* outChosenIndex, float* outRotation, bool* outMirrored) {
+    if (!headData->orientation.valid) {
+        CalculateHandBoneRenderData(headData->position, camera, outChosenIndex, outRotation, outMirrored, "Head");
+        return;
+    }
+    static const int indices[3][8] = {
+        { 0, 4, 5, 6, 7, 6, 5, 4},
+        { 2,12,13,14,15,14,13,12},
+        { 1, 8, 9,10,11,10, 9, 8}
+    };
+
+    Vector3 camDir = Vector3Subtract(camera.position, headData->position);
+    Vector3 local  = {
+        -Vector3DotProduct(camDir, headData->orientation.right),
+         Vector3DotProduct(camDir, headData->orientation.up),
+         Vector3DotProduct(camDir, headData->orientation.forward)
+    };
+
+    float localYaw   = atan2f(local.x, local.z);
+    if (localYaw < 0.0f) localYaw += 2.0f * PI;
+    float localYawDeg = localYaw * RAD2DEG;
+    float horizDist   = sqrtf(local.x*local.x + local.z*local.z);
+    float pitchDeg    = atan2f(local.y, horizDist) * RAD2DEG;
+
+    int sector;
+    if (pitchDeg >= 65.0f || pitchDeg <= -65.0f) {
+        Vector3 hDiff = {camera.position.x - headData->position.x, 0.0f, camera.position.z - headData->position.z};
+        float   hDist = Vector3Length(hDiff);
+        if (hDist > 0.05f) {
+            float wYaw = atan2f(hDiff.x, hDiff.z);
+            if (wYaw < 0.0f) wYaw += 2.0f * PI;
+            float normWYaw = wYaw * RAD2DEG + 22.5f;
+            if (normWYaw >= 360.0f) normWYaw -= 360.0f;
+            sector = (int)(normWYaw / 45.0f) % 8;
+        } else sector = 0;
+    } else {
+        float normYaw = localYawDeg + 22.5f;
+        if (normYaw >= 360.0f) normYaw -= 360.0f;
+        sector = (int)(normYaw / 45.0f);
+    }
+
+    if (pitchDeg >= 50.0f)   { *outChosenIndex = 3;  *outRotation = sector*45.0f+180.0f; *outMirrored = false; }
+    else if (pitchDeg <= -70.0f) {
+        *outChosenIndex = 15;
+        *outRotation = fmodf((8-sector)*45.0f+180.0f, 360.0f);
+        *outMirrored = true;
+    } else {
+        int row = (pitchDeg >= 22.5f) ? 2 : (pitchDeg >= -22.5f) ? 0 : 1;
+        *outChosenIndex = indices[row][sector];
+        *outRotation    = 0.0f;
+        *outMirrored    = !(sector >= 5 && sector <= 7);
+    }
 }
 
 static inline void DrawHeadBillboard(Texture2D texture, Camera camera, const HeadRenderData* headData, int physCols, int physRows) {
-	if (!headData || !headData->valid || !headData->visible) return;
+    if (!headData || !headData->valid || !headData->visible) return;
+    int ci; float rot; bool mir;
+    CalculateHeadRenderData(headData, camera, &ci, &rot, &mir);
+    bool fm;
+    Rectangle src = SrcFromLogical(texture, ci % ATLAS_COLS, ci / ATLAS_COLS, physCols, physRows, mir, &fm);
+    DrawBonetileCustom(texture, camera, src, headData->position, (Vector2){headData->size, headData->size}, rot, fm, "Head");
+}
 
-	int chosenIndex;
-	float rotation;
-	bool mirrored;
-	CalculateHeadRenderData(headData, camera, &chosenIndex, &rotation, &mirrored);
+static inline void DrawTorsoBillboard(Texture2D texture, Camera camera, const TorsoRenderData* torsoData, int physCols, int physRows) {
+    if (!torsoData || !torsoData->valid || !torsoData->visible) return;
+    int ci; float rot; bool mir;
 
-	int logicalCol = chosenIndex % ATLAS_COLS;
-	int logicalRow = chosenIndex / ATLAS_COLS;
-	bool finalMirror;
-	Rectangle src = SrcFromLogical(texture, logicalCol, logicalRow, physCols, physRows, mirrored, &finalMirror);
-	Vector2 worldSize = { headData->size, headData->size };
-	DrawBonetileCustom(texture, camera, src, headData->position, worldSize, rotation, finalMirror, "Head");
+    int cols = torsoData->isAsymmetric ? ASYM_ATLAS_COLS : physCols;
+    int rows = torsoData->isAsymmetric ? ASYM_ATLAS_ROWS : physRows;
+
+    if (torsoData->isAsymmetric) {
+        BoneRenderData tempBone = {0};
+        tempBone.position = torsoData->position;
+        tempBone.orientation.position = torsoData->orientation.position;
+        tempBone.orientation.forward  = torsoData->orientation.forward;
+        tempBone.orientation.up       = torsoData->orientation.up;
+        tempBone.orientation.right    = torsoData->orientation.right;
+        tempBone.orientation.yaw      = torsoData->orientation.yaw;
+        tempBone.orientation.pitch    = torsoData->orientation.pitch;
+        tempBone.orientation.roll     = torsoData->orientation.roll;
+        tempBone.orientation.valid    = torsoData->orientation.valid;
+        strncpy(tempBone.boneName, "AsymTorso", MAX_BONE_NAME_LENGTH - 1);
+        tempBone.isAsymmetric = true;
+
+        CalculateAsymmetricBoneRenderData(&tempBone, camera, &ci, &rot, &mir);
+        mir = false;
+    } else {
+        CalculateTorsoRenderData(torsoData, camera, &ci, &rot, &mir);
+    }
+
+    bool fm;
+    Rectangle src = SrcFromLogical(texture, ci % cols, ci / cols, cols, rows, mir, &fm);
+    DrawBonetileCustom(texture, camera, src, torsoData->position, (Vector2){torsoData->size, torsoData->size}, rot, fm, "");
 }
 
 static inline bool DetectZFighting(RenderItem* items, int itemCount) {
-	bool hasZFighting = false;
-	for (int i = 0; i < itemCount; i++) {
-		items[i].hasZFighting = false;
-		for (int j = i + 1; j < itemCount; j++) {
-			if (fabs(items[i].distance - items[j].distance) < Z_FIGHTING_THRESHOLD) {
-				items[i].hasZFighting = items[j].hasZFighting = true;
-				hasZFighting = true;
-			}
-		}
-	}
-	return hasZFighting;
+    bool has = false;
+    for (int i = 0; i < itemCount; i++) {
+        items[i].hasZFighting = false;
+        for (int j = i+1; j < itemCount; j++)
+            if (fabsf(items[i].distance - items[j].distance) < Z_FIGHTING_THRESHOLD)
+                { items[i].hasZFighting = items[j].hasZFighting = has = true; }
+    }
+    return has;
 }
 
 static inline void SortRenderItems(RenderItem* items, int itemCount) {
-	for (int i = 0; i < itemCount - 1; i++) {
-		bool swapped = false;
-		for (int j = 0; j < itemCount - i - 1; j++) {
-			float distanceA = items[j].distance + items[j].depthBias;
-			float distanceB = items[j + 1].distance + items[j + 1].depthBias;
-			if (distanceA < distanceB) {
-				RenderItem temp = items[j];
-				items[j] = items[j + 1];
-				items[j + 1] = temp;
-				swapped = true;
-			}
-		}
-		if (!swapped) break;
-	}
+    for (int i = 0; i < itemCount - 1; i++) {
+        bool swapped = false;
+        for (int j = 0; j < itemCount - i - 1; j++) {
+            if (items[j].distance + items[j].depthBias < items[j+1].distance + items[j+1].depthBias) {
+                RenderItem t = items[j]; items[j] = items[j+1]; items[j+1] = t;
+                swapped = true;
+            }
+        }
+        if (!swapped) break;
+    }
 }
 
-static void RenderBoneInternal(BonesRenderer* renderer, const BoneRenderData* bone, 
-		Vector3 renderPosition, const AnimationFrame* frame,
-		BoneRenderData* allBones, int boneCount) {
-	int texIndex = BonesRenderer_LoadTexture(renderer, bone->texturePath);
-	Texture2D currentTex = renderer->textures[texIndex];
+static void RenderBoneInternal(BonesRenderer* renderer, const BoneRenderData* bone,
+                                Vector3 renderPosition, const AnimationFrame* frame,
+                                BoneRenderData* allBones, int boneCount)
+{
+    int texIndex = BonesRenderer_LoadTexture(renderer, bone->texturePath);
+    Texture2D tex = renderer->textures[texIndex];
+    bool isWrist  = IsWristBone(bone->boneName);
+    bool isAsym   = bone->isAsymmetric;
+    bool useHandAtlas = isWrist || isAsym;
+    int  cols = useHandAtlas ? ASYM_ATLAS_COLS : renderer->physCols;
+    int  rows = useHandAtlas ? ASYM_ATLAS_ROWS : renderer->physRows;
+    float cellW = (float)tex.width  / (float)cols;
+    float cellH = (float)tex.height / (float)rows;
+    Vector2 worldSize = { bone->size * (cellW / cellH), bone->size };
 
-	bool isWrist = IsWristBone(bone->boneName);
-	int usedCols = isWrist ? 5 : renderer->physCols;
-	int usedRows = isWrist ? 5 : renderer->physRows;
+    int ci = 0; float rot = 0.0f; bool mir = false;
+    const Person* bonePerson = frame ? FindPersonByBoneName(frame, bone->boneName) : NULL;
 
-	float physCellW = (float)currentTex.width / (float)usedCols;
-	float physCellH = (float)currentTex.height / (float)usedRows;
-	float aspect = physCellW / physCellH;
-	Vector2 worldSize = {bone->size * aspect, bone->size};
+    if (useHandAtlas) {
+        if (isWrist) {
+            if (bone->orientation.valid)
+                CalculateHandBoneRenderDataWithOrientation(bone, renderer->camera, &ci, &rot, &mir);
+            else
+                CalculateHandBoneRenderData(bone->position, renderer->camera, &ci, &rot, &mir, bone->boneName);
+        } else {
+            CalculateAsymmetricBoneRenderData(bone, renderer->camera, &ci, &rot, &mir);
+        }
+    } else if (bone->orientation.valid) {
+        CalculateLimbBoneRenderData(bone, bonePerson, renderer->camera, &ci, &rot, &mir);
+    }
 
-	int chosenIndex = 0;
-	float rotation = 0.0f;
-	bool mirrored = false;
-	const Person* bonePerson = frame ? FindPersonByBoneName(frame, bone->boneName) : NULL;
+    int maxIdx = cols * rows - 1;
+    if (ci < 0) ci = 0;
+    if (ci > maxIdx) ci %= (maxIdx + 1);
 
-	if (isWrist) {
-		if (bone->orientation.valid) CalculateHandBoneRenderDataWithOrientation(bone, renderer->camera, &chosenIndex, &rotation, &mirrored);
-		else CalculateHandBoneRenderData(bone->position, renderer->camera, &chosenIndex, &rotation, &mirrored, bone->boneName);
-	} else if (bone->orientation.valid) {
-		CalculateLimbBoneRenderData(bone, bonePerson, renderer->camera, &chosenIndex, &rotation, &mirrored);
-	}
+    bool fm;
+    Rectangle src = SrcFromLogical(tex, ci % cols, ci / cols, cols, rows, mir, &fm);
 
-	int maxIndex = usedCols * usedRows - 1;
-	if (chosenIndex < 0) chosenIndex = 0;
-	if (chosenIndex > maxIndex) chosenIndex %= (maxIndex + 1);
-
-	int logicalCol = chosenIndex % usedCols;
-	int logicalRow = chosenIndex / usedCols;
-	bool finalMirror = mirrored;
-	Rectangle src = SrcFromLogical(currentTex, logicalCol, logicalRow, usedCols, usedRows, finalMirror, &finalMirror);
-
-	char conns[3][32];
-	float prios[3];
-	Vector3 neighborPos = {0};
-	bool haveNeighbor = false;
-	if (GetBoneConnectionsWithPriority(bone->boneName, conns, prios)) {
-		for (int k = 0; k < 3 && !haveNeighbor; k++) {
-			if (conns[k][0] == '\0') continue;
-			BoneRenderData* nb = FindRenderBoneByName(allBones, boneCount, conns[k]);
-			if (nb && nb->valid && nb->visible && Vector3Distance(bone->position, nb->position) > MIN_DISTANCE_THRESHOLD) {
-				neighborPos = nb->position;
-				haveNeighbor = true;
-			}
-		}
-	}
-
-	DrawBonetileCustomWithRoll(currentTex, renderer->camera, src, renderPosition, worldSize, rotation,
-			finalMirror, haveNeighbor, neighborPos, bone, bonePerson);
+    char   conns[3][32]; float prios[3];
+    Vector3 neighborPos = {0}; bool haveNeighbor = false;
+    if (GetBoneConnectionsWithPriority(bone->boneName, conns, prios)) {
+        for (int k = 0; k < 3 && !haveNeighbor; k++) {
+            if (!conns[k][0]) continue;
+            BoneRenderData* nb = FindRenderBoneByName(allBones, boneCount, conns[k]);
+            if (nb && nb->valid && nb->visible && Vector3Distance(bone->position, nb->position) > MIN_DISTANCE_THRESHOLD) {
+                neighborPos  = nb->position;
+                haveNeighbor = true;
+            }
+        }
+    }
+    DrawBonetileCustomWithRoll(tex, renderer->camera, src, renderPosition, worldSize, rot, fm,
+                               haveNeighbor, neighborPos, bone, bonePerson);
 }
 
-static inline void BonesRenderer_RenderFrame(BonesRenderer* renderer, 
-		BoneRenderData* bones, int boneCount,
-		HeadRenderData* heads, int headCount, 
-		TorsoRenderData* torsos, int torsoCount,
-		Vector3 autoCenter, bool autoCenterCalculated) {
-	if (!renderer) return;
+static inline void BonesRenderer_RenderFrame(BonesRenderer* renderer,
+        BoneRenderData* bones, int boneCount,
+        HeadRenderData* heads, int headCount,
+        TorsoRenderData* torsos, int torsoCount,
+        Vector3 autoCenter, bool autoCenterCalculated)
+{
+    if (!renderer) return;
+    BeginMode3D(renderer->camera);
+    (void)autoCenter; (void)autoCenterCalculated;
 
-	BeginMode3D(renderer->camera);
-	if (autoCenterCalculated) BonesRenderer_DrawAutoCenter(renderer, autoCenter);
+    int totalItems = boneCount + headCount + torsoCount;
+    if (totalItems > 0) {
+        static RenderItem renderItems[MAX_RENDER_ITEMS];
+        int itemCount = 0;
+        Vector3 camPos = renderer->camera.position;
 
-	int totalItems = boneCount + headCount + torsoCount;
-	if (totalItems > 0) {
-		static RenderItem renderItems[MAX_RENDER_ITEMS];
-		int itemCount = 0;
-		Vector3 camPos = renderer->camera.position;
+        for (int i = 0; i < torsoCount && itemCount < MAX_RENDER_ITEMS; i++) {
+            if (!torsos[i].valid || !torsos[i].visible) continue;
+            renderItems[itemCount++] = (RenderItem){0, i, Vector3Distance(camPos, torsos[i].position), TORSO_BIAS + INDEX_BIAS*i, false};
+        }
+        for (int i = 0; i < boneCount && itemCount < MAX_RENDER_ITEMS; i++) {
+            if (!bones[i].valid || !bones[i].visible) continue;
+            renderItems[itemCount++] = (RenderItem){1, i, Vector3Distance(camPos, bones[i].position), BONE_BIAS + INDEX_BIAS*i, false};
+        }
+        for (int i = 0; i < headCount && itemCount < MAX_RENDER_ITEMS; i++) {
+            if (!heads[i].valid || !heads[i].visible) continue;
+            renderItems[itemCount++] = (RenderItem){2, i, Vector3Distance(camPos, heads[i].position), HEAD_BIAS + INDEX_BIAS*i, false};
+        }
 
-		for (int i = 0; i < torsoCount && itemCount < MAX_RENDER_ITEMS; i++) {
-			const TorsoRenderData* torso = &torsos[i];
-			if (!torso->valid || !torso->visible) continue;
-			renderItems[itemCount++] = (RenderItem){
-				.type = 0, .index = i,
-					.distance = Vector3Distance(camPos, torso->position),
-					.depthBias = TORSO_BIAS + (INDEX_BIAS * i)
-			};
-		}
+        DetectZFighting(renderItems, itemCount);
+        SortRenderItems(renderItems, itemCount);
 
-		for (int i = 0; i < boneCount && itemCount < MAX_RENDER_ITEMS; i++) {
-			const BoneRenderData* bone = &bones[i];
-			if (!bone->valid || !bone->visible) continue;
-			renderItems[itemCount++] = (RenderItem){
-				.type = 1, .index = i,
-					.distance = Vector3Distance(camPos, bone->position),
-					.depthBias = BONE_BIAS + (INDEX_BIAS * i)
-			};
-		}
+        BeginBlendMode(BLEND_ALPHA_PREMULTIPLY);
+        rlEnableDepthTest();
+        rlDisableDepthMask();
 
-		for (int i = 0; i < headCount && itemCount < MAX_RENDER_ITEMS; i++) {
-			const HeadRenderData* head = &heads[i];
-			if (!head->valid || !head->visible) continue;
-			renderItems[itemCount++] = (RenderItem){
-				.type = 2, .index = i,
-					.distance = Vector3Distance(camPos, head->position),
-					.depthBias = HEAD_BIAS + (INDEX_BIAS * i)
-			};
-		}
+        for (int i = 0; i < itemCount; i++) {
+            RenderItem* item = &renderItems[i];
 
-		DetectZFighting(renderItems, itemCount);
-		SortRenderItems(renderItems, itemCount);
+            if (item->type == 2) {
+                const HeadRenderData* curHead = &heads[item->index];
+                for (int j = 0; j < boneCount; j++) {
+                    const BoneRenderData* bone = &bones[j];
+                    if (!bone->valid || !bone->visible || strcmp(bone->boneName, "Neck") != 0) continue;
+                    if (Vector3Distance(bone->position, curHead->position) < 2.0f) {
+                        Vector3 toCam = Vector3Subtract(camPos, bone->position);
+                        float   dist  = Vector3Length(toCam);
+                        Vector3 renderPos = Vector3Add(bone->position,
+                            dist > MIN_DISTANCE_THRESHOLD ? Vector3Scale(Vector3Normalize(toCam), BONE_BIAS + INDEX_BIAS*j) : (Vector3){0});
+                        RenderBoneInternal(renderer, bone, renderPos, NULL, bones, boneCount);
+                    }
+                }
+            }
 
-		BeginBlendMode(BLEND_ALPHA_PREMULTIPLY);
-		rlEnableDepthTest();
-		rlDisableDepthMask();
+            Vector3 itemPos;
+            switch (item->type) {
+                case 0: itemPos = torsos[item->index].position; break;
+                case 1: itemPos = bones[item->index].position;  break;
+                case 2: itemPos = heads[item->index].position;  break;
+                default: continue;
+            }
 
-		const AnimationFrame* frame = NULL;
+            Vector3 toCam = Vector3Subtract(camPos, itemPos);
+            float   dist  = Vector3Length(toCam);
+            Vector3 renderOffset = dist > MIN_DISTANCE_THRESHOLD
+                ? Vector3Scale(Vector3Normalize(toCam), item->depthBias) : (Vector3){0};
 
-		for (int i = 0; i < itemCount; i++) {
-			RenderItem* item = &renderItems[i];
+            switch (item->type) {
+                case 0: {
+                    TorsoRenderData adj = torsos[item->index];
+                    adj.position = Vector3Add(adj.position, renderOffset);
+                    int ti = BonesRenderer_LoadTexture(renderer, adj.texturePath);
+                    DrawTorsoBillboard(renderer->textures[ti], renderer->camera, &adj, renderer->physCols, renderer->physRows);
+                    break;
+                }
+                case 1: {
+                    const BoneRenderData* b = &bones[item->index];
+                    if (strcmp(b->boneName, "Neck") != 0)
+                        RenderBoneInternal(renderer, b, Vector3Add(b->position, renderOffset), NULL, bones, boneCount);
+                    break;
+                }
+                case 2: {
+                    HeadRenderData adj = heads[item->index];
+                    adj.position = Vector3Add(adj.position, renderOffset);
+                    int ti = BonesRenderer_LoadTexture(renderer, adj.texturePath);
+                    DrawHeadBillboard(renderer->textures[ti], renderer->camera, &adj, renderer->physCols, renderer->physRows);
+                    break;
+                }
+            }
+        }
 
-			if (item->type == 2) {
-				const HeadRenderData* currentHead = &heads[item->index];
-				for (int j = 0; j < boneCount; j++) {
-					const BoneRenderData* bone = &bones[j];
-					if (!bone->valid || !bone->visible) continue;
-					if (strcmp(bone->boneName, "Neck") != 0) continue;
-
-					float neckHeadDistance = Vector3Distance(bone->position, currentHead->position);
-					if (neckHeadDistance < 2.0f) {
-						Vector3 toCam = Vector3Subtract(camPos, bone->position);
-						float distance = Vector3Length(toCam);
-						Vector3 renderOffset = {0};
-						if (distance > MIN_DISTANCE_THRESHOLD) {
-							Vector3 toCamNorm = Vector3Normalize(toCam);
-							renderOffset = Vector3Scale(toCamNorm, BONE_BIAS + (INDEX_BIAS * j));
-						}
-						Vector3 renderPosition = Vector3Add(bone->position, renderOffset);
-						RenderBoneInternal(renderer, bone, renderPosition, frame, bones, boneCount);
-					}
-				}
-			}
-
-			Vector3 itemPos;
-			switch (item->type) {
-				case 0: itemPos = torsos[item->index].position; break;
-				case 1: itemPos = bones[item->index].position; break;
-				case 2: itemPos = heads[item->index].position; break;
-				default: continue;
-			}
-
-			Vector3 toCam = Vector3Subtract(camPos, itemPos);
-			float distance = Vector3Length(toCam);
-			Vector3 renderOffset = {0};
-			if (distance > MIN_DISTANCE_THRESHOLD) {
-				Vector3 toCamNorm = Vector3Normalize(toCam);
-				renderOffset = Vector3Scale(toCamNorm, item->depthBias);
-			}
-
-			switch (item->type) {
-				case 0: {
-							const TorsoRenderData* torso = &torsos[item->index];
-							TorsoRenderData adjusted = *torso;
-							adjusted.position = Vector3Add(torso->position, renderOffset);
-							int texIndex = BonesRenderer_LoadTexture(renderer, torso->texturePath);
-							DrawTorsoBillboard(renderer->textures[texIndex], renderer->camera, &adjusted, renderer->physCols, renderer->physRows);
-							break;
-						}
-				case 1: {
-							const BoneRenderData* bone = &bones[item->index];
-							if (strcmp(bone->boneName, "Neck") != 0) {
-								Vector3 renderPosition = Vector3Add(bone->position, renderOffset);
-								RenderBoneInternal(renderer, bone, renderPosition, frame, bones, boneCount);
-							}
-							break;
-						}
-				case 2: {
-							const HeadRenderData* head = &heads[item->index];
-							HeadRenderData adjusted = *head;
-							adjusted.position = Vector3Add(head->position, renderOffset);
-							int texIndex = BonesRenderer_LoadTexture(renderer, head->texturePath);
-							DrawHeadBillboard(renderer->textures[texIndex], renderer->camera, &adjusted, renderer->physCols, renderer->physRows);
-							break;
-						}
-			}
-		}
-
-		EndBlendMode();
-		rlEnableDepthMask();
-	}
-
-	EndMode3D();
+        EndBlendMode();
+        rlEnableDepthMask();
+    }
+    EndMode3D();
 }
 
-static inline void BonesRenderer_DrawAutoCenter(BonesRenderer* renderer, Vector3 autoCenter) {
-(void)renderer;
-(void)autoCenter;
-//if (renderer) DrawSphereWires(autoCenter, 0.05f, 8, 8, ORANGE);
+static inline OrnamentSystem* Ornaments_Create(void) {
+    return (OrnamentSystem*)calloc(1, sizeof(OrnamentSystem));
 }
 
-// ----------------------------------------------------------------------------
-// Animated Character
-// ----------------------------------------------------------------------------
+static inline void Ornaments_Free(OrnamentSystem* system) { free(system); }
 
-static inline AnimatedCharacter* CreateAnimatedCharacter(const char* textureConfigPath, const char* textureSetsPath) {
-	AnimatedCharacter* character = (AnimatedCharacter*)calloc(1, sizeof(AnimatedCharacter));
-	if (!character) return NULL;
-
-	character->renderer = BonesRenderer_Create();
-	if (!character->renderer || !BonesRenderer_Init(character->renderer)) {
-		free(character);
-		return NULL;
-	}
-
-	character->textureSets = BonesTextureSets_Create();
-	if (textureSetsPath) {
-		if (!BonesTextureSets_LoadFromFile(character->textureSets, textureSetsPath))
-			fprintf(stderr, "[WARN] No se pudo cargar texture set: %s\n", textureSetsPath);
-	}
-
-	if (textureConfigPath) {
-		LoadSimpleTextureConfig(&character->textureSystem, textureConfigPath);
-		LoadBoneConfigurations(&character->textureSystem, &character->boneConfigs, &character->boneConfigCount);
-	}
-
-	if (BonesInit(&character->animation, 1000) != BONES_SUCCESS) {
-		BonesRenderer_Free(character->renderer);
-		BonesTextureSets_Free(character->textureSets);
-		free(character);
-		return NULL;
-	}
-
-	character->renderHeadBillboards = true;
-	character->renderTorsoBillboards = true;
-	character->autoPlay = true;
-	character->autoPlaySpeed = 0.1f;
-	character->lastProcessedFrame = -1;
-
-	character->renderConfig = BonesGetDefaultRenderConfig();
-	character->renderConfig.drawDebugSpheres = true;
-	character->renderConfig.debugColor = GREEN;
-	character->renderConfig.debugSphereRadius = 0.035f;
-	character->renderConfig.enableDepthSorting = true;
-	BonesSetRenderConfig(&character->renderConfig);
-
-	character->ornaments = Ornaments_Create();
-	if (textureConfigPath) {
-		Ornaments_LoadFromConfig(character->ornaments, textureConfigPath);
-	}
-
-	SlashTrail_InitSystem(&character->slashTrails);
-	Model3D_InitSystem(&character->model3dAttachments);
-	character->hasWorldTransform = false;
-
-	return character;
+static inline void Ornaments_ApplyPreset(BoneOrnament* ornament, OrnamentPhysicsPreset preset) {
+    if (!ornament) return;
+    ornament->physicsPreset = preset;
+    switch (preset) {
+        case PHYSICS_STIFF:    ornament->stiffness = 100.0f; ornament->damping = 0.95f; ornament->gravityScale = 0.05f; break;
+        case PHYSICS_MEDIUM:   ornament->stiffness =  80.0f; ornament->damping = 0.88f; ornament->gravityScale = 0.18f; break;
+        case PHYSICS_SOFT:     ornament->stiffness =  60.0f; ornament->damping = 0.82f; ornament->gravityScale = 0.28f; break;
+        case PHYSICS_VERYSOFT: ornament->stiffness =  50.0f; ornament->damping = 0.75f; ornament->gravityScale = 0.35f; break;
+    }
 }
 
-static inline void DestroyAnimatedCharacter(AnimatedCharacter* character) {
-    if (!character) return;
+static inline bool Ornaments_LoadFromConfig(OrnamentSystem* system, const char* configPath) {
+    if (!system || !configPath) return false;
+    char* buffer = LoadFileText(configPath);
+    if (!buffer) return false;
 
-    SlashTrail_FreeSystem(&character->slashTrails);
-    Model3D_FreeSystem(&character->model3dAttachments);   /* libera UnloadModel x12 */
-    AnimController_Free(character->animController);
-    BonesTextureSets_Free(character->textureSets);
-    BonesRenderer_Free(character->renderer);
-    free(character->renderBones);
-    free(character->renderHeads);
-    free(character->renderTorsos);
-    CleanupTextureSystem(&character->textureSystem,
-                         &character->boneConfigs, &character->boneConfigCount);
-    BonesFree(&character->animation);
-    Ornaments_Free(character->ornaments);
-    free(character);
+    system->ornamentCount = 0;
+    char lineBuffer[512];
+    const char* lineStart = buffer;
+
+    for (const char* ptr = buffer; *ptr && system->ornamentCount < MAX_ORNAMENTS; ptr++) {
+        if (*ptr != '\n') continue;
+        int lineLen = (int)(ptr - lineStart);
+        if (lineLen > 5 && lineLen < 511 && *lineStart == '@') {
+            memcpy(lineBuffer, lineStart, lineLen);
+            lineBuffer[lineLen] = '\0';
+
+            BoneOrnament* orn = &system->ornaments[system->ornamentCount];
+            memset(orn, 0, sizeof(BoneOrnament));
+
+            char presetStr[64], parentStr[MAX_BONE_NAME_LENGTH];
+            int visible; float ox, oy, oz;
+
+            if (sscanf(lineBuffer, "@%31s %31s %f,%f,%f %255s %d %f %63s %31s",
+                       orn->name, orn->anchorBoneName, &ox, &oy, &oz,
+                       orn->texturePath, &visible, &orn->size, parentStr, presetStr) == 10)
+            {
+                orn->offsetFromAnchor = (Vector3){ox, oy, oz};
+                orn->visible          = (visible != 0);
+
+                if (strcmp(parentStr, "-") == 0) {
+                    orn->isChained       = false;
+                    orn->chainParentIndex = -1;
+                } else {
+                    orn->isChained = true;
+                    strncpy(orn->chainParentName, parentStr, MAX_BONE_NAME_LENGTH - 1);
+                    orn->chainRestLength = Vector3Length(orn->offsetFromAnchor);
+                }
+
+                if      (strcmp(presetStr, "stiff")    == 0) Ornaments_ApplyPreset(orn, PHYSICS_STIFF);
+                else if (strcmp(presetStr, "medium")   == 0) Ornaments_ApplyPreset(orn, PHYSICS_MEDIUM);
+                else if (strcmp(presetStr, "soft")     == 0) Ornaments_ApplyPreset(orn, PHYSICS_SOFT);
+                else if (strcmp(presetStr, "verysoft") == 0) Ornaments_ApplyPreset(orn, PHYSICS_VERYSOFT);
+
+                orn->valid = true;
+                system->ornamentCount++;
+            }
+        }
+        lineStart = ptr + 1;
+    }
+    UnloadFileText(buffer);
+
+    for (int i = 0; i < system->ornamentCount; i++) {
+        BoneOrnament* orn = &system->ornaments[i];
+        if (!orn->isChained) continue;
+        for (int j = 0; j < system->ornamentCount; j++) {
+            if (strcmp(system->ornaments[j].name, orn->chainParentName) == 0) {
+                orn->chainParentIndex = j; break;
+            }
+        }
+    }
+
+    system->loaded = (system->ornamentCount > 0);
+    if (system->loaded) TraceLog(LOG_INFO, "Loaded %d ornaments", system->ornamentCount);
+    return system->loaded;
+}
+
+static inline Vector3 Ornaments_GetAnchorPosition(const AnimationFrame* frame, const char* anchorName) {
+    if (!frame || !anchorName) return (Vector3){0,0,0};
+    for (int p = 0; p < frame->personCount; p++) {
+        const Person* person = &frame->persons[p];
+        if (!person->active) continue;
+        for (int b = 0; b < person->boneCount; b++) {
+            const Bone* bone = &person->bones[b];
+            if (strcmp(bone->name, anchorName) == 0 && bone->position.valid)
+                return bone->position.position;
+        }
+        if      (strcmp(anchorName, "Head")  == 0) return CalculateHeadPosition(person);
+        else if (strcmp(anchorName, "Chest") == 0) return CalculateChestPosition(person);
+        else if (strcmp(anchorName, "Hip")   == 0) return CalculateHipPosition(person);
+        Vector3 mid = CalculateBoneMidpoint(anchorName, person);
+        if (Vector3Length(mid) > 0.001f) return mid;
+    }
+    return (Vector3){0,0,0};
+}
+
+static inline BoneOrientation Ornaments_GetAnchorOrientation(const AnimationFrame* frame, const char* anchorName) {
+    BoneOrientation null = {0};
+    if (!frame || !anchorName) return null;
+    for (int p = 0; p < frame->personCount; p++) {
+        const Person* person = &frame->persons[p];
+        if (!person->active) continue;
+        for (int b = 0; b < person->boneCount; b++) {
+            const Bone* bone = &person->bones[b];
+            if (strcmp(bone->name, anchorName) == 0 && bone->position.valid)
+                return CalculateBoneOrientation(anchorName, person, bone->position.position);
+        }
+        if (strcmp(anchorName, "Head") == 0) {
+            HeadOrientation h = CalculateHeadOrientation(person);
+            return (BoneOrientation){h.position, h.forward, h.up, h.right, h.yaw, h.pitch, h.roll, h.valid};
+        }
+        if (strcmp(anchorName, "Chest") == 0) {
+            TorsoOrientation t = CalculateChestOrientation(person);
+            return (BoneOrientation){t.position, t.forward, t.up, t.right, t.yaw, t.pitch, t.roll, t.valid};
+        }
+        if (strcmp(anchorName, "Hip") == 0) {
+            TorsoOrientation t = CalculateHipOrientation(person);
+            return (BoneOrientation){t.position, t.forward, t.up, t.right, t.yaw, t.pitch, t.roll, t.valid};
+        }
+        Vector3 pos = CalculateBoneMidpoint(anchorName, person);
+        if (Vector3Length(pos) > 0.001f) return CalculateBoneOrientation(anchorName, person, pos);
+    }
+    return null;
+}
+
+static inline void Ornaments_InitializePhysics(OrnamentSystem* system, const AnimationFrame* frame) {
+    if (!system || !frame) return;
+    for (int i = 0; i < system->ornamentCount; i++) {
+        BoneOrnament* orn = &system->ornaments[i];
+        if (!orn->valid || !orn->visible) continue;
+
+        Vector3       anchorPos;
+        BoneOrientation anchorOrient;
+        if (orn->isChained && orn->chainParentIndex >= 0) {
+            anchorPos    = system->ornaments[orn->chainParentIndex].currentPosition;
+            anchorOrient = (BoneOrientation){.forward={0,0,1},.up={0,1,0},.right={1,0,0},.valid=true};
+        } else {
+            anchorPos    = Ornaments_GetAnchorPosition(frame, orn->anchorBoneName);
+            anchorOrient = Ornaments_GetAnchorOrientation(frame, orn->anchorBoneName);
+        }
+
+        Vector3 worldOffset = {0,0,0};
+        if (anchorOrient.valid) {
+            Vector3 lo = orn->offsetFromAnchor;
+            worldOffset.x = lo.x*anchorOrient.right.x + lo.y*anchorOrient.up.x + lo.z*anchorOrient.forward.x;
+            worldOffset.y = lo.x*anchorOrient.right.y + lo.y*anchorOrient.up.y + lo.z*anchorOrient.forward.y;
+            worldOffset.z = lo.x*anchorOrient.right.z + lo.y*anchorOrient.up.z + lo.z*anchorOrient.forward.z;
+        } else {
+            worldOffset = orn->offsetFromAnchor;
+        }
+
+        orn->currentPosition  = Vector3Add(anchorPos, worldOffset);
+        orn->previousPosition = orn->currentPosition;
+        orn->velocity         = (Vector3){0,0,0};
+        orn->initialized      = true;
+    }
+}
+
+static inline void Ornaments_SolveChainConstraint(BoneOrnament* child, BoneOrnament* parent) {
+    if (!child || !parent || !child->isChained) return;
+    Vector3 toParent = Vector3Subtract(parent->currentPosition, child->currentPosition);
+    float   dist     = Vector3Length(toParent);
+    if (dist < 0.0001f) return;
+    Vector3 correction = Vector3Scale(Vector3Normalize(toParent), (dist - child->chainRestLength) * 0.5f);
+    child->currentPosition = Vector3Add(child->currentPosition, correction);
+}
+
+static inline void ClampOrnamentToAnchorY(BoneOrnament* orn, Vector3 anchorPos, float maxDownOffset) {
+    float minY = anchorPos.y + orn->offsetFromAnchor.y - maxDownOffset;
+    if (orn->currentPosition.y < minY) { orn->currentPosition.y = minY; orn->velocity.y = 0.0f; }
+}
+
+static inline void Ornaments_UpdatePhysics(OrnamentSystem* system, const AnimationFrame* frame, float deltaTime) {
+    if (!system || !frame || deltaTime <= 0.0f || !system->loaded) return;
+    if (deltaTime > 0.1f) deltaTime = 0.1f;
+
+    for (int i = 0; i < system->ornamentCount; i++) {
+        BoneOrnament* orn = &system->ornaments[i];
+        if (!orn->valid || !orn->visible || orn->isChained) continue;
+
+        Vector3       anchorPos    = Ornaments_GetAnchorPosition(frame, orn->anchorBoneName);
+        BoneOrientation anchorOrient = Ornaments_GetAnchorOrientation(frame, orn->anchorBoneName);
+        Vector3 worldOffset = {0,0,0};
+        if (anchorOrient.valid) {
+            Vector3 lo = orn->offsetFromAnchor;
+            worldOffset.x = lo.x*anchorOrient.right.x + lo.y*anchorOrient.up.x + lo.z*anchorOrient.forward.x;
+            worldOffset.y = lo.x*anchorOrient.right.y + lo.y*anchorOrient.up.y + lo.z*anchorOrient.forward.y;
+            worldOffset.z = lo.x*anchorOrient.right.z + lo.y*anchorOrient.up.z + lo.z*anchorOrient.forward.z;
+        } else worldOffset = orn->offsetFromAnchor;
+
+        Vector3 targetPos   = Vector3Add(anchorPos, worldOffset);
+        orn->velocity = Vector3Add(orn->velocity, Vector3Scale(Vector3Subtract(targetPos, orn->currentPosition), orn->stiffness * deltaTime));
+        orn->velocity = Vector3Add(orn->velocity, Vector3Scale((Vector3){0,-9.8f*orn->gravityScale,0}, deltaTime));
+        orn->velocity = Vector3Scale(orn->velocity, orn->damping);
+        orn->previousPosition = orn->currentPosition;
+        orn->currentPosition  = Vector3Add(orn->currentPosition, Vector3Scale(orn->velocity, deltaTime));
+        ClampOrnamentToAnchorY(orn, anchorPos, 0.05f);
+    }
+
+    for (int i = 0; i < system->ornamentCount; i++) {
+        BoneOrnament* orn = &system->ornaments[i];
+        if (!orn->valid || !orn->visible || !orn->isChained) continue;
+        BoneOrnament* parent    = &system->ornaments[orn->chainParentIndex];
+        Vector3       anchorPos = Ornaments_GetAnchorPosition(frame, orn->anchorBoneName);
+        Vector3       targetPos = Vector3Add(parent->currentPosition, orn->offsetFromAnchor);
+
+        orn->velocity = Vector3Add(orn->velocity, Vector3Scale(Vector3Subtract(targetPos, orn->currentPosition), orn->stiffness * deltaTime));
+        orn->velocity = Vector3Add(orn->velocity, Vector3Scale((Vector3){0,-9.8f*orn->gravityScale,0}, deltaTime));
+        orn->velocity = Vector3Scale(orn->velocity, orn->damping);
+        orn->previousPosition = orn->currentPosition;
+        orn->currentPosition  = Vector3Add(orn->currentPosition, Vector3Scale(orn->velocity, deltaTime));
+        Ornaments_SolveChainConstraint(orn, parent);
+        ClampOrnamentToAnchorY(orn, anchorPos, 0.10f);
+    }
+}
+
+static inline void Ornaments_CollectForRendering(OrnamentSystem* system,
+        BoneRenderData** renderBones, int* renderBonesCount, int* renderBonesCapacity, Camera camera)
+{
+    if (!system || !system->loaded || !renderBones || !renderBonesCount || !renderBonesCapacity) return;
+
+    for (int i = 0; i < system->ornamentCount; i++) {
+        BoneOrnament* orn = &system->ornaments[i];
+        if (!orn->valid || !orn->visible || !orn->initialized || !orn->name[0]) continue;
+
+        float distance = Vector3Distance(camera.position, orn->currentPosition);
+        if (distance > 50.0f) continue;
+        if (*renderBonesCount >= *renderBonesCapacity) {
+            if (!ResizeRenderBonesArray(renderBones, renderBonesCapacity, *renderBonesCapacity + 32)) return;
+        }
+
+        BoneRenderData* rd = &(*renderBones)[*renderBonesCount];
+        memset(rd, 0, sizeof(BoneRenderData));
+        if (!orn->texturePath[0]) continue;
+
+        strncpy(rd->boneName,    orn->name,        MAX_BONE_NAME_LENGTH - 1); rd->boneName[MAX_BONE_NAME_LENGTH - 1] = '\0';
+        strncpy(rd->texturePath, orn->texturePath, MAX_FILE_PATH_LENGTH  - 1); rd->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
+
+        rd->position = orn->currentPosition;
+        rd->distance = distance;
+        rd->size     = orn->size;
+        rd->visible  = true;
+        rd->valid    = true;
+
+        rd->orientation.position = rd->position;
+        rd->orientation.forward  = (Vector3){0,0,-1};
+        rd->orientation.up       = (Vector3){0,1,0};
+        rd->orientation.right    = (Vector3){-1,0,0};
+
+        Vector3 toCamera = Vector3Subtract(camera.position, rd->position);
+        rd->orientation.yaw   = (Vector3Length(toCamera) > 0.001f) ? atan2f(toCamera.x, toCamera.z) : 0.0f;
+        rd->orientation.pitch = 0.0f;
+        rd->orientation.roll  = 0.0f;
+        rd->orientation.valid = true;
+        (*renderBonesCount)++;
+    }
+}
+
+static inline Vector3 SlashTrail__GetBonePos(const AnimationFrame* frame, const char* personId, const char* boneName) {
+    if (!frame || !boneName) return (Vector3){0,0,0};
+    for (int p = 0; p < frame->personCount; p++) {
+        const Person* person = &frame->persons[p];
+        if (personId && personId[0] && strcmp(person->personId, personId) != 0) continue;
+        for (int b = 0; b < person->boneCount; b++) {
+            const Bone* bone = &person->bones[b];
+            if (strcmp(bone->name, boneName) == 0 && bone->position.valid)
+                return bone->position.position;
+        }
+        if (strcmp(boneName,"RightHand") == 0 || strcmp(boneName,"RWrist") == 0) return GetBonePositionByName(person, "RWrist");
+        if (strcmp(boneName,"LeftHand")  == 0 || strcmp(boneName,"LWrist") == 0) return GetBonePositionByName(person, "LWrist");
+        if (strcmp(boneName,"Head")      == 0) return CalculateHeadPosition(person);
+    }
+    return (Vector3){0,0,0};
+}
+
+static inline Color SlashTrail__LerpColor(Color a, Color b, float t) {
+    t = fmaxf(0.0f, fminf(1.0f, t));
+    return (Color){
+        (unsigned char)(a.r + (int)((b.r - a.r) * t)),
+        (unsigned char)(a.g + (int)((b.g - a.g) * t)),
+        (unsigned char)(a.b + (int)((b.b - a.b) * t)),
+        (unsigned char)(a.a + (int)((b.a - a.a) * t))
+    };
+}
+
+static inline float SlashTrail__LerpF(float a, float b, float t) {
+    return a + (b - a) * fmaxf(0.0f, fminf(1.0f, t));
+}
+
+static inline Vector3 SlashTrail__GetEmitPos(const AnimationFrame* frame, const char* personId, const SlashEventConfig* ev) {
+    if (!frame || !ev) return (Vector3){0,0,0};
+    Vector3 bonePos = SlashTrail__GetBonePos(frame, personId, ev->boneName);
+    if (fabsf(ev->emitOffsetX) < 0.0001f && fabsf(ev->emitOffsetY) < 0.0001f && fabsf(ev->emitOffsetZ) < 0.0001f)
+        return bonePos;
+
+    const Person* person = NULL;
+    for (int p = 0; p < frame->personCount; p++) {
+        if (!frame->persons[p].active) continue;
+        if (personId && personId[0]) { if (strcmp(frame->persons[p].personId, personId) == 0) { person = &frame->persons[p]; break; } }
+        else { person = &frame->persons[p]; break; }
+    }
+    if (!person) return bonePos;
+
+    Vector3 fwd = {0,0,1}, up = {0,1,0}, right = {1,0,0};
+    const char* bn = ev->boneName;
+    const char* prox = strcmp(bn,"RWrist")==0 ? "RElbow" : strcmp(bn,"LWrist")==0 ? "LElbow" :
+                       strcmp(bn,"RElbow")==0 ? "RShoulder" : strcmp(bn,"LElbow")==0 ? "LShoulder" :
+                       strcmp(bn,"RAnkle")==0 ? "RKnee"  : strcmp(bn,"LAnkle")==0 ? "LKnee"  :
+                       strcmp(bn,"RKnee") ==0 ? "RHip"   : strcmp(bn,"LKnee") ==0 ? "LHip"   : NULL;
+    Vector3 proxPos = prox ? GetBonePositionByName(person, prox) : (Vector3){bonePos.x, bonePos.y - 0.1f, bonePos.z};
+    Vector3 dir = Vector3Subtract(bonePos, proxPos);
+    float   len = Vector3Length(dir);
+    if (len > 1e-4f) {
+        fwd = Vector3Scale(dir, 1.0f / len);
+        Vector3 wu = {0,1,0};
+        if (fabsf(Vector3DotProduct(fwd, wu)) > 0.95f) wu = (Vector3){0,0,1};
+        right = SafeNormalize(Vector3CrossProduct(fwd, wu));
+        up    = SafeNormalize(Vector3CrossProduct(right, fwd));
+    }
+
+    return (Vector3){
+        bonePos.x + right.x*ev->emitOffsetX + up.x*ev->emitOffsetY + fwd.x*ev->emitOffsetZ,
+        bonePos.y + right.y*ev->emitOffsetX + up.y*ev->emitOffsetY + fwd.y*ev->emitOffsetZ,
+        bonePos.z + right.z*ev->emitOffsetX + up.z*ev->emitOffsetY + fwd.z*ev->emitOffsetZ,
+    };
+}
+
+static inline void SlashTrail_InitSystem(SlashTrailSystem* sys) {
+    if (sys) memset(sys, 0, sizeof(SlashTrailSystem));
+}
+
+static inline void SlashTrail_FreeSystem(SlashTrailSystem* sys) {
+    if (!sys) return;
+    for (int i = 0; i < SLASH_TRAIL_MAX_ACTIVE; i++) {
+        SlashTrail* t = &sys->trails[i];
+        if (t->hasTexture) { UnloadTexture(t->texture); t->hasTexture = false; }
+    }
+    memset(sys, 0, sizeof(SlashTrailSystem));
+}
+
+static inline void SlashTrail_Activate(SlashTrailSystem* sys, int slashIndex, const SlashEventConfig* config) {
+    if (!sys || !config) return;
+    for (int i = 0; i < SLASH_TRAIL_MAX_ACTIVE; i++)
+        if (sys->trails[i].slashIndex == slashIndex && sys->trails[i].alive) return;
+
+    SlashTrail* slot = NULL;
+    for (int i = 0; i < SLASH_TRAIL_MAX_ACTIVE; i++)
+        if (!sys->trails[i].alive) { slot = &sys->trails[i]; break; }
+    if (!slot) return;
+
+    memset(slot, 0, sizeof(SlashTrail));
+    slot->active     = true;
+    slot->alive      = true;
+    slot->slashIndex = slashIndex;
+    slot->config     = *config;
+
+    int maxSeg = (config->segments > 0 ? config->segments : 24);
+    if (maxSeg > SLASH_TRAIL_MAX_SEGMENTS) maxSeg = SLASH_TRAIL_MAX_SEGMENTS;
+    slot->config.segments = maxSeg;
+    slot->spawnRate       = config->lifetime / (float)maxSeg;
+    if (slot->spawnRate < 0.006f) slot->spawnRate = 0.006f;
+
+    if (config->texturePath[0]) {
+        slot->texture    = LoadTexture(config->texturePath);
+        slot->hasTexture = (slot->texture.id != 0);
+    }
+}
+
+static inline void SlashTrail_Deactivate(SlashTrailSystem* sys, int slashIndex) {
+    if (!sys) return;
+    for (int i = 0; i < SLASH_TRAIL_MAX_ACTIVE; i++)
+        if (sys->trails[i].slashIndex == slashIndex) sys->trails[i].active = false;
+}
+
+static inline void SlashTrail_UpdateTrail(SlashTrailSystem* sys, float deltaTime, int slashIndex, Vector3 bonePosition) {
+    if (!sys) return;
+    for (int i = 0; i < SLASH_TRAIL_MAX_ACTIVE; i++) {
+        SlashTrail* trail = &sys->trails[i];
+        if (!trail->alive || trail->slashIndex != slashIndex) continue;
+
+        for (int p = 0; p < trail->config.segments; p++) {
+            SlashTrailPoint* pt = &trail->points[p];
+            if (!pt->active) continue;
+            pt->age += deltaTime;
+            if (pt->age >= pt->lifetime) pt->active = false;
+        }
+
+        if (trail->active) {
+            trail->spawnTimer += deltaTime;
+            if (trail->spawnTimer >= trail->spawnRate) {
+                trail->spawnTimer = 0.0f;
+                int slot = -1;
+                for (int p = 0; p < trail->config.segments; p++) {
+                    if (!trail->points[p].active) { slot = p; break; }
+                }
+                if (slot >= 0) {
+                    trail->points[slot].position = bonePosition;
+                    trail->points[slot].age      = 0.0f;
+                    trail->points[slot].lifetime = trail->config.lifetime;
+                    trail->points[slot].active   = true;
+                    if (trail->pointCount < trail->config.segments) trail->pointCount++;
+                }
+            }
+        }
+
+        bool anyAlive = false;
+        for (int p = 0; p < trail->config.segments; p++) if (trail->points[p].active) { anyAlive = true; break; }
+        if (!anyAlive && !trail->active) {
+            if (trail->hasTexture) { UnloadTexture(trail->texture); trail->hasTexture = false; }
+            memset(trail, 0, sizeof(SlashTrail));
+        }
+        trail->alive = anyAlive;
+    }
+}
+
+static inline void SlashTrail_Draw(SlashTrailSystem* sys, Camera camera) {
+    if (!sys) return;
+    (void)camera;
+
+    rlDisableBackfaceCulling();
+    rlDisableDepthTest();
+    BeginBlendMode(BLEND_ADDITIVE);
+
+    for (int i = 0; i < SLASH_TRAIL_MAX_ACTIVE; i++) {
+        SlashTrail* trail = &sys->trails[i];
+        if (!trail->alive) continue;
+
+        static SlashTrailPoint* livePoints[SLASH_TRAIL_MAX_SEGMENTS];
+        int lc = 0;
+        for (int p = 0; p < trail->config.segments; p++)
+            if (trail->points[p].active) livePoints[lc++] = &trail->points[p];
+        if (lc < 2) continue;
+
+        Vector3 axis = {0, 1, 0};
+
+        for (int p = 0; p < lc - 1; p++) {
+            SlashTrailPoint* curr = livePoints[p];
+            SlashTrailPoint* next = livePoints[p + 1];
+
+            float tC = curr->age / curr->lifetime;
+            float tN = next->age / next->lifetime;
+            Color colA = SlashTrail__LerpColor(trail->config.colorStart, trail->config.colorEnd, tC);
+            Color colB = SlashTrail__LerpColor(trail->config.colorStart, trail->config.colorEnd, tN);
+            Color colC = colB;
+
+            float wCurr = SlashTrail__LerpF(trail->config.widthStart, trail->config.widthEnd, tC);
+            float wNext = SlashTrail__LerpF(trail->config.widthStart, trail->config.widthEnd, tN);
+
+            Vector3 segDir = Vector3Subtract(next->position, curr->position);
+            if (Vector3Length(segDir) < 1e-6f) continue;
+            segDir = SafeNormalize(segDir);
+            Vector3 perp = Vector3Normalize(Vector3CrossProduct(segDir, axis));
+
+            Vector3 c0 = Vector3Add(curr->position, Vector3Scale(perp,  wCurr * 0.5f));
+            Vector3 c1 = Vector3Add(curr->position, Vector3Scale(perp, -wCurr * 0.5f));
+            Vector3 n0 = Vector3Add(next->position, Vector3Scale(perp,  wNext * 0.5f));
+            Vector3 n1 = Vector3Add(next->position, Vector3Scale(perp, -wNext * 0.5f));
+
+            DrawTriangle3D(c0, n0, c1, colA);
+            DrawTriangle3D(n0, n1, c1, colB);
+            DrawTriangle3D(c1, n0, c0, colA);
+            DrawTriangle3D(c1, n1, n0, colB);
+
+            if (trail->hasTexture && trail->texture.id > 0) {
+                rlSetTexture(trail->texture.id);
+                rlBegin(RL_QUADS);
+                float uC = (float)p       / (float)(lc - 1);
+                float uN = (float)(p + 1) / (float)(lc - 1);
+                rlColor4ub(colA.r, colA.g, colA.b, colA.a); rlTexCoord2f(uC, 0.0f); rlVertex3f(c0.x, c0.y, c0.z);
+                rlColor4ub(colB.r, colB.g, colB.b, colB.a); rlTexCoord2f(uN, 0.0f); rlVertex3f(n0.x, n0.y, n0.z);
+                rlColor4ub(colC.r, colC.g, colC.b, colC.a); rlTexCoord2f(uN, 1.0f); rlVertex3f(n1.x, n1.y, n1.z);
+                rlColor4ub(colA.r, colA.g, colA.b, colA.a); rlTexCoord2f(uC, 1.0f); rlVertex3f(c1.x, c1.y, c1.z);
+                rlEnd();
+                rlSetTexture(0);
+            }
+        }
+    }
+
+    EndBlendMode();
+    rlEnableBackfaceCulling();
+    rlEnableDepthTest();
+}
+
+static inline void SlashTrail_Tick(SlashTrailSystem* sys, float deltaTime, int currentFrame,
+        const SlashEventConfig* events, int eventCount, const AnimationFrame* frame,
+        const char* personId, Vector3 worldPos, Vector3 pivot, Matrix rot, bool applyWorldTransform)
+{
+    if (!sys || !events || !frame) return;
+
+    for (int e = 0; e < eventCount; e++) {
+        const SlashEventConfig* ev = &events[e];
+        bool inRange = (currentFrame >= ev->frameStart && currentFrame <= ev->frameEnd);
+
+        bool exists = false;
+        for (int i = 0; i < SLASH_TRAIL_MAX_ACTIVE; i++)
+            if (sys->trails[i].alive && sys->trails[i].slashIndex == e) { exists = true; break; }
+
+        if (inRange && !exists) SlashTrail_Activate(sys, e, ev);
+        if (!inRange)           SlashTrail_Deactivate(sys, e);
+
+        if (inRange) {
+            Vector3 bonePos = SlashTrail__GetEmitPos(frame, personId, ev);
+            if (applyWorldTransform) {
+                Vector3 rel = Vector3Subtract(bonePos, pivot);
+                bonePos = Vector3Add(Vector3Add(worldPos, pivot), Vector3Transform(rel, rot));
+            }
+            SlashTrail_UpdateTrail(sys, deltaTime, e, bonePos);
+        } else if (exists) {
+            for (int ti = 0; ti < SLASH_TRAIL_MAX_ACTIVE; ti++) {
+                SlashTrail* tr = &sys->trails[ti];
+                if (!tr->alive || tr->slashIndex != e) continue;
+                tr->active    = false;
+                tr->spawnTimer = 0.0f;
+                bool anyAlive = false;
+                for (int p = 0; p < tr->config.segments; p++) {
+                    SlashTrailPoint* pt = &tr->points[p];
+                    if (!pt->active) continue;
+                    pt->age += deltaTime;
+                    if (pt->age >= pt->lifetime) pt->active = false;
+                    else anyAlive = true;
+                }
+                if (!anyAlive) {
+                    if (tr->hasTexture) { UnloadTexture(tr->texture); tr->hasTexture = false; }
+                    memset(tr, 0, sizeof(SlashTrail));
+                } else tr->alive = true;
+            }
+        }
+    }
+}
+
+static inline void Model3D_InitSystem(Model3DAttachmentSystem* sys) {
+    if (sys) memset(sys, 0, sizeof(Model3DAttachmentSystem));
+}
+
+static inline void Model3D_FreeSystem(Model3DAttachmentSystem* sys) {
+    if (!sys) return;
+    for (int i = 0; i < sys->instanceCount; i++)
+        if (sys->instances[i].loaded) { UnloadModel(sys->instances[i].model); sys->instances[i].loaded = false; }
+    sys->instanceCount = 0;
+}
+
+static inline void Model3D_LoadFromClip(Model3DAttachmentSystem* sys, const AnimationClipMetadata* clip) {
+    if (!sys || !clip || !clip->valid) return;
+
+    int eventCount = clip->model3dEventCount;
+    if (eventCount <= 0 || eventCount > BONES_MAX_MODEL3D_EVENTS) return;
+
+    Model3DEventConfig events[BONES_MAX_MODEL3D_EVENTS];
+    for (int i = 0; i < eventCount; i++) events[i] = clip->model3dEvents[i];
+
+    Model3D_FreeSystem(sys);
+
+    for (int i = 0; i < eventCount && sys->instanceCount < BONES_MAX_MODEL3D_EVENTS; i++) {
+        const Model3DEventConfig* cfg = &events[i];
+        if (!cfg->valid || !cfg->modelPath[0]) continue;
+
+        Model3DInstance* inst = &sys->instances[sys->instanceCount];
+        inst->config  = *cfg;
+        inst->visible = false;
+        inst->loaded  = false;
+
+        if (FileExists(cfg->modelPath)) {
+            inst->model  = LoadModel(cfg->modelPath);
+            inst->loaded = true;
+        }
+        sys->instanceCount++;
+    }
+}
+
+static inline void Model3D_Tick(Model3DAttachmentSystem* sys, int currentFrame) {
+    if (!sys) return;
+    for (int i = 0; i < sys->instanceCount; i++) {
+        Model3DInstance* inst = &sys->instances[i];
+        inst->visible = inst->loaded &&
+            currentFrame >= inst->config.frameStart && currentFrame <= inst->config.frameEnd;
+    }
+}
+
+static inline void Model3D_Draw(Model3DAttachmentSystem* sys, const AnimationFrame* frame,
+                                 const char* personId, Vector3 worldPos, Vector3 pivot,
+                                 Matrix rot, bool applyWorldTransform)
+{
+    if (!sys || !frame) return;
+
+    for (int i = 0; i < sys->instanceCount; i++) {
+        Model3DInstance* inst = &sys->instances[i];
+        if (!inst->visible || !inst->loaded) continue;
+
+        Vector3 bonePos = SlashTrail__GetBonePos(frame, personId, inst->config.boneName);
+
+        const Person* person = NULL;
+        for (int p = 0; p < frame->personCount; p++) {
+            if (!frame->persons[p].active) continue;
+            if (personId && personId[0]) { if (strcmp(frame->persons[p].personId, personId) == 0) { person = &frame->persons[p]; break; } }
+            else { person = &frame->persons[p]; break; }
+        }
+
+        Vector3 bFwd = {0,0,1}, bUp = {0,1,0}, bRight = {1,0,0};
+        if (person) {
+            const char* bn = inst->config.boneName;
+            const char* prox = strcmp(bn,"RWrist")==0 ? "RElbow"  : strcmp(bn,"LWrist")==0 ? "LElbow"  :
+                               strcmp(bn,"RElbow")==0 ? "RShoulder": strcmp(bn,"LElbow")==0 ? "LShoulder":
+                               strcmp(bn,"RAnkle")==0 ? "RKnee"   : strcmp(bn,"LAnkle")==0 ? "LKnee"   :
+                               strcmp(bn,"RKnee") ==0 ? "RHip"    : strcmp(bn,"LKnee") ==0 ? "LHip"    : NULL;
+            Vector3 proxPos = prox ? GetBonePositionByName(person, prox) : (Vector3){bonePos.x, bonePos.y-0.1f, bonePos.z};
+            Vector3 dir = Vector3Subtract(bonePos, proxPos);
+            float   len = Vector3Length(dir);
+            if (len > 1e-4f) {
+                bFwd = Vector3Scale(dir, 1.0f / len);
+                Vector3 wu = {0,1,0};
+                if (fabsf(Vector3DotProduct(bFwd, wu)) > 0.95f) wu = (Vector3){0,0,1};
+                bRight = SafeNormalize(Vector3CrossProduct(bFwd, wu));
+                bUp    = SafeNormalize(Vector3CrossProduct(bRight, bFwd));
+            }
+        }
+
+        if (applyWorldTransform) {
+            Vector3 rel = Vector3Subtract(bonePos, pivot);
+            bonePos = Vector3Add(Vector3Add(worldPos, pivot), Vector3Transform(rel, rot));
+            bFwd    = Vector3Transform(bFwd,   rot);
+            bUp     = Vector3Transform(bUp,    rot);
+            bRight  = Vector3Transform(bRight, rot);
+        }
+
+        if (fabsf(inst->config.rotationEuler.x) > 0.001f) {
+            float a = DEG2RAD * inst->config.rotationEuler.x;
+            Vector3 nF = SafeNormalize(Vector3Add(Vector3Scale(bFwd, cosf(a)), Vector3Scale(bUp, sinf(a))));
+            bUp  = SafeNormalize(Vector3CrossProduct(bRight, nF));
+            bFwd = nF;
+        }
+        if (fabsf(inst->config.rotationEuler.y) > 0.001f) {
+            float a = DEG2RAD * inst->config.rotationEuler.y;
+            Vector3 nF = SafeNormalize(Vector3Add(Vector3Scale(bFwd, cosf(a)), Vector3Scale(bRight, -sinf(a))));
+            bRight = SafeNormalize(Vector3CrossProduct(nF, bUp));
+            bFwd   = nF;
+        }
+        if (fabsf(inst->config.rotationEuler.z) > 0.001f) {
+            float a = DEG2RAD * inst->config.rotationEuler.z;
+            Vector3 nU = SafeNormalize(Vector3Add(Vector3Scale(bUp, cosf(a)), Vector3Scale(bRight, sinf(a))));
+            bRight = SafeNormalize(Vector3CrossProduct(bFwd, nU));
+            bUp    = nU;
+        }
+
+        bonePos = Vector3Add(bonePos, Vector3Scale(bRight, inst->config.offset.x));
+        bonePos = Vector3Add(bonePos, Vector3Scale(bUp,    inst->config.offset.y));
+        bonePos = Vector3Add(bonePos, Vector3Scale(bFwd,   inst->config.offset.z));
+
+        float s = inst->config.scale;
+        inst->model.transform = (Matrix){
+            bRight.x*s, bUp.x*s, bFwd.x*s, bonePos.x,
+            bRight.y*s, bUp.y*s, bFwd.y*s, bonePos.y,
+            bRight.z*s, bUp.z*s, bFwd.z*s, bonePos.z,
+            0.0f,       0.0f,    0.0f,      1.0f
+        };
+        DrawModel(inst->model, (Vector3){0,0,0}, 1.0f, WHITE);
+    }
 }
 
 static inline void CopyAnimationFrame(AnimationFrame* dest, const AnimationFrame* src) {
-	if (!dest || !src) return;
+    if (!dest || !src) return;
+    dest->frameNumber = src->frameNumber;
+    dest->valid       = src->valid;
+    dest->personCount = src->personCount;
 
-	dest->frameNumber = src->frameNumber;
-	dest->valid = src->valid;
-	dest->personCount = src->personCount;
+    for (int p = 0; p < src->personCount && p < MAX_PERSONS; p++) {
+        Person*       dp = &dest->persons[p];
+        const Person* sp = &src->persons[p];
+        strncpy(dp->personId, sp->personId, 15); dp->personId[15] = '\0';
+        dp->active    = sp->active;
+        dp->boneCount = sp->boneCount;
 
-	for (int p = 0; p < src->personCount && p < MAX_PERSONS; p++) {
-		Person* destPerson = &dest->persons[p];
-		const Person* srcPerson = &src->persons[p];
-
-		strncpy(destPerson->personId, srcPerson->personId, 15);
-		destPerson->personId[15] = '\0';
-		destPerson->active = srcPerson->active;
-		destPerson->boneCount = srcPerson->boneCount;
-
-		for (int b = 0; b < srcPerson->boneCount && b < MAX_BONES_PER_PERSON; b++) {
-			Bone* destBone = &destPerson->bones[b];
-			const Bone* srcBone = &srcPerson->bones[b];
-
-			strncpy(destBone->name, srcBone->name, MAX_BONE_NAME_LENGTH - 1);
-			destBone->name[MAX_BONE_NAME_LENGTH - 1] = '\0';
-
-			destBone->position.position = srcBone->position.position;
-			destBone->position.valid = srcBone->position.valid;
-			destBone->position.confidence = srcBone->position.confidence;
-
-			destBone->size = srcBone->size;
-			destBone->rotation = srcBone->rotation;
-			destBone->visible = srcBone->visible;
-			destBone->textureIndex = srcBone->textureIndex;
-			destBone->mirrored = srcBone->mirrored;
-		}
-	}
+        for (int b = 0; b < sp->boneCount && b < MAX_BONES_PER_PERSON; b++) {
+            Bone*       db = &dp->bones[b];
+            const Bone* sb = &sp->bones[b];
+            strncpy(db->name, sb->name, MAX_BONE_NAME_LENGTH - 1);
+            db->name[MAX_BONE_NAME_LENGTH - 1] = '\0';
+            db->position     = sb->position;
+            db->size         = sb->size;
+            db->rotation     = sb->rotation;
+            db->visible      = sb->visible;
+            db->textureIndex = sb->textureIndex;
+            db->mirrored     = sb->mirrored;
+        }
+    }
 }
 
 static inline void CaptureCurrentFrame(AnimatedCharacter* character) {
-	if (!character || !character->animation.isLoaded) {
-		g_hasValidFromFrame = false;
-		return;
-	}
-
-	if (character->currentFrame < 0 || character->currentFrame >= character->animation.frameCount) {
-		g_hasValidFromFrame = false;
-		return;
-	}
-
-	const AnimationFrame* currentFrame = &character->animation.frames[character->currentFrame];
-	CopyAnimationFrame(&g_transitionFromFrame, currentFrame);
-	g_hasValidFromFrame = true;
+    if (!character || !character->animation.isLoaded ||
+        character->currentFrame < 0 ||
+        character->currentFrame >= character->animation.frameCount)
+    {
+        g_hasValidFromFrame = false;
+        return;
+    }
+    CopyAnimationFrame(&g_transitionFromFrame, &character->animation.frames[character->currentFrame]);
+    g_hasValidFromFrame = true;
 }
 
 static inline void StartAnimationTransition(void) {
-	if (!g_hasValidFromFrame) return;
-	g_isTransitioning = true;
-	g_transitionTime = 0.0f;
-}
-
-static inline void SetAnimationTransitionDuration(float duration) {
-	if (duration > 0.0f && duration < 1.0f) g_transitionDuration = duration;
+    if (!g_hasValidFromFrame) return;
+    g_isTransitioning = true;
+    g_transitionTime  = 0.0f;
 }
 
 static void InterpolateTransitionFrames(const AnimationFrame* fromFrame, const AnimationFrame* toFrame,
-		AnimationFrame* result, float t) {
-	if (!fromFrame || !toFrame || !result) return;
+                                         AnimationFrame* result, float t)
+{
+    if (!fromFrame || !toFrame || !result) return;
+    float easedT = 1.0f - powf(1.0f - t, 3.0f);
 
-	float easedT = 1.0f - powf(1.0f - t, 3.0f);
-	result->frameNumber = toFrame->frameNumber;
-	result->valid = true;
-	result->personCount = fromFrame->personCount > toFrame->personCount ? fromFrame->personCount : toFrame->personCount;
+    result->frameNumber  = toFrame->frameNumber;
+    result->valid        = true;
+    result->personCount  = fromFrame->personCount > toFrame->personCount
+                         ? fromFrame->personCount : toFrame->personCount;
 
-	for (int p = 0; p < result->personCount; p++) {
-		Person* destPerson = &result->persons[p];
-		const Person* fromPerson = p < fromFrame->personCount ? &fromFrame->persons[p] : NULL;
-		const Person* toPerson = p < toFrame->personCount ? &toFrame->persons[p] : NULL;
+    for (int p = 0; p < result->personCount; p++) {
+        Person*       dp         = &result->persons[p];
+        const Person* fromPerson = p < fromFrame->personCount ? &fromFrame->persons[p] : NULL;
+        const Person* toPerson   = p < toFrame->personCount   ? &toFrame->persons[p]   : NULL;
 
-		if (!fromPerson && toPerson) {
-			strncpy(destPerson->personId, toPerson->personId, 15);
-			destPerson->personId[15] = '\0';
-			destPerson->active = toPerson->active;
-			destPerson->boneCount = toPerson->boneCount;
-			for (int b = 0; b < toPerson->boneCount; b++) destPerson->bones[b] = toPerson->bones[b];
-			continue;
-		}
+        if (!fromPerson && toPerson) {
+            strncpy(dp->personId, toPerson->personId, 15); dp->personId[15] = '\0';
+            dp->active = toPerson->active; dp->boneCount = toPerson->boneCount;
+            for (int b = 0; b < toPerson->boneCount; b++) dp->bones[b] = toPerson->bones[b];
+            continue;
+        }
+        if (fromPerson && !toPerson) {
+            strncpy(dp->personId, fromPerson->personId, 15); dp->personId[15] = '\0';
+            dp->active = fromPerson->active; dp->boneCount = fromPerson->boneCount;
+            for (int b = 0; b < fromPerson->boneCount; b++) dp->bones[b] = fromPerson->bones[b];
+            continue;
+        }
+        if (!fromPerson && !toPerson) continue;
 
-		if (fromPerson && !toPerson) {
-			strncpy(destPerson->personId, fromPerson->personId, 15);
-			destPerson->personId[15] = '\0';
-			destPerson->active = fromPerson->active;
-			destPerson->boneCount = fromPerson->boneCount;
-			for (int b = 0; b < fromPerson->boneCount; b++) destPerson->bones[b] = fromPerson->bones[b];
-			continue;
-		}
+        strncpy(dp->personId, fromPerson->personId, 15); dp->personId[15] = '\0';
+        dp->active    = fromPerson->active || toPerson->active;
+        dp->boneCount = fromPerson->boneCount > toPerson->boneCount
+                      ? fromPerson->boneCount : toPerson->boneCount;
 
-		if (!fromPerson && !toPerson) continue;
+        for (int b = 0; b < dp->boneCount; b++) {
+            Bone*       db = &dp->bones[b];
+            const Bone* fb = b < fromPerson->boneCount ? &fromPerson->bones[b] : NULL;
+            const Bone* tb = b < toPerson->boneCount   ? &toPerson->bones[b]   : NULL;
 
-		strncpy(destPerson->personId, fromPerson->personId, 15);
-		destPerson->personId[15] = '\0';
-		destPerson->active = fromPerson->active || toPerson->active;
-		destPerson->boneCount = fromPerson->boneCount > toPerson->boneCount ? fromPerson->boneCount : toPerson->boneCount;
+            if (!fb && tb) { *db = *tb; continue; }
+            if (fb && !tb) { *db = *fb; continue; }
+            if (!fb && !tb) continue;
 
-		for (int b = 0; b < destPerson->boneCount; b++) {
-			Bone* destBone = &destPerson->bones[b];
-			const Bone* fromBone = b < fromPerson->boneCount ? &fromPerson->bones[b] : NULL;
-			const Bone* toBone = b < toPerson->boneCount ? &toPerson->bones[b] : NULL;
+            strncpy(db->name, fb->name, MAX_BONE_NAME_LENGTH - 1);
+            db->name[MAX_BONE_NAME_LENGTH - 1] = '\0';
 
-			if (!fromBone && toBone) {
-				*destBone = *toBone;
-				continue;
-			}
+            if (fb->position.valid && tb->position.valid) {
+                db->position.position.x = fb->position.position.x*(1.0f-easedT) + tb->position.position.x*easedT;
+                db->position.position.y = fb->position.position.y*(1.0f-easedT) + tb->position.position.y*easedT;
+                db->position.position.z = fb->position.position.z*(1.0f-easedT) + tb->position.position.z*easedT;
+                db->position.valid      = true;
+            } else if (fb->position.valid) {
+                db->position = fb->position;
+                db->position.confidence = fb->position.confidence * (1.0f - easedT);
+            } else if (tb->position.valid) {
+                db->position = tb->position;
+                db->position.confidence = tb->position.confidence * easedT;
+            } else {
+                db->position.valid = false;
+            }
 
-			if (fromBone && !toBone) {
-				*destBone = *fromBone;
-				continue;
-			}
-
-			if (!fromBone && !toBone) continue;
-
-			strncpy(destBone->name, fromBone->name, MAX_BONE_NAME_LENGTH - 1);
-			destBone->name[MAX_BONE_NAME_LENGTH - 1] = '\0';
-
-			if (fromBone->position.valid && toBone->position.valid) {
-				destBone->position.position.x = fromBone->position.position.x * (1.0f - easedT) + toBone->position.position.x * easedT;
-				destBone->position.position.y = fromBone->position.position.y * (1.0f - easedT) + toBone->position.position.y * easedT;
-				destBone->position.position.z = fromBone->position.position.z * (1.0f - easedT) + toBone->position.position.z * easedT;
-				destBone->position.valid = true;
-			} else if (fromBone->position.valid) {
-				destBone->position = fromBone->position;
-				destBone->position.confidence = fromBone->position.confidence * (1.0f - easedT);
-			} else if (toBone->position.valid) {
-				destBone->position = toBone->position;
-				destBone->position.confidence = toBone->position.confidence * easedT;
-			} else {
-				destBone->position.valid = false;
-			}
-
-			destBone->position.confidence = (fromBone->position.confidence * (1.0f - easedT) + toBone->position.confidence * easedT);
-			destBone->size.x = fromBone->size.x * (1.0f - easedT) + toBone->size.x * easedT;
-			destBone->size.y = fromBone->size.y * (1.0f - easedT) + toBone->size.y * easedT;
-
-			float rotDiff = toBone->rotation - fromBone->rotation;
-			if (rotDiff > 180.0f) rotDiff -= 360.0f;
-			if (rotDiff < -180.0f) rotDiff += 360.0f;
-			destBone->rotation = fromBone->rotation + rotDiff * easedT;
-
-			destBone->visible = fromBone->visible || toBone->visible;
-			destBone->textureIndex = toBone->textureIndex;
-			destBone->mirrored = toBone->mirrored;
-		}
-	}
+            db->position.confidence = fb->position.confidence*(1.0f-easedT) + tb->position.confidence*easedT;
+            db->size.x    = fb->size.x*(1.0f-easedT) + tb->size.x*easedT;
+            db->size.y    = fb->size.y*(1.0f-easedT) + tb->size.y*easedT;
+            float rotDiff = tb->rotation - fb->rotation;
+            if (rotDiff >  180.0f) rotDiff -= 360.0f;
+            if (rotDiff < -180.0f) rotDiff += 360.0f;
+            db->rotation     = fb->rotation + rotDiff * easedT;
+            db->visible      = fb->visible || tb->visible;
+            db->textureIndex = tb->textureIndex;
+            db->mirrored     = tb->mirrored;
+        }
+    }
 }
 
-
 static inline bool LoadAnimation(AnimatedCharacter* character,
-        const char* animationPath,
-        const char* metadataPath)
+                                  const char* animationPath,
+                                  const char* metadataPath)
 {
     if (!character) return false;
 
     CaptureCurrentFrame(character);
 
-    if (character->animController) {
-        AnimController_Free(character->animController);
-        character->animController = NULL;
-    }
+    AnimController_Free(character->animController);
+    character->animController = NULL;
 
     for (int i = 0; i < SLASH_TRAIL_MAX_ACTIVE; i++)
-        SlashTrail_Deactivate(&character->slashTrails,
-                character->slashTrails.trails[i].slashIndex);
+        SlashTrail_Deactivate(&character->slashTrails, character->slashTrails.trails[i].slashIndex);
 
     Model3D_FreeSystem(&character->model3dAttachments);
     character->hasWorldTransform = false;
@@ -2757,48 +3976,34 @@ static inline bool LoadAnimation(AnimatedCharacter* character,
     BonesSetFrame(&character->animation, 0);
     StartAnimationTransition();
 
-    character->animController = AnimController_Create(&character->animation,
-            character->textureSets);
+    character->animController = AnimController_Create(&character->animation, character->textureSets);
     if (!character->animController) return false;
 
-    if (metadataPath &&
-            AnimController_LoadClipMetadata(character->animController, metadataPath))
-    {
+    if (metadataPath && AnimController_LoadClipMetadata(character->animController, metadataPath)) {
         const char* clipName = (character->animController->clipCount > 0)
-            ? character->animController->clips[0].name
-            : "default";
+            ? character->animController->clips[0].name : "default";
 
         bool played = AnimController_PlayClip(character->animController, clipName);
-
         if (played &&
-                character->animController->currentClipIndex >= 0 &&
-                character->animController->currentClipIndex < character->animController->clipCount &&
-                character->animController->clips != NULL)
+            character->animController->currentClipIndex >= 0 &&
+            character->animController->currentClipIndex < character->animController->clipCount &&
+            character->animController->clips)
         {
-            /* Copia en stack: protege contra cualquier perturbación del heap
-               dentro de Model3D_LoadFromClip (ya corregido arriba, pero
-               la copia añade una segunda capa de defensa). */
             AnimationClipMetadata clipCopy =
                 character->animController->clips[character->animController->currentClipIndex];
-
             if (clipCopy.valid)
                 Model3D_LoadFromClip(&character->model3dAttachments, &clipCopy);
         }
     }
 
-    {
-        bool hasSlash = false;
-        if (character->animController && character->animController->clips) {
-            for (int ci = 0; ci < character->animController->clipCount; ci++) {
-                if (character->animController->clips[ci].slashEventCount > 0) {
-                    hasSlash = true; break;
-                }
-            }
-        }
-        if (hasSlash) {
-            SlashTrail_FreeSystem(&character->slashTrails);
-            SlashTrail_InitSystem(&character->slashTrails);
-        }
+    bool hasSlash = false;
+    if (character->animController && character->animController->clips) {
+        for (int ci = 0; ci < character->animController->clipCount; ci++)
+            if (character->animController->clips[ci].slashEventCount > 0) { hasSlash = true; break; }
+    }
+    if (hasSlash) {
+        SlashTrail_FreeSystem(&character->slashTrails);
+        SlashTrail_InitSystem(&character->slashTrails);
     }
 
     character->forceUpdate        = true;
@@ -2806,3645 +4011,652 @@ static inline bool LoadAnimation(AnimatedCharacter* character,
     return true;
 }
 
-// Reset the auto-center so it gets recalculated on next update
+static inline void SetAnimationTransitionDuration(float duration) {
+    if (duration > 0.0f && duration < 1.0f) g_transitionDuration = duration;
+}
+
 static inline void ResetCharacterAutoCenter(AnimatedCharacter* character) {
-	if (!character) return;
-	character->autoCenterCalculated = false;
+    if (character) character->autoCenterCalculated = false;
 }
 
-// Lock/unlock XZ root motion (call after LoadAnimation to pin character in place)
 static inline void LockAnimationRootXZ(AnimatedCharacter* character, bool lock) {
-	if (!character) return;
-	character->lockRootXZ = lock;
+    if (character) character->lockRootXZ = lock;
 }
 
-// Returns the duration in seconds of the current animation clip (0 if none)
 static inline float GetCurrentAnimDuration(const AnimatedCharacter* character) {
-	if (!character || !character->animController) return 0.0f;
-	const AnimationController* ctrl = character->animController;
-	if (ctrl->currentClipIndex < 0 || ctrl->currentClipIndex >= ctrl->clipCount) return 0.0f;
-	const AnimationClipMetadata* clip = &ctrl->clips[ctrl->currentClipIndex];
-	int frames = clip->endFrame - clip->startFrame + 1;
-	return (clip->fps > 0.0f) ? (float)frames / clip->fps : 0.0f;
+    if (!character || !character->animController) return 0.0f;
+    const AnimationController* ctrl = character->animController;
+    if (ctrl->currentClipIndex < 0 || ctrl->currentClipIndex >= ctrl->clipCount) return 0.0f;
+    const AnimationClipMetadata* clip = &ctrl->clips[ctrl->currentClipIndex];
+    int frames = clip->endFrame - clip->startFrame + 1;
+    return (clip->fps > 0.0f) ? (float)frames / clip->fps : 0.0f;
 }
 
-// Returns true if the current animation clip has an active slash event on the current frame
 static inline bool IsSlashActiveForCharacter(const AnimatedCharacter* character) {
-	if (!character || !character->animController) return false;
-	const AnimationController* ctrl = character->animController;
-	if (ctrl->currentClipIndex < 0 || ctrl->currentClipIndex >= ctrl->clipCount) return false;
-	const AnimationClipMetadata* clip = &ctrl->clips[ctrl->currentClipIndex];
-	int cf = ctrl->currentFrameInJSON;
-	for (int s = 0; s < clip->slashEventCount; s++) {
-		if (cf >= clip->slashEvents[s].frameStart && cf <= clip->slashEvents[s].frameEnd)
-			return true;
-	}
-	return false;
+    if (!character || !character->animController) return false;
+    const AnimationController* ctrl = character->animController;
+    if (ctrl->currentClipIndex < 0 || ctrl->currentClipIndex >= ctrl->clipCount) return false;
+    const AnimationClipMetadata* clip = &ctrl->clips[ctrl->currentClipIndex];
+    int cf = ctrl->currentFrameInJSON;
+    for (int s = 0; s < clip->slashEventCount; s++)
+        if (cf >= clip->slashEvents[s].frameStart && cf <= clip->slashEvents[s].frameEnd) return true;
+    return false;
 }
 
-// Returns the world-space position of the active slash bone, or fallback if none
 static inline Vector3 GetActiveSlashBonePos(const AnimatedCharacter* character, Vector3 fallback) {
-	if (!character || !character->animController) return fallback;
-	const AnimationController* ctrl = character->animController;
-	if (ctrl->currentClipIndex < 0 || ctrl->currentClipIndex >= ctrl->clipCount) return fallback;
-	const AnimationClipMetadata* clip = &ctrl->clips[ctrl->currentClipIndex];
-	int cf = ctrl->currentFrameInJSON;
-	for (int s = 0; s < clip->slashEventCount; s++) {
-		const SlashEventConfig* se = &clip->slashEvents[s];
-		if (cf < se->frameStart || cf > se->frameEnd) continue;
-		// Search the current frame for the bone
-		for (int f = 0; f < character->animation.frameCount; f++) {
-			const AnimationFrame* fr = &character->animation.frames[f];
-			if (fr->frameNumber != cf || !fr->valid) continue;
-			for (int p = 0; p < fr->personCount; p++) {
-				const Person* person = &fr->persons[p];
-				if (!person->active) continue;
-				for (int b = 0; b < person->boneCount; b++) {
-					const Bone* bone = &person->bones[b];
-					if (strcmp(bone->name, se->boneName) != 0 || !bone->position.valid) continue;
-					Vector3 bp = bone->position.position;
-					if (character->hasWorldTransform) {
-						Vector3 rel = Vector3Subtract(bp, character->worldPivot);
-						Vector3 rotated = Vector3Transform(rel, MatrixRotateY(character->worldRotation));
-						bp = Vector3Add(Vector3Add(character->worldPosition, character->worldPivot), rotated);
-					}
-					return bp;
-				}
-			}
-		}
-	}
-	return fallback;
+    if (!character || !character->animController) return fallback;
+    const AnimationController* ctrl = character->animController;
+    if (ctrl->currentClipIndex < 0 || ctrl->currentClipIndex >= ctrl->clipCount) return fallback;
+    const AnimationClipMetadata* clip = &ctrl->clips[ctrl->currentClipIndex];
+    int cf = ctrl->currentFrameInJSON;
+
+    for (int s = 0; s < clip->slashEventCount; s++) {
+        const SlashEventConfig* se = &clip->slashEvents[s];
+        if (cf < se->frameStart || cf > se->frameEnd) continue;
+        for (int f = 0; f < character->animation.frameCount; f++) {
+            const AnimationFrame* fr = &character->animation.frames[f];
+            if (fr->frameNumber != cf || !fr->valid) continue;
+            for (int p = 0; p < fr->personCount; p++) {
+                const Person* person = &fr->persons[p];
+                if (!person->active) continue;
+                for (int b = 0; b < person->boneCount; b++) {
+                    const Bone* bone = &person->bones[b];
+                    if (strcmp(bone->name, se->boneName) != 0 || !bone->position.valid) continue;
+                    Vector3 bp = bone->position.position;
+                    if (character->hasWorldTransform) {
+                        Vector3 rel     = Vector3Subtract(bp, character->worldPivot);
+                        Vector3 rotated = Vector3Transform(rel, MatrixRotateY(character->worldRotation));
+                        bp = Vector3Add(Vector3Add(character->worldPosition, character->worldPivot), rotated);
+                    }
+                    return bp;
+                }
+            }
+        }
+    }
+    return fallback;
+}
+
+static inline AnimatedCharacter* CreateAnimatedCharacter(const char* textureConfigPath, const char* textureSetsPath) {
+    AnimatedCharacter* character = (AnimatedCharacter*)calloc(1, sizeof(AnimatedCharacter));
+    if (!character) return NULL;
+
+    character->renderer = BonesRenderer_Create();
+    if (!character->renderer || !BonesRenderer_Init(character->renderer)) {
+        free(character);
+        return NULL;
+    }
+
+    character->textureSets = BonesTextureSets_Create();
+    if (textureSetsPath && !BonesTextureSets_LoadFromFile(character->textureSets, textureSetsPath))
+        fprintf(stderr, "[WARN] No se pudo cargar texture set: %s\n", textureSetsPath);
+
+    if (textureConfigPath) {
+        LoadSimpleTextureConfig(&character->textureSystem, textureConfigPath);
+        LoadBoneConfigurations(&character->textureSystem, &character->boneConfigs, &character->boneConfigCount);
+    }
+
+    if (BonesInit(&character->animation, 1000) != BONES_SUCCESS) {
+        BonesRenderer_Free(character->renderer);
+        BonesTextureSets_Free(character->textureSets);
+        free(character);
+        return NULL;
+    }
+
+    character->renderHeadBillboards  = true;
+    character->renderTorsoBillboards = true;
+    character->autoPlay              = true;
+    character->autoPlaySpeed         = 0.1f;
+    character->lastProcessedFrame    = -1;
+
+    character->renderConfig                    = BonesGetDefaultRenderConfig();
+    character->renderConfig.drawDebugSpheres   = true;
+    character->renderConfig.debugColor         = GREEN;
+    character->renderConfig.debugSphereRadius  = 0.035f;
+    character->renderConfig.enableDepthSorting = true;
+    BonesSetRenderConfig(&character->renderConfig);
+
+    character->ornaments = Ornaments_Create();
+    if (textureConfigPath)
+        Ornaments_LoadFromConfig(character->ornaments, textureConfigPath);
+
+    SlashTrail_InitSystem(&character->slashTrails);
+    Model3D_InitSystem(&character->model3dAttachments);
+
+    return character;
+}
+
+static inline void DestroyAnimatedCharacter(AnimatedCharacter* character) {
+    if (!character) return;
+    SlashTrail_FreeSystem(&character->slashTrails);
+    Model3D_FreeSystem(&character->model3dAttachments);
+    AnimController_Free(character->animController);
+    BonesTextureSets_Free(character->textureSets);
+    BonesRenderer_Free(character->renderer);
+    free(character->renderBones);
+    free(character->renderHeads);
+    free(character->renderTorsos);
+    CleanupTextureSystem(&character->textureSystem, &character->boneConfigs, &character->boneConfigCount);
+    BonesFree(&character->animation);
+    Ornaments_Free(character->ornaments);
+    free(character);
 }
 
 static inline void UpdateAnimatedCharacter(AnimatedCharacter* character, float deltaTime) {
-	if (!character) return;
-
-	// --- AnimController update ---
-	if (character->animController && character->autoPlay) {
-		AnimController_Update(character->animController, deltaTime);
-		int frameFromController = AnimController_GetCurrentFrame(character->animController);
-		if (frameFromController != character->currentFrame) {
-			BonesSetFrame(&character->animation, frameFromController);
-			character->currentFrame = frameFromController;
-			character->forceUpdate = true;
-		}
-	}
-
-	// --- Transition frame logic ---
-	static AnimationFrame transitionFrame;
-	bool usingTransition = false;
-
-	if (g_isTransitioning) {
-		g_transitionTime += deltaTime;
-		float t = g_transitionTime / g_transitionDuration;
-
-		if (t >= 1.0f) g_isTransitioning = false;
-		else {
-			if (character->animation.isLoaded && character->currentFrame >= 0 && 
-					character->currentFrame < character->animation.frameCount) {
-				CopyAnimationFrame(&g_transitionToFrame, &character->animation.frames[character->currentFrame]);
-				InterpolateTransitionFrames(&g_transitionFromFrame, &g_transitionToFrame, &transitionFrame, t);
-				usingTransition = true;
-			} else g_isTransitioning = false;
-		}
-	}
-
-	// --- Interpolation frame logic ---
-	static AnimationFrame interpolatedFrame;
-	bool usingInterpolation = false;
-
-	if (!usingTransition && character->animation.isLoaded && character->autoPlay && 
-			character->currentFrame >= 0 && character->currentFrame < character->animation.frameCount - 1) {
-		AnimationFrame* currentFrame = &character->animation.frames[character->currentFrame];
-		AnimationFrame* nextFrame = &character->animation.frames[character->currentFrame + 1];
-
-		float t = 0.0f;
-		if (character->animController && character->animController->currentClipIndex >= 0) {
-			AnimationClipMetadata* clip = &character->animController->clips[character->animController->currentClipIndex];
-			if (clip->fps > 0.0f) {
-				float frameDuration = 1.0f / clip->fps;
-				float timeInFrame = fmodf(character->animController->localTime, frameDuration);
-				t = timeInFrame / frameDuration;
-				t = t * t * (3.0f - 2.0f * t);
-
-				if (t > 0.05f && t < 0.95f && currentFrame->valid && nextFrame->valid) {
-					memset(&interpolatedFrame, 0, sizeof(AnimationFrame));
-					interpolatedFrame.frameNumber = currentFrame->frameNumber;
-					interpolatedFrame.valid = true;
-					interpolatedFrame.personCount = currentFrame->personCount;
-
-					for (int p = 0; p < interpolatedFrame.personCount; p++) {
-						Person* destPerson = &interpolatedFrame.persons[p];
-						Person* personA = &currentFrame->persons[p];
-						Person* personB = p < nextFrame->personCount ? &nextFrame->persons[p] : personA;
-
-						strncpy(destPerson->personId, personA->personId, 15);
-						destPerson->personId[15] = '\0';
-						destPerson->active = personA->active;
-						destPerson->boneCount = personA->boneCount;
-
-						for (int b = 0; b < destPerson->boneCount; b++) {
-							Bone* destBone = &destPerson->bones[b];
-							Bone* boneA = &personA->bones[b];
-							Bone* boneB = b < personB->boneCount ? &personB->bones[b] : boneA;
-
-							strncpy(destBone->name, boneA->name, MAX_BONE_NAME_LENGTH - 1);
-							destBone->name[MAX_BONE_NAME_LENGTH - 1] = '\0';
-
-							if (boneA->position.valid && boneB->position.valid) {
-								destBone->position.position.x = boneA->position.position.x * (1.0f - t) + boneB->position.position.x * t;
-								destBone->position.position.y = boneA->position.position.y * (1.0f - t) + boneB->position.position.y * t;
-								destBone->position.position.z = boneA->position.position.z * (1.0f - t) + boneB->position.position.z * t;
-								destBone->position.valid = true;
-							} else destBone->position = boneA->position;
-
-							destBone->position.confidence = (boneA->position.confidence + boneB->position.confidence) * 0.5f;
-							destBone->size.x = boneA->size.x * (1.0f - t) + boneB->size.x * t;
-							destBone->size.y = boneA->size.y * (1.0f - t) + boneB->size.y * t;
-
-							float rotDiff = boneB->rotation - boneA->rotation;
-							if (rotDiff > 180.0f) rotDiff -= 360.0f;
-							if (rotDiff < -180.0f) rotDiff += 360.0f;
-							destBone->rotation = boneA->rotation + rotDiff * t;
-
-							destBone->visible = boneA->visible;
-							destBone->textureIndex = boneA->textureIndex;
-							destBone->mirrored = boneA->mirrored;
-						}
-					}
-					usingInterpolation = true;
-				}
-			}
-		}
-	}
-
-	// --- Select frame to use ---
-	const AnimationFrame* frameToUse = NULL;
-	if (usingTransition) frameToUse = &transitionFrame;
-	else if (usingInterpolation) frameToUse = &interpolatedFrame;
-	else if (character->animation.isLoaded && BonesIsValidFrame(&character->animation, character->currentFrame))
-		frameToUse = &character->animation.frames[character->currentFrame];
-
-	// --- Update auto-center ---
-	if (frameToUse && frameToUse->valid) {
-		Vector3 totalPos = {0, 0, 0};
-		int validBoneCount = 0;
-
-		for (int p = 0; p < frameToUse->personCount; p++) {
-			const Person* person = &frameToUse->persons[p];
-			if (!person->active) continue;
-
-			Vector3 headPos = CalculateHeadPosition(person);
-			Vector3 chestPos = CalculateChestPosition(person);
-			Vector3 hipPos = CalculateHipPosition(person);
-
-			if (Vector3Length(headPos) > 0.01f) { totalPos = Vector3Add(totalPos, headPos); validBoneCount++; }
-			if (Vector3Length(chestPos) > 0.01f) { totalPos = Vector3Add(totalPos, chestPos); validBoneCount++; }
-			if (Vector3Length(hipPos) > 0.01f) { totalPos = Vector3Add(totalPos, hipPos); validBoneCount++; }
-		}
-
-		if (validBoneCount > 0) {
-			Vector3 newCenter = Vector3Scale(totalPos, 1.0f / validBoneCount);
-			if (!character->autoCenterCalculated) character->autoCenter = newCenter;
-			else character->autoCenter = Vector3Lerp(character->autoCenter, newCenter, 0.3f);
-			character->autoCenterCalculated = true;
-		}
-	}
-
-	// --- *** NUEVA LÓGICA DE ORNAMENTOS *** ---
-	if (character->ornaments && character->ornaments->loaded) {
-		if (frameToUse && frameToUse->valid) {
-			// Inicializar física si es la primera vez
-			if (!character->ornaments->ornaments[0].initialized) {
-				Ornaments_InitializePhysics(character->ornaments, frameToUse);
-			}
-
-			// Actualizar física de los ornamentos
-			Ornaments_UpdatePhysics(character->ornaments, frameToUse, deltaTime);
-		}
-	}
-	// --- *** FIN NUEVA LÓGICA *** ---
-
-	// --- Slash Trail Tick ---
-	// Nunca correr durante transicion: el transitionFrame mezcla dos animaciones
-	// y la posicion del bone es invalida. Usar siempre el frame real del JSON,
-	// no el interpolado, para que el bone este exactamente donde debe estar.
-	if (!usingTransition &&
-			character->animController && character->animController->currentClipIndex >= 0) {
-		AnimationClipMetadata* activeClip = &character->animController->clips[character->animController->currentClipIndex];
-		if (activeClip->slashEventCount > 0 && character->animation.isLoaded) {
-			int jsonFrame = character->animController->currentFrameInJSON;
-			const AnimationFrame* realFrame = NULL;
-			for (int _f = 0; _f < character->animation.frameCount; _f++) {
-				if (character->animation.frames[_f].frameNumber == jsonFrame) {
-					realFrame = &character->animation.frames[_f];
-					break;
-				}
-			}
-			if (realFrame && realFrame->valid) {
-				const char* personId = "";
-				if (realFrame->personCount > 0) personId = realFrame->persons[0].personId;
-				SlashTrail_Tick(
-						&character->slashTrails,
-						deltaTime,
-						jsonFrame,
-						activeClip->slashEvents,
-						activeClip->slashEventCount,
-						realFrame,
-						personId,
-						character->worldPosition,
-						character->worldPivot,
-						MatrixRotateY(character->worldRotation),
-						character->hasWorldTransform);
-				// Actualizar visibilidad de los modelos 3D adjuntos
-				Model3D_Tick(&character->model3dAttachments, jsonFrame);
-			}
-		}
-		// Model3D_Tick también cuando no hay slash events (modelos siempre actualizados)
-		if (activeClip->slashEventCount == 0 && character->model3dAttachments.instanceCount > 0) {
-			Model3D_Tick(&character->model3dAttachments, character->animController->currentFrameInJSON);
-		}
-	}
-
-	// --- Collect render data if needed ---
-	if (character->forceUpdate || character->currentFrame != character->lastProcessedFrame || 
-			usingInterpolation || usingTransition) {
-
-		character->renderBonesCount = 0;
-		character->renderHeadsCount = 0;
-		character->renderTorsosCount = 0;
-
-		AnimationFrame backupFrame;
-		bool needsRestore = false;
-
-		if (usingTransition || usingInterpolation) {
-			backupFrame = character->animation.frames[character->currentFrame];
-			character->animation.frames[character->currentFrame] = usingTransition ? transitionFrame : interpolatedFrame;
-			needsRestore = true;
-		}
-
-		CollectBonesForRendering(&character->animation, character->renderer->camera, 
-				&character->renderBones, &character->renderBonesCount,
-				&character->renderBonesCapacity, 
-				character->boneConfigs, character->boneConfigCount,
-				character->textureSets, character->ornaments);
-
-		if (character->renderHeadBillboards) {
-			CollectHeadsForRendering(&character->animation, &character->renderHeads, 
-					&character->renderHeadsCount, &character->renderHeadsCapacity,
-					character->boneConfigs, character->boneConfigCount,
-					character->textureSets);
-		}
-
-		if (character->renderTorsoBillboards) {
-			CollectTorsosForRendering(&character->animation, &character->renderTorsos,
-					&character->renderTorsosCount, &character->renderTorsosCapacity,
-					character->boneConfigs, character->boneConfigCount,
-					character->textureSets);
-		}
-
-		if (needsRestore) character->animation.frames[character->currentFrame] = backupFrame;
-
-		character->lastProcessedFrame = character->currentFrame;
-		character->forceUpdate = false;
-	}
-}
-
-static inline void DrawAnimatedCharacter(AnimatedCharacter* character, Camera camera) {
-	if (!character || !character->animation.isLoaded) return;
-	character->renderer->camera = camera;
-
-	// --- Painter's algorithm para modelo 3D vs billboards ---
-	// Los billboards usan rlDisableDepthTest() internamente, así que el modelo
-	// también debe dibujarse sin depth test. La ordenación es por distancia a cámara.
-	// Si el modelo está más lejos que el personaje → dibujar primero (detrás).
-	// Si el modelo está más cerca → dibujar después (delante).
-
-	const AnimationFrame* rf = NULL;
-	const char* personId = "";
-	if (character->currentFrame >= 0 && character->currentFrame < character->animation.frameCount) {
-		rf = &character->animation.frames[character->currentFrame];
-		if (rf->personCount > 0) personId = rf->persons[0].personId;
-	}
-
-	// Calcular distancia del modelo y del personaje a la cámara
-	float modelDist = 1e9f;
-	bool hasVisibleModel = false;
-	if (character->model3dAttachments.instanceCount > 0 && rf) {
-		for (int i = 0; i < character->model3dAttachments.instanceCount; i++) {
-			Model3DInstance* inst = &character->model3dAttachments.instances[i];
-			if (!inst->visible || !inst->loaded) continue;
-			hasVisibleModel = true;
-			Vector3 bp = SlashTrail__GetBonePos(rf, personId, inst->config.boneName);
-			float d = Vector3Distance(camera.position, bp);
-			if (d < modelDist) modelDist = d;
-		}
-	}
-	float charDist = Vector3Distance(camera.position, character->autoCenter);
-
-	// Modelo más lejos que el personaje → dibujarlo ANTES (detrás de los billboards)
-	if (hasVisibleModel && modelDist > charDist) {
-		BeginMode3D(camera);
-		rlDisableDepthTest();
-		Model3D_Draw(&character->model3dAttachments, rf, personId,
-				character->worldPosition, character->worldPivot,
-				MatrixRotateY(character->worldRotation), character->hasWorldTransform);
-		rlEnableDepthTest();
-		EndMode3D();
-	}
-
-	BonesRenderer_RenderFrame(character->renderer,
-			character->renderBones, character->renderBonesCount,
-			character->renderHeads, character->renderHeadsCount,
-			character->renderTorsos, character->renderTorsosCount,
-			character->autoCenter, character->autoCenterCalculated);
-
-	// Modelo más cerca que el personaje → dibujarlo DESPUÉS (delante de los billboards)
-	if (hasVisibleModel && modelDist <= charDist) {
-		BeginMode3D(camera);
-		rlDisableDepthTest();
-		Model3D_Draw(&character->model3dAttachments, rf, personId,
-				character->worldPosition, character->worldPivot,
-				MatrixRotateY(character->worldRotation), character->hasWorldTransform);
-		rlEnableDepthTest();
-		EndMode3D();
-	}
-
-	// Trail se dibuja en su propio BeginMode3D (gestiona su propio depth state)
-	BeginMode3D(camera);
-	SlashTrail_Draw(&character->slashTrails, camera);
-	EndMode3D();
-}
-
-static inline Vector3 RotatePointAroundPivot(Vector3 point, Vector3 pivot, Vector3 worldPos, Matrix rotY) {
-	Vector3 relative = Vector3Subtract(point, pivot);
-	Vector3 rotated = Vector3Transform(relative, rotY);
-	Vector3 pivotWorld = Vector3Add(worldPos, pivot);
-	return Vector3Add(pivotWorld, rotated);
-}
-
-static inline void DrawAnimatedCharacterTransformed(AnimatedCharacter* character, Camera camera,
-		Vector3 worldPosition, float worldRotation) {
-	if (!character || !character->animation.isLoaded) return;
-
-	// Guardar transform del mundo para que SlashTrail_Tick use espacio mundo
-	character->worldPosition     = worldPosition;
-	character->worldRotation     = worldRotation;
-	character->worldPivot        = character->autoCenter;
-	character->hasWorldTransform = true;
-
-	Camera origCam = character->renderer->camera;
-	character->renderer->camera = camera;
-	Matrix rot = MatrixRotateY(worldRotation);
-	Vector3 pivot = character->autoCenter;
-
-	int bc = character->renderBonesCount;
-	int hc = character->renderHeadsCount;
-	int tc = character->renderTorsosCount;
-
-	BoneRenderData* bonesCopy = NULL;
-	HeadRenderData* headsCopy = NULL;
-	TorsoRenderData* torsosCopy = NULL;
-
-	if (bc > 0) {
-		bonesCopy = (BoneRenderData*)malloc(sizeof(BoneRenderData) * bc);
-		if (bonesCopy) memcpy(bonesCopy, character->renderBones, sizeof(BoneRenderData) * bc);
-	}
-	if (hc > 0) {
-		headsCopy = (HeadRenderData*)malloc(sizeof(HeadRenderData) * hc);
-		if (headsCopy) memcpy(headsCopy, character->renderHeads, sizeof(HeadRenderData) * hc);
-	}
-	if (tc > 0) {
-		torsosCopy = (TorsoRenderData*)malloc(sizeof(TorsoRenderData) * tc);
-		if (torsosCopy) memcpy(torsosCopy, character->renderTorsos, sizeof(TorsoRenderData) * tc);
-	}
-
-	AnimationFrame* transformedFrame = NULL;
-	if (tc > 0 && character->animation.isLoaded && 
-			character->currentFrame >= 0 && character->currentFrame < character->animation.frameCount) {
-		transformedFrame = (AnimationFrame*)malloc(sizeof(AnimationFrame));
-		if (transformedFrame) {
-			*transformedFrame = character->animation.frames[character->currentFrame];
-			for (int p = 0; p < transformedFrame->personCount; p++) {
-				Person* person = &transformedFrame->persons[p];
-				for (int b = 0; b < person->boneCount; b++) {
-					Bone* bone = &person->bones[b];
-					if (bone->position.valid)
-						bone->position.position = RotatePointAroundPivot(bone->position.position, pivot, worldPosition, rot);
-				}
-			}
-		}
-	}
-
-	if (bonesCopy) {
-		for (int i = 0; i < bc; i++) {
-			BoneRenderData* b = &bonesCopy[i];
-			if (!b->valid) continue;
-
-			b->position = RotatePointAroundPivot(b->position, pivot, worldPosition, rot);
-			if (b->orientation.valid) {
-				b->orientation.forward = Vector3Transform(b->orientation.forward, rot);
-				b->orientation.up = Vector3Transform(b->orientation.up, rot);
-				b->orientation.right = Vector3Transform(b->orientation.right, rot);
-
-				b->orientation.forward = SafeNormalize(b->orientation.forward);
-				b->orientation.up = SafeNormalize(b->orientation.up);
-				b->orientation.right = SafeNormalize(b->orientation.right);
-
-				b->orientation.position = b->position;
-				b->orientation.yaw += worldRotation;
-				while (b->orientation.yaw > PI) b->orientation.yaw -= 2.0f * PI;
-				while (b->orientation.yaw < -PI) b->orientation.yaw += 2.0f * PI;
-			}
-
-			if (IsWristBone(b->boneName)) {
-				Vector3 personRight = { -cosf(worldRotation), 0.0f, sinf(worldRotation) };
-				Vector3 charForward = Vector3Scale(personRight, -1.0f);
-				charForward = SafeNormalize(charForward);
-
-				Vector3 up = (Vector3){ 0.0f, 1.0f, 0.0f };
-				Vector3 right = Vector3Normalize(Vector3CrossProduct(charForward, up));
-				up = Vector3Normalize(Vector3CrossProduct(right, charForward));
-
-				b->orientation.forward = charForward;
-				b->orientation.right = right;
-				b->orientation.up = up;
-				b->orientation.position = b->position;
-				b->orientation.yaw = atan2f(b->orientation.forward.x, b->orientation.forward.z) + PI;
-
-				while (b->orientation.yaw > PI) b->orientation.yaw -= 2.0f * PI;
-				while (b->orientation.yaw < -PI) b->orientation.yaw += 2.0f * PI;
-				b->orientation.valid = true;
-			}
-		}
-	}
-
-	if (headsCopy) {
-		for (int i = 0; i < hc; i++) {
-			HeadRenderData* h = &headsCopy[i];
-			if (!h->valid) continue;
-			h->position = RotatePointAroundPivot(h->position, pivot, worldPosition, rot);
-			if (h->orientation.valid) {
-				h->orientation.forward = Vector3Transform(h->orientation.forward, rot);
-				h->orientation.up = Vector3Transform(h->orientation.up, rot);
-				h->orientation.right = Vector3Transform(h->orientation.right, rot);
-
-				h->orientation.forward = SafeNormalize(h->orientation.forward);
-				h->orientation.up = SafeNormalize(h->orientation.up);
-				h->orientation.right = SafeNormalize(h->orientation.right);
-
-				h->orientation.position = h->position;
-				h->orientation.yaw += worldRotation;
-			}
-		}
-	}
-
-	if (torsosCopy) {
-		for (int i = 0; i < tc; i++) {
-			TorsoRenderData* t = &torsosCopy[i];
-			if (!t->valid) continue;
-
-			if (transformedFrame && t->person) {
-				for (int p = 0; p < transformedFrame->personCount; p++) {
-					if (strcmp(transformedFrame->persons[p].personId, t->personId) == 0) {
-						t->person = &transformedFrame->persons[p];
-						break;
-					}
-				}
-			}
-
-			if (t->orientation.valid) {
-				t->orientation.forward = Vector3Transform(t->orientation.forward, rot);
-				t->orientation.up = Vector3Transform(t->orientation.up, rot);
-				t->orientation.right = Vector3Transform(t->orientation.right, rot);
-
-				t->orientation.forward = SafeNormalize(t->orientation.forward);
-				t->orientation.up = SafeNormalize(t->orientation.up);
-				t->orientation.right = SafeNormalize(t->orientation.right);
-
-				t->orientation.yaw += worldRotation;
-				while (t->orientation.yaw > PI) t->orientation.yaw -= 2.0f * PI;
-				while (t->orientation.yaw < -PI) t->orientation.yaw += 2.0f * PI;
-			}
-
-			t->position = RotatePointAroundPivot(t->position, pivot, worldPosition, rot);
-			if (t->orientation.valid) t->orientation.position = t->position;
-			t->disableCompensation = false;
-		}
-	}
-
-	Vector3 transformedCenter = Vector3Add(worldPosition, pivot);
-
-	// Frame y personId para el modelo 3D
-	const AnimationFrame* rf3d = NULL;
-	const char* pid3d = "";
-	if (character->currentFrame >= 0 && character->currentFrame < character->animation.frameCount) {
-		rf3d = &character->animation.frames[character->currentFrame];
-		if (rf3d->personCount > 0) pid3d = rf3d->persons[0].personId;
-	}
-
-	// Distancia modelo vs personaje para painter's algorithm
-	float modelDist3d = 1e9f;
-	bool hasVisibleModel3d = false;
-	if (character->model3dAttachments.instanceCount > 0 && rf3d) {
-		for (int i = 0; i < character->model3dAttachments.instanceCount; i++) {
-			Model3DInstance* inst = &character->model3dAttachments.instances[i];
-			if (!inst->visible || !inst->loaded) continue;
-			hasVisibleModel3d = true;
-			Vector3 bp = SlashTrail__GetBonePos(rf3d, pid3d, inst->config.boneName);
-			// Aplicar transform mundo
-			Vector3 rel    = Vector3Subtract(bp, pivot);
-			Vector3 rotVec = Vector3Transform(rel, rot);
-			bp = Vector3Add(Vector3Add(worldPosition, pivot), rotVec);
-			float d = Vector3Distance(camera.position, bp);
-			if (d < modelDist3d) modelDist3d = d;
-		}
-	}
-	float charDist3d = Vector3Distance(camera.position, transformedCenter);
-
-	// Modelo más lejos → dibujar ANTES del renderer (detrás de billboards)
-	if (hasVisibleModel3d && modelDist3d > charDist3d) {
-		BeginMode3D(camera);
-		rlDisableDepthTest();
-		Model3D_Draw(&character->model3dAttachments, rf3d, pid3d,
-				character->worldPosition, character->worldPivot,
-				MatrixRotateY(character->worldRotation), character->hasWorldTransform);
-		rlEnableDepthTest();
-		EndMode3D();
-	}
-
-	BonesRenderer_RenderFrame(character->renderer,
-			bonesCopy ? bonesCopy : character->renderBones, bc,
-			headsCopy ? headsCopy : character->renderHeads, hc,
-			torsosCopy ? torsosCopy : character->renderTorsos, tc,
-			transformedCenter, character->autoCenterCalculated);
-
-	// Modelo más cerca → dibujar DESPUÉS del renderer (delante de billboards)
-	if (hasVisibleModel3d && modelDist3d <= charDist3d) {
-		BeginMode3D(camera);
-		rlDisableDepthTest();
-		Model3D_Draw(&character->model3dAttachments, rf3d, pid3d,
-				character->worldPosition, character->worldPivot,
-				MatrixRotateY(character->worldRotation), character->hasWorldTransform);
-		rlEnableDepthTest();
-		EndMode3D();
-	}
-
-	if (bonesCopy) free(bonesCopy);
-	if (headsCopy) free(headsCopy);
-	if (torsosCopy) free(torsosCopy);
-	if (transformedFrame) free(transformedFrame);
-	character->renderer->camera = origCam;
-
-	// --- Slash Trail: los puntos ya están en espacio mundo (grabados por SlashTrail_Tick) ---
-	// Solo dibujamos directamente sin ninguna transformación adicional.
-	{
-		bool hasLiveTrail = false;
-		for (int _ti = 0; _ti < SLASH_TRAIL_MAX_ACTIVE; _ti++) {
-			if (character->slashTrails.trails[_ti].alive) { hasLiveTrail = true; break; }
-		}
-		if (hasLiveTrail) {
-			BeginMode3D(camera);
-			SlashTrail_Draw(&character->slashTrails, camera);
-			EndMode3D();
-		}
-	}
-}
-
-static inline void SetCharacterFrame(AnimatedCharacter* character, int frame) {
-	if (!character) return;
-	if (frame >= 0 && frame < character->maxFrames) {
-		character->currentFrame = frame;
-		BonesSetFrame(&character->animation, frame);
-		character->forceUpdate = true;
-		if (character->animController) character->animController->currentFrameInJSON = frame;
-	}
-}
-
-static inline void SetCharacterAutoPlay(AnimatedCharacter* character, bool autoPlay) {
-	if (!character) return;
-
-	character->autoPlay = autoPlay;
-
-	// Si estamos activando el autoPlay y tenemos un AnimationController
-	if (autoPlay && character->animController) {
-		// Verificar si la animación ha terminado (no tiene loop y está al final)
-		if (character->animController->currentClipIndex >= 0) {
-			AnimationClipMetadata* clip = &character->animController->clips[character->animController->currentClipIndex];
-			if (!clip->loop && !character->animController->playing) {
-				// La animación había terminado, reiniciarla
-				RestartAnimation(character);
-			} else {
-				// Solo reactivar la reproducción
-				character->animController->playing = true;
-			}
-		}
-	}
-}
-
-static inline void RestartAnimation(AnimatedCharacter* character) {
-	if (!character) return;
-
-	// Reiniciar al primer frame
-	if (character->animation.isLoaded && character->animation.frameCount > 0) {
-		SetCharacterFrame(character, 0);
-	}
-
-	// Reiniciar el controlador de animación
-	if (character->animController) {
-		character->animController->localTime = 0.0f;
-		character->animController->playing = true;
-
-		// Resetear eventos procesados
-		if (character->animController->currentClipIndex >= 0) {
-			AnimationClipMetadata* clip = &character->animController->clips[character->animController->currentClipIndex];
-			for (int i = 0; i < clip->eventCount; i++) {
-				clip->events[i].processed = false;
-			}
-		}
-	}
-
-	// Asegurar que autoPlay esté activo
-	character->autoPlay = true;
-}
-
-static inline void SetCharacterBillboards(AnimatedCharacter* character, bool heads, bool torsos) {
-	if (character) {
-		character->renderHeadBillboards = heads;
-		character->renderTorsoBillboards = torsos;
-		character->forceUpdate = true;
-	}
-}
-
-// ----------------------------------------------------------------------------
-// Calculation Functions
-// ----------------------------------------------------------------------------
-
-static inline Vector3 SafeNormalize(Vector3 v) {
-	float length = Vector3Length(v);
-	if (length < 1e-6f) return (Vector3){ 0, 0, 1 };
-	return Vector3Scale(v, 1.0f / length);
-}
-
-static inline bool IsWristBone(const char* boneName) {
-	if (!boneName) return false;
-	return (strcmp(boneName, "LWrist") == 0) || (strcmp(boneName, "RWrist") == 0);
-}
-
-static inline CachedBones CacheBones(const Person* person) {
-	CachedBones cache = { 0 };
-	for (int i = 0; i < person->boneCount; i++) {
-		const Bone* bone = &person->bones[i];
-		if (!bone->position.valid) continue;
-
-		const char* name = bone->name;
-		Vector3 pos = bone->position.position;
-
-		if (strcmp(name, "Neck") == 0) {
-			cache.neck = pos; cache.hasNeck = true;
-		} else if (strcmp(name, "LShoulder") == 0) {
-			cache.lShoulder = pos; cache.hasLShoulder = true; cache.shoulderCount++;
-		} else if (strcmp(name, "RShoulder") == 0) {
-			cache.rShoulder = pos; cache.hasRShoulder = true; cache.shoulderCount++;
-		} else if (strcmp(name, "LHip") == 0) {
-			cache.lHip = pos; cache.hasLHip = true; cache.hipCount++;
-		} else if (strcmp(name, "RHip") == 0) {
-			cache.rHip = pos; cache.hasRHip = true; cache.hipCount++;
-		}
-	}
-	return cache;
-}
-
-static inline Vector3 CalculateHeadPosition(const Person* person) {
-	if (!person || person->boneCount == 0) return (Vector3){ 0, 0, 0 };
-
-	Vector3 eyeCenter = { 0, 0, 0 };
-	int eyeCount = 0;
-	Vector3 neckPos = { 0, 0, 0 };
-	bool hasNeck = false;
-	Vector3 nosePos = { 0, 0, 0 };
-	bool hasNose = false;
-	Vector3 lEar = { 0, 0, 0 }, rEar = { 0, 0, 0 };
-	bool hasLEar = false, hasREar = false;
-
-	for (int i = 0; i < person->boneCount; i++) {
-		const Bone* bone = &person->bones[i];
-		if (!bone->position.valid) continue;
-
-		const char* name = bone->name;
-		if (strcmp(name, "LEye") == 0 || strcmp(name, "REye") == 0) {
-			eyeCenter = Vector3Add(eyeCenter, bone->position.position);
-			eyeCount++;
-		} else if (strcmp(name, "Nose") == 0) {
-			nosePos = bone->position.position;
-			hasNose = true;
-		} else if (strcmp(name, "Neck") == 0) {
-			neckPos = bone->position.position;
-			hasNeck = true;
-		} else if (strcmp(name, "LEar") == 0) {
-			lEar = bone->position.position;
-			hasLEar = true;
-		} else if (strcmp(name, "REar") == 0) {
-			rEar = bone->position.position;
-			hasREar = true;
-		}
-	}
-
-	if (eyeCount > 0) eyeCenter = Vector3Scale(eyeCenter, 1.0f / eyeCount);
-
-	if (hasNose && eyeCount > 0 && (hasLEar || hasREar || hasNeck)) {
-		Vector3 faceCenter = { 0, 0, 0 };
-		int facePointCount = 0;
-
-		faceCenter = Vector3Add(faceCenter, nosePos);
-		faceCenter = Vector3Add(faceCenter, nosePos);
-		facePointCount += 2;
-		faceCenter = Vector3Add(faceCenter, eyeCenter);
-		facePointCount++;
-
-		Vector3 backReference;
-		bool hasBackReference = false;
-
-		if (hasLEar && hasREar) {
-			backReference = Vector3Scale(Vector3Add(lEar, rEar), 0.5f);
-			hasBackReference = true;
-		} else if (hasLEar || hasREar) {
-			backReference = hasLEar ? lEar : rEar;
-			hasBackReference = true;
-		} else if (hasNeck) {
-			backReference = neckPos;
-			hasBackReference = true;
-		}
-
-		if (hasBackReference) {
-			faceCenter = Vector3Add(faceCenter, backReference);
-			facePointCount++;
-		}
-
-		faceCenter = Vector3Scale(faceCenter, 1.0f / facePointCount);
-		Vector3 frontDirection = { 0, 0, 1 };
-
-		if (hasBackReference) {
-			Vector3 noseToBack = Vector3Subtract(backReference, nosePos);
-			float backDistance = Vector3Length(noseToBack);
-			if (backDistance > 1e-6f) frontDirection = Vector3Scale(noseToBack, 1.0f / backDistance);
-		}
-
-		Vector3 headPos = Vector3Add(faceCenter, Vector3Scale(frontDirection, HEAD_DEPTH_OFFSET));
-		Vector3 eyeToNose = Vector3Subtract(nosePos, eyeCenter);
-		float verticalComponent = eyeToNose.y;
-
-		float dynamicUpOffset = 0.03f;
-		if (verticalComponent < -0.01f) dynamicUpOffset = 0.015f;
-		else if (verticalComponent > 0.01f) dynamicUpOffset = 0.045f;
-
-		headPos.y += dynamicUpOffset;
-		return headPos;
-	}
-
-	if (eyeCount > 0 && hasNeck) {
-		Vector3 headPos = {
-			neckPos.x * 0.7f + eyeCenter.x * 0.3f,
-			eyeCenter.y,
-			hasNose ? neckPos.z * 0.8f + nosePos.z * 0.2f : neckPos.z * 0.9f + eyeCenter.z * 0.1f
-		};
-
-		headPos.z -= 0.01f;
-		headPos.y += 0.03f;
-		return headPos;
-	}
-
-	return (Vector3){ 0, 0, 0 };
-}
-
-static inline Vector3 CalculateChestPosition(const Person* person) {
-	if (!person || person->boneCount == 0) return (Vector3){ 0, 0, 0 };
-
-	CachedBones cache = CacheBones(person);
-	if (cache.hasNeck && cache.shoulderCount > 0) {
-		Vector3 shoulderCenter = cache.hasLShoulder && cache.hasRShoulder ?
-			Vector3Scale(Vector3Add(cache.lShoulder, cache.rShoulder), 0.5f) :
-			(cache.hasLShoulder ? cache.lShoulder : cache.rShoulder);
-
-		return (Vector3){
-			(cache.neck.x + shoulderCenter.x) * 0.5f,
-				cache.neck.y + CHEST_OFFSET_Y,
-				cache.neck.z + CHEST_OFFSET_Z
-		};
-	}
-
-	if (cache.shoulderCount > 0 || cache.hasNeck) {
-		Vector3 total = {0,0,0};
-		int count = 0;
-
-		if (cache.hasNeck) { total = Vector3Add(total, cache.neck); count++; }
-		if (cache.hasLShoulder) { total = Vector3Add(total, cache.lShoulder); count++; }
-		if (cache.hasRShoulder) { total = Vector3Add(total, cache.rShoulder); count++; }
-
-		Vector3 result = Vector3Scale(total, 1.0f / count);
-		result.y += CHEST_FALLBACK_Y;
-		return result;
-	}
-
-	return (Vector3){ 0, 0, 0 };
-}
-
-static inline Vector3 CalculateHipPosition(const Person* person) {
-	if (!person || person->boneCount == 0) return (Vector3){ 0, 0, 0 };
-
-	CachedBones cache = CacheBones(person);
-	if (cache.hipCount == 0) return (Vector3){ 0, 0, 0 };
-
-	Vector3 hipCenter = { 0, 0, 0 };
-	int hipPointCount = 0;
-
-	if (cache.hasLHip) {
-		hipCenter = Vector3Add(hipCenter, cache.lHip);
-		hipPointCount++;
-	}
-	if (cache.hasRHip) {
-		hipCenter = Vector3Add(hipCenter, cache.rHip);
-		hipPointCount++;
-	}
-
-	hipCenter = Vector3Scale(hipCenter, 1.0f / hipPointCount);
-	Vector3 hipTorsoCenter = { 0, 0, 0 };
-	int hipTorsoCenterCount = 0;
-
-	hipTorsoCenter = Vector3Add(hipTorsoCenter, hipCenter);
-	hipTorsoCenter = Vector3Add(hipTorsoCenter, hipCenter);
-	hipTorsoCenterCount += 2;
-
-	if (cache.shoulderCount > 0) {
-		Vector3 shoulderCenter = { 0, 0, 0 };
-		int shoulderPointCount = 0;
-
-		if (cache.hasLShoulder) {
-			shoulderCenter = Vector3Add(shoulderCenter, cache.lShoulder);
-			shoulderPointCount++;
-		}
-		if (cache.hasRShoulder) {
-			shoulderCenter = Vector3Add(shoulderCenter, cache.rShoulder);
-			shoulderPointCount++;
-		}
-
-		if (shoulderPointCount > 0) {
-			shoulderCenter = Vector3Scale(shoulderCenter, 1.0f / shoulderPointCount);
-			hipTorsoCenter = Vector3Add(hipTorsoCenter, shoulderCenter);
-			hipTorsoCenterCount++;
-		}
-	}
-
-	hipTorsoCenter = Vector3Scale(hipTorsoCenter, 1.0f / hipTorsoCenterCount);
-	Vector3 hipDirection = { 0, 0, 1 };
-
-	if (cache.shoulderCount > 0) {
-		Vector3 shoulderCenter = { 0, 0, 0 };
-		int shoulderPointCount = 0;
-
-		if (cache.hasLShoulder) {
-			shoulderCenter = Vector3Add(shoulderCenter, cache.lShoulder);
-			shoulderPointCount++;
-		}
-		if (cache.hasRShoulder) {
-			shoulderCenter = Vector3Add(shoulderCenter, cache.rShoulder);
-			shoulderPointCount++;
-		}
-
-		if (shoulderPointCount > 0) {
-			shoulderCenter = Vector3Scale(shoulderCenter, 1.0f / shoulderPointCount);
-			Vector3 shoulderToHip = Vector3Subtract(hipCenter, shoulderCenter);
-			float torsoLength = Vector3Length(shoulderToHip);
-			if (torsoLength > 1e-6f) hipDirection = Vector3Scale(shoulderToHip, 1.0f / torsoLength);
-		}
-	}
-
-	Vector3 hipPos = Vector3Add(hipTorsoCenter, Vector3Scale(hipDirection, 0.01f));
-	Vector3 chestPos = CalculateChestPosition(person);
-
-	if (Vector3Length(chestPos) > 0.0f) {
-		Vector3 chestToOriginalHip = Vector3Subtract(hipCenter, chestPos);
-		float torsoDistance = Vector3Length(chestToOriginalHip);
-
-		if (torsoDistance > 0.12f) {
-			Vector3 torsoDirection = Vector3Scale(chestToOriginalHip, 1.0f / torsoDistance);
-			hipPos = Vector3Add(chestPos, Vector3Scale(torsoDirection, 0.10f));
-		}
-	}
-
-	hipPos.y += HIP_OFFSET_Y;
-	return hipPos;
-}
-
-static inline Vector3 GetBonePositionByName(const Person* person, const char* boneName) {
-	if (!person || !boneName) return (Vector3){ 0, 0, 0 };
-
-	if (strcmp(boneName, "FRONT_CALCULATED") == 0) {
-		Vector3 head = GetBonePositionByName(person, "Nose");
-		Vector3 neck = GetBonePositionByName(person, "Neck");
-
-		Vector3 dir = Vector3Subtract(neck, head);
-		dir.y = 0.0f;
-		if (Vector3Length(dir) < 1e-6f) dir = (Vector3){0, 0, 1};
-		dir = SafeNormalize(dir);
-
-		const float offset = 10.15f;
-		return Vector3Add(head, Vector3Scale(dir, -offset));
-	}
-
-	if (strcmp(boneName, "REAR_CALCULATED") == 0) {
-		Vector3 head = GetBonePositionByName(person, "HEAD_CALCULATED");
-		Vector3 neck = GetBonePositionByName(person, "Neck");
-
-		Vector3 dir = Vector3Subtract(neck, head);
-		dir.y = 0;
-		dir = SafeNormalize(dir);
-
-		Vector3 forward = (Vector3){ -dir.z, dir.y, dir.x };
-		float offset = 10.15f;
-		return Vector3Add(head, Vector3Scale(forward, offset));
-	}
-
-	if (strcmp(boneName, "HEAD_CALCULATED") == 0) return CalculateHeadPosition(person);
-
-	for (int i = 0; i < person->boneCount; i++) {
-		const Bone* bone = &person->bones[i];
-		if (bone->position.valid && strcmp(bone->name, boneName) == 0)
-			return bone->position.position;
-	}
-
-	return (Vector3){ 0, 0, 0 };
-}
-
-static inline Vector3 GetStablePerpendicularVector(Vector3 forward) {
-	forward = SafeNormalize(forward);
-	Vector3 candidates[3] = { {1, 0, 0}, {0, 1, 0}, {0, 0, 1} };
-
-	Vector3 bestCandidate = candidates[1];
-	float minDot = fabs(Vector3DotProduct(forward, candidates[1]));
-
-	for (int i = 0; i < 3; i++) {
-		float dot = fabs(Vector3DotProduct(forward, candidates[i]));
-		if (dot < minDot) {
-			minDot = dot;
-			bestCandidate = candidates[i];
-		}
-	}
-
-	return bestCandidate;
-}
-
-static inline Vector3 RotateVectorAroundAxis(Vector3 vector, Vector3 axis, float angle) {
-	if (fabs(angle) < 1e-6f) return vector;
-
-	float cosAngle = cosf(angle);
-	float sinAngle = sinf(angle);
-	float oneMinusCos = 1.0f - cosAngle;
-	axis = SafeNormalize(axis);
-
-	Vector3 result;
-	result.x = vector.x * (cosAngle + axis.x * axis.x * oneMinusCos) +
-		vector.y * (axis.x * axis.y * oneMinusCos - axis.z * sinAngle) +
-		vector.z * (axis.x * axis.z * oneMinusCos + axis.y * sinAngle);
-
-	result.y = vector.x * (axis.y * axis.x * oneMinusCos + axis.z * sinAngle) +
-		vector.y * (cosAngle + axis.y * axis.y * oneMinusCos) +
-		vector.z * (axis.y * axis.z * oneMinusCos - axis.x * sinAngle);
-
-	result.z = vector.x * (axis.z * axis.x * oneMinusCos - axis.y * sinAngle) +
-		vector.y * (axis.z * axis.y * oneMinusCos + axis.x * sinAngle) +
-		vector.z * (cosAngle + axis.z * axis.z * oneMinusCos);
-
-	return result;
-}
-
-static inline VirtualSpine CalculateVirtualSpine(const Person* person) {
-	VirtualSpine spine = { 0 };
-	if (!person || person->boneCount == 0) return spine;
-
-	CachedBones cache = CacheBones(person);
-	if (!cache.hasLShoulder || !cache.hasRShoulder || !cache.hasLHip || !cache.hasRHip) return spine;
-
-	spine.chestPosition = CalculateChestPosition(person);
-	spine.hipPosition = CalculateHipPosition(person);
-
-	Vector3 spineVec = Vector3Subtract(spine.chestPosition, spine.hipPosition);
-	float spineLength = Vector3Length(spineVec);
-	if (spineLength < EPSILON) return spine;
-
-	spine.spineDirection = Vector3Scale(spineVec, 1.0f / spineLength);
-	Vector3 shoulderLine = Vector3Subtract(cache.rShoulder, cache.lShoulder);
-	float shoulderLength = Vector3Length(shoulderLine);
-	if (shoulderLength < EPSILON) return spine;
-
-	spine.spineRight = Vector3Scale(shoulderLine, 1.0f / shoulderLength);
-	spine.spineForward = Vector3CrossProduct(spine.spineRight, spine.spineDirection);
-
-	float forwardLength = Vector3Length(spine.spineForward);
-	if (forwardLength < EPSILON) return spine;
-
-	spine.spineForward = Vector3Scale(spine.spineForward, 1.0f / forwardLength);
-	spine.spineRight = Vector3CrossProduct(spine.spineDirection, spine.spineForward);
-
-	float rightLength = Vector3Length(spine.spineRight);
-	if (rightLength > EPSILON) spine.spineRight = Vector3Scale(spine.spineRight, 1.0f / rightLength);
-
-	spine.valid = true;
-	return spine;
-}
-
-static inline TorsoOrientation CreateOrientation(Vector3 pos, Vector3 forward, Vector3 up, Vector3 right) {
-	TorsoOrientation orientation = { 0 };
-	orientation.position = pos;
-	orientation.forward = forward;
-	orientation.up = up;
-	orientation.right = right;
-
-	orientation.yaw = atan2f(forward.x, forward.z);
-	float horizDistance = sqrtf(forward.x * forward.x + forward.z * forward.z);
-	orientation.pitch = atan2f(-forward.y, horizDistance);
-	orientation.roll = atan2f(right.y, sqrtf(right.x * right.x + right.z * right.z));
-
-	orientation.valid = true;
-	return orientation;
-}
-
-static inline TorsoOrientation CalculateChestOrientation(const Person* person) {
-	VirtualSpine spine = CalculateVirtualSpine(person);
-	if (!spine.valid) {
-		Vector3 chestPos = CalculateChestPosition(person);
-		if (Vector3Length(chestPos) > 0.0f)
-			return CreateOrientation(chestPos, (Vector3){ 0, 0, 1 }, (Vector3){ 0, 1, 0 }, (Vector3){ 1, 0, 0 });
-		return (TorsoOrientation){ 0 };
-	}
-
-	return CreateOrientation(spine.chestPosition, spine.spineForward, spine.spineDirection, spine.spineRight);
-}
-
-static inline TorsoOrientation CalculateHipOrientation(const Person* person) {
-	VirtualSpine spine = CalculateVirtualSpine(person);
-	if (!spine.valid) {
-		Vector3 hipPos = CalculateHipPosition(person);
-		if (Vector3Length(hipPos) > 0.0f)
-			return CreateOrientation(hipPos, (Vector3){ 0, 0, 1 }, (Vector3){ 0, 1, 0 }, (Vector3){ 1, 0, 0 });
-		return (TorsoOrientation){ 0 };
-	}
-
-	return CreateOrientation(spine.hipPosition, spine.spineForward, spine.spineDirection, spine.spineRight);
-}
-
-static inline HeadOrientation CalculateHeadOrientation(const Person* person) {
-	HeadOrientation orientation = { .valid = false };
-	if (!person || person->boneCount == 0) return orientation;
-
-	Vector3 nose = {0,0,0}, lEye = {0,0,0}, rEye = {0,0,0}, lEar = {0,0,0}, rEar = {0,0,0};
-	bool hasNose = false, hasLEye = false, hasREye = false, hasLEar = false, hasREar = false;
-
-	for (int i = 0; i < person->boneCount; i++) {
-		const Bone* bone = &person->bones[i];
-		if (!bone->position.valid) continue;
-
-		const char* name = bone->name;
-		if (strcmp(name, "Nose") == 0) { nose = bone->position.position; hasNose = true; }
-		else if (strcmp(name, "LEye") == 0) { lEye = bone->position.position; hasLEye = true; }
-		else if (strcmp(name, "REye") == 0) { rEye = bone->position.position; hasREye = true; }
-		else if (strcmp(name, "LEar") == 0) { lEar = bone->position.position; hasLEar = true; }
-		else if (strcmp(name, "REar") == 0) { rEar = bone->position.position; hasREar = true; }
-	}
-
-	if (!hasNose || !((hasLEye && hasREye) || (hasLEar && hasREar))) {
-		Vector3 centerFallback = CalculateHeadPosition(person);
-		if (Vector3Length(centerFallback) > 0.0f) {
-			orientation.position = centerFallback;
-			orientation.valid = true;
-		}
-		return orientation;
-	}
-
-	orientation.position = CalculateHeadPosition(person);
-	Vector3 rightVec = { 1,0,0 };
-	Vector3 backRef;
-
-	if (hasLEar && hasREar) {
-		rightVec = Vector3Normalize(Vector3Subtract(rEar, lEar));
-		backRef = Vector3Scale(Vector3Add(lEar, rEar), 0.5f);
-	} else if (hasLEye && hasREye) {
-		rightVec = Vector3Normalize(Vector3Subtract(rEye, lEye));
-		backRef = Vector3Scale(Vector3Add(lEye, rEye), 0.5f);
-	} else backRef = orientation.position;
-
-	Vector3 forward = Vector3Normalize(Vector3Subtract(nose, backRef));
-	if (Vector3Length(forward) < 1e-6f) forward = (Vector3){ 0,0,1 };
-
-	Vector3 up = Vector3Normalize(Vector3CrossProduct(rightVec, forward));
-	if (Vector3Length(up) < 1e-6f) up = (Vector3){ 0,1,0 };
-
-	rightVec = Vector3Normalize(Vector3CrossProduct(forward, up));
-	orientation.forward = forward;
-	orientation.up = up;
-	orientation.right = rightVec;
-	orientation.yaw = atan2f(forward.x, forward.z);
-	orientation.pitch = atan2f(-forward.y, sqrtf(forward.x * forward.x + forward.z * forward.z));
-	orientation.roll = atan2f(up.x, sqrtf(up.y * up.y + up.z * up.z));
-	orientation.valid = true;
-
-	return orientation;
-}
-
-static inline BoneOrientation CalculateBoneOrientation(const char* boneName, const Person* person, Vector3 bonePosition) {
-	BoneOrientation orientation = { 0 };
-	orientation.position = bonePosition;
-	orientation.valid = false;
-
-	if (!boneName || !person) return orientation;
-
-	const char* primaryConn = NULL;
-	const char* secondaryConn = NULL;
-	bool reverseForward = false;
-
-	for (int i = 0; BONE_ORIENTATIONS[i].boneName[0] != '\0'; i++) {
-		if (strcmp(BONE_ORIENTATIONS[i].boneName, boneName) == 0) {
-			primaryConn = BONE_ORIENTATIONS[i].primaryConnection;
-			secondaryConn = BONE_ORIENTATIONS[i].secondaryConnection;
-			reverseForward = BONE_ORIENTATIONS[i].reverseForward;
-			break;
-		}
-	}
-
-	Vector3 forward = { 0, 0, 1 };
-	Vector3 up = { 0, 1, 0 };
-	Vector3 right = { 1, 0, 0 };
-
-	if (primaryConn && strlen(primaryConn) > 0) {
-		Vector3 primaryPos = GetBonePositionByName(person, primaryConn);
-		float primaryDistance = Vector3Length(Vector3Subtract(primaryPos, bonePosition));
-
-		if (primaryDistance > 1e-4f) {
-			forward = Vector3Subtract(primaryPos, bonePosition);
-			if (reverseForward) forward = Vector3Scale(forward, -1.0f);
-			forward = SafeNormalize(forward);
-
-			if (secondaryConn && strlen(secondaryConn) > 0) {
-				Vector3 secondaryPos = GetBonePositionByName(person, secondaryConn);
-				float secondaryDistance = Vector3Length(Vector3Subtract(secondaryPos, bonePosition));
-
-				if (secondaryDistance > 1e-4f) {
-					Vector3 toSecondary = Vector3Subtract(secondaryPos, bonePosition);
-					toSecondary = SafeNormalize(toSecondary);
-
-					right = Vector3CrossProduct(forward, toSecondary);
-					float rightLength = Vector3Length(right);
-
-					if (rightLength > 1e-4f) {
-						right = Vector3Scale(right, 1.0f / rightLength);
-						up = Vector3CrossProduct(right, forward);
-						up = SafeNormalize(up);
-					} else {
-						Vector3 tempUp = GetStablePerpendicularVector(forward);
-						right = Vector3CrossProduct(forward, tempUp);
-						right = SafeNormalize(right);
-						up = Vector3CrossProduct(right, forward);
-						up = SafeNormalize(up);
-					}
-				} else {
-					Vector3 tempUp = GetStablePerpendicularVector(forward);
-					right = Vector3CrossProduct(forward, tempUp);
-					right = SafeNormalize(right);
-					up = Vector3CrossProduct(right, forward);
-					up = SafeNormalize(up);
-				}
-			} else {
-				Vector3 tempUp = GetStablePerpendicularVector(forward);
-				right = Vector3CrossProduct(forward, tempUp);
-				right = SafeNormalize(right);
-				up = Vector3CrossProduct(right, forward);
-				up = SafeNormalize(up);
-			}
-		}
-	}
-
-	for (int i = 0; BONE_ANGLE_OFFSETS[i].boneName[0] != '\0'; i++) {
-		if (strcmp(BONE_ANGLE_OFFSETS[i].boneName, boneName) == 0) {
-			float yawRad = BONE_ANGLE_OFFSETS[i].yawOffset * (PI / 180.0f);
-			float pitchRad = BONE_ANGLE_OFFSETS[i].pitchOffset * (PI / 180.0f);
-			float rollRad = BONE_ANGLE_OFFSETS[i].rollOffset * (PI / 180.0f);
-
-			if (fabs(yawRad) > 1e-6f) {
-				forward = RotateVectorAroundAxis(forward, up, yawRad);
-				right = RotateVectorAroundAxis(right, up, yawRad);
-			}
-
-			if (fabs(pitchRad) > 1e-6f) {
-				forward = RotateVectorAroundAxis(forward, right, pitchRad);
-				up = RotateVectorAroundAxis(up, right, pitchRad);
-			}
-
-			if (fabs(rollRad) > 1e-6f) {
-				right = RotateVectorAroundAxis(right, forward, rollRad);
-				up = RotateVectorAroundAxis(up, forward, rollRad);
-			}
-			break;
-		}
-	}
-
-	forward = SafeNormalize(forward);
-	right = SafeNormalize(right);
-	up = SafeNormalize(up);
-
-	right = Vector3CrossProduct(forward, up);
-	right = SafeNormalize(right);
-	up = Vector3CrossProduct(right, forward);
-	up = SafeNormalize(up);
-
-	orientation.forward = forward;
-	orientation.up = up;
-	orientation.right = right;
-	orientation.yaw = atan2f(forward.x, forward.z);
-	float horizDistance = sqrtf(forward.x * forward.x + forward.z * forward.z);
-	orientation.pitch = atan2f(-forward.y, fmaxf(horizDistance, 1e-6f));
-
-	Vector3 worldUp = { 0, 1, 0 };
-	Vector3 projectedRight = Vector3Subtract(right, Vector3Scale(forward, Vector3DotProduct(right, forward)));
-	projectedRight = SafeNormalize(projectedRight);
-	orientation.roll = atan2f(Vector3DotProduct(projectedRight, worldUp),
-			Vector3DotProduct(projectedRight, Vector3CrossProduct(forward, worldUp)));
-
-	orientation.valid = true;
-	return orientation;
-}
-
-// ----------------------------------------------------------------------------
-// Rendering Collection Functions
-// ----------------------------------------------------------------------------
-
-static inline bool ShouldUseVariableHeight(const char* boneName) {
-	if (!boneName) return false;
-	static const char* variableHeightBones[] = {
-		"LShoulder", "LElbow", "RShoulder", "RElbow",
-		"LHip", "LKnee", "RHip", "RKnee"
-	};
-
-	for (int i = 0; i < 8; i++)
-		if (strcmp(boneName, variableHeightBones[i]) == 0) return true;
-	return false;
-}
-
-static inline Vector3 CalculateBoneMidpoint(const char* boneName, const Person* person) {
-	if (!person || !boneName) return (Vector3){ 0, 0, 0 };
-
-	if (ShouldUseVariableHeight(boneName)) return GetBonePositionByName(person, boneName);
-	if (strcmp(boneName, "Neck") == 0) {
-		Vector3 originalNeck = GetBonePositionByName(person, "Neck");
-		if (originalNeck.x == 0 && originalNeck.y == 0 && originalNeck.z == 0) return originalNeck;
-
-		Vector3 calculatedHead = CalculateHeadPosition(person);
-		if (calculatedHead.x == 0 && calculatedHead.y == 0 && calculatedHead.z == 0) return originalNeck;
-
-		Vector3 lShoulder = GetBonePositionByName(person, "LShoulder");
-		Vector3 rShoulder = GetBonePositionByName(person, "RShoulder");
-		Vector3 shoulderCenter = originalNeck;
-
-		if ((lShoulder.x || lShoulder.y || lShoulder.z) && (rShoulder.x || rShoulder.y || rShoulder.z)) {
-			shoulderCenter = (Vector3){
-				(lShoulder.x + rShoulder.x) * 0.5f,
-					(lShoulder.y + rShoulder.y) * 0.5f,
-					(lShoulder.z + rShoulder.z) * 0.5f
-			};
-		}
-
-		return (Vector3){
-			(shoulderCenter.x + calculatedHead.x) * 0.5f,
-				(shoulderCenter.y + calculatedHead.y) * 0.5f,
-				(shoulderCenter.z + calculatedHead.z) * 0.5f
-		};
-	}
-
-	const char* connectedBoneName = NULL;
-	float projectionFactor = 1.0f;
-
-	for (int i = 0; MIDPOINT_CONNECTIONS[i].boneName[0] != '\0'; i++) {
-		if (strcmp(MIDPOINT_CONNECTIONS[i].boneName, boneName) == 0) {
-			connectedBoneName = MIDPOINT_CONNECTIONS[i].connectedBone;
-			projectionFactor = MIDPOINT_CONNECTIONS[i].projectionFactor;
-			break;
-		}
-	}
-
-	if (!connectedBoneName) return GetBonePositionByName(person, boneName);
-
-	Vector3 bonePos = GetBonePositionByName(person, boneName);
-	Vector3 connectedPos = GetBonePositionByName(person, connectedBoneName);
-
-	if (strstr(boneName, "Wrist") && projectionFactor != 1.0f) {
-		if ((bonePos.x || bonePos.y || bonePos.z) && (connectedPos.x || connectedPos.y || connectedPos.z)) {
-			Vector3 forearmVector = { bonePos.x - connectedPos.x, bonePos.y - connectedPos.y, bonePos.z - connectedPos.z };
-			return (Vector3){
-				connectedPos.x + forearmVector.x * projectionFactor,
-					connectedPos.y + forearmVector.y * projectionFactor,
-					connectedPos.z + forearmVector.z * projectionFactor
-			};
-		}
-		return bonePos;
-	}
-
-	if (strstr(boneName, "Ankle") && strstr(connectedBoneName, "FOOT_FORWARD")) {
-		if (bonePos.x || bonePos.y || bonePos.z) {
-			Vector3 footPosition = bonePos;
-			footPosition.z += 0.008f;
-			footPosition.y -= 0.025f;
-			return footPosition;
-		}
-		return bonePos;
-	}
-
-	if (!(bonePos.x || bonePos.y || bonePos.z)) return (Vector3){ 0, 0, 0 };
-	if (!(connectedPos.x || connectedPos.y || connectedPos.z)) return bonePos;
-
-	return (Vector3){
-		(bonePos.x + connectedPos.x) * 0.5f,
-			(bonePos.y + connectedPos.y) * 0.5f,
-			(bonePos.z + connectedPos.z) * 0.5f
-	};
-}
-
-static inline bool ShouldRenderHead(const Person* person) {
-	if (!person || !person->active) return false;
-
-	int facialPoints = 0;
-	for (int i = 0; i < person->boneCount; i++) {
-		const Bone* bone = &person->bones[i];
-		if (!bone->position.valid) continue;
-
-		char firstChar = bone->name[0];
-		if ((firstChar == 'N' && strcmp(bone->name, "Nose") == 0) ||
-				((firstChar == 'L' || firstChar == 'R') &&
-				 (strstr(bone->name, "Eye") || strstr(bone->name, "Ear")))) {
-			facialPoints++;
-		}
-	}
-
-	return facialPoints >= 2;
-}
-
-static inline bool ShouldRenderChest(const Person* person) {
-	if (!person || !person->active) return false;
-	return CacheBones(person).shoulderCount >= 1;
-}
-
-static inline bool ShouldRenderHip(const Person* person) {
-	if (!person || !person->active) return false;
-	return CacheBones(person).hipCount >= 1;
-}
-
-static inline void CollectHeadsForRendering(const BonesAnimation* animation, HeadRenderData** heads,
-		int* headCount, int* headCapacity, BoneConfig* boneConfigs, int boneConfigCount,
-		TextureSetCollection* textureSets) {
-	if (!animation->isLoaded) { *headCount = 0; return; }
-
-	int currentFrame = BonesGetCurrentFrame(animation);
-	if (!BonesIsValidFrame(animation, currentFrame)) { *headCount = 0; return; }
-
-	const AnimationFrame* frame = &animation->frames[currentFrame];
-	*headCount = 0;
-	int estimatedHeads = frame->personCount;
-
-	if (*headCapacity < estimatedHeads) {
-		HeadRenderData* newArray = (HeadRenderData*)realloc(*heads, sizeof(HeadRenderData) * estimatedHeads);
-		if (!newArray) return;
-		*heads = newArray;
-		*headCapacity = estimatedHeads;
-	}
-
-	static char processedHeads[200][25];
-	int processedCount = 0;
-
-	for (int p = 0; p < frame->personCount; p++) {
-		const Person* person = &frame->persons[p];
-		if (!ShouldRenderHead(person)) continue;
-
-		char headKey[25];
-		snprintf(headKey, sizeof(headKey), "%s_head", person->personId);
-
-		bool alreadyProcessed = false;
-		for (int i = 0; i < processedCount; i++) {
-			if (strcmp(processedHeads[i], headKey) == 0) {
-				alreadyProcessed = true;
-				break;
-			}
-		}
-		if (alreadyProcessed) continue;
-
-		if (processedCount < 200) {
-			strncpy(processedHeads[processedCount], headKey, 24);
-			processedHeads[processedCount][24] = '\0';
-			processedCount++;
-		}
-
-		HeadRenderData* head = &(*heads)[*headCount];
-		memset(head, 0, sizeof(HeadRenderData));
-
-		head->position = CalculateHeadPosition(person);
-		head->orientation = CalculateHeadOrientation(person);
-		head->valid = true;
-		head->visible = true;
-
-		bool textureFound = false;
-		if (textureSets && textureSets->loaded) {
-			const char* activeTexture = BonesTextureSets_GetActiveTexture(textureSets, "Head");
-			if (activeTexture) {
-				strncpy(head->texturePath, activeTexture, MAX_FILE_PATH_LENGTH - 1);
-				head->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
-				textureFound = true;
-			}
-		}
-
-		if (!textureFound) {
-			BoneConfig* config = FindBoneConfig(boneConfigs, boneConfigCount, "Head");
-			if (config) {
-				strncpy(head->texturePath, config->texturePath, MAX_FILE_PATH_LENGTH - 1);
-				head->size = config->size;
-			} else {
-				strncpy(head->texturePath, "data/textures/hil/Head.png", MAX_FILE_PATH_LENGTH - 1);
-				head->size = 0.25f;
-			}
-			head->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
-		} else {
-			BoneConfig* config = FindBoneConfig(boneConfigs, boneConfigCount, "Head");
-			head->size = config ? config->size : 0.25f;
-		}
-
-		strncpy(head->personId, person->personId, 15);
-		head->personId[15] = '\0';
-		(*headCount)++;
-	}
-}
-
-static inline void CollectTorsosForRendering(const BonesAnimation* animation, TorsoRenderData** torsos,
-		int* torsoCount, int* torsoCapacity, BoneConfig* boneConfigs, int boneConfigCount,
-		TextureSetCollection* textureSets) {
-	*torsoCount = 0;
-	if (!animation->isLoaded) return;
-
-	int currentFrame = BonesGetCurrentFrame(animation);
-	if (!BonesIsValidFrame(animation, currentFrame)) return;
-
-	const AnimationFrame* frame = &animation->frames[currentFrame];
-	int estimatedTorsos = frame->personCount * 2;
-
-	if (*torsoCapacity < estimatedTorsos) {
-		TorsoRenderData* newArray = (TorsoRenderData*)realloc(*torsos, sizeof(TorsoRenderData) * estimatedTorsos);
-		if (!newArray) return;
-		*torsos = newArray;
-		*torsoCapacity = estimatedTorsos;
-	}
-
-	static char processedTorsos[200][25];
-	int processedCount = 0;
-
-	for (int p = 0; p < frame->personCount; p++) {
-		const Person* person = &frame->persons[p];
-
-		if (ShouldRenderChest(person)) {
-			char torsoKey[25];
-			snprintf(torsoKey, sizeof(torsoKey), "%s_chest", person->personId);
-
-			bool alreadyProcessed = false;
-			for (int i = 0; i < processedCount; i++) {
-				if (strcmp(processedTorsos[i], torsoKey) == 0) {
-					alreadyProcessed = true;
-					break;
-				}
-			}
-
-			if (!alreadyProcessed) {
-				if (processedCount < 200) {
-					strncpy(processedTorsos[processedCount], torsoKey, 24);
-					processedTorsos[processedCount][24] = '\0';
-					processedCount++;
-				}
-
-				TorsoRenderData* torsoData = &(*torsos)[*torsoCount];
-				memset(torsoData, 0, sizeof(TorsoRenderData));
-
-				torsoData->position = CalculateChestPosition(person);
-				torsoData->orientation = CalculateChestOrientation(person);
-				torsoData->type = TORSO_CHEST;
-				torsoData->person = person;
-
-				if (!torsoData->orientation.valid && Vector3Length(torsoData->position) < 1e-6f) continue;
-
-				torsoData->valid = true;
-				torsoData->visible = true;
-
-				bool textureFound = false;
-				if (textureSets && textureSets->loaded) {
-					const char* activeTexture = BonesTextureSets_GetActiveTexture(textureSets, "Chest");
-					if (activeTexture) {
-						strncpy(torsoData->texturePath, activeTexture, MAX_FILE_PATH_LENGTH - 1);
-						torsoData->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
-						textureFound = true;
-					}
-				}
-
-				if (!textureFound) {
-					BoneConfig* chestConfig = FindBoneConfig(boneConfigs, boneConfigCount, "Chest");
-					if (chestConfig) {
-						strncpy(torsoData->texturePath, chestConfig->texturePath, MAX_FILE_PATH_LENGTH - 1);
-						torsoData->size = chestConfig->size;
-						torsoData->visible = chestConfig->visible;
-					} else {
-						strncpy(torsoData->texturePath, "tex/Chest.png", MAX_FILE_PATH_LENGTH - 1);
-						torsoData->size = 0.4f;
-						torsoData->visible = true;
-					}
-					torsoData->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
-				} else {
-					BoneConfig* chestConfig = FindBoneConfig(boneConfigs, boneConfigCount, "Chest");
-					torsoData->size = chestConfig ? chestConfig->size : 0.4f;
-					torsoData->visible = chestConfig ? chestConfig->visible : true;
-				}
-
-				strncpy(torsoData->personId, person->personId, 15);
-				torsoData->personId[15] = '\0';
-				(*torsoCount)++;
-			}
-		}
-
-		if (ShouldRenderHip(person)) {
-			char torsoKey[25];
-			snprintf(torsoKey, sizeof(torsoKey), "%s_hip", person->personId);
-
-			bool alreadyProcessed = false;
-			for (int i = 0; i < processedCount; i++) {
-				if (strcmp(processedTorsos[i], torsoKey) == 0) {
-					alreadyProcessed = true;
-					break;
-				}
-			}
-
-			if (!alreadyProcessed) {
-				if (processedCount < 200) {
-					strncpy(processedTorsos[processedCount], torsoKey, 24);
-					processedTorsos[processedCount][24] = '\0';
-					processedCount++;
-				}
-
-				TorsoRenderData* torsoData = &(*torsos)[*torsoCount];
-				memset(torsoData, 0, sizeof(TorsoRenderData));
-
-				torsoData->position = CalculateHipPosition(person);
-				torsoData->orientation = CalculateHipOrientation(person);
-				torsoData->type = TORSO_HIP;
-				torsoData->person = person;
-
-				if (!torsoData->orientation.valid && Vector3Length(torsoData->position) < 1e-6f) continue;
-
-				torsoData->valid = true;
-				torsoData->visible = true;
-
-				bool textureFound = false;
-				if (textureSets && textureSets->loaded) {
-					const char* activeTexture = BonesTextureSets_GetActiveTexture(textureSets, "Hip");
-					if (activeTexture) {
-						strncpy(torsoData->texturePath, activeTexture, MAX_FILE_PATH_LENGTH - 1);
-						torsoData->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
-						textureFound = true;
-					}
-				}
-
-				if (!textureFound) {
-					BoneConfig* hipConfig = FindBoneConfig(boneConfigs, boneConfigCount, "Hip");
-					if (hipConfig) {
-						strncpy(torsoData->texturePath, hipConfig->texturePath, MAX_FILE_PATH_LENGTH - 1);
-						torsoData->size = hipConfig->size;
-						torsoData->visible = hipConfig->visible;
-					} else {
-						strncpy(torsoData->texturePath, "tex/Hip.png", MAX_FILE_PATH_LENGTH - 1);
-						torsoData->size = 0.35f;
-						torsoData->visible = true;
-					}
-					torsoData->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
-				} else {
-					BoneConfig* hipConfig = FindBoneConfig(boneConfigs, boneConfigCount, "Hip");
-					torsoData->size = hipConfig ? hipConfig->size : 0.35f;
-					torsoData->visible = hipConfig ? hipConfig->visible : true;
-				}
-
-				strncpy(torsoData->personId, person->personId, 15);
-				torsoData->personId[15] = '\0';
-				(*torsoCount)++;
-			}
-		}
-	}
-}
-
-static inline bool ResizeRenderBonesArray(BoneRenderData** renderBones, int* renderBonesCapacity, int newCapacity) {
-	if (newCapacity <= 0 || newCapacity > 10000 || newCapacity <= *renderBonesCapacity) return true;
-
-	BoneRenderData* newArray = realloc(*renderBones, sizeof(BoneRenderData) * newCapacity);
-	if (!newArray) return false;
-
-	memset(newArray + *renderBonesCapacity, 0, sizeof(BoneRenderData) * (newCapacity - *renderBonesCapacity));
-	*renderBones = newArray;
-	*renderBonesCapacity = newCapacity;
-	return true;
-}
-
-static inline void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, BoneRenderData** renderBones,
-		int* renderBonesCount, int* renderBonesCapacity, BoneConfig* boneConfigs, int boneConfigCount,
-		TextureSetCollection* textureSets, OrnamentSystem* ornaments) {
-	*renderBonesCount = 0;
-	if (!animation->isLoaded) return;
-
-	int currentFrame = BonesGetCurrentFrame(animation);
-	if (!BonesIsValidFrame(animation, currentFrame)) return;
-
-	const AnimationFrame* frame = &animation->frames[currentFrame];
-
-	// Estimar cantidad de bones
-	int estimatedBones = 0;
-	for (int p = 0; p < frame->personCount; p++)
-		if (frame->persons[p].active) estimatedBones += frame->persons[p].boneCount;
-
-	if (!ResizeRenderBonesArray(renderBones, renderBonesCapacity, estimatedBones + 10)) return;
-
-	static char processedBones[2000][MAX_BONE_NAME_LENGTH + 20];
-	int processedCount = 0;
-
-	// --- Recolectar bones normales ---
-	for (int p = 0; p < frame->personCount; p++) {
-		const Person* person = &frame->persons[p];
-		if (!person->active) continue;
-
-		for (int b = 0; b < person->boneCount; b++) {
-			const Bone* bone = &person->bones[b];
-			if (!bone->position.valid || !bone->visible || !BonesIsPositionValid(bone->position.position)) continue;
-
-			BoneConfig* config = FindBoneConfig(boneConfigs, boneConfigCount, bone->name);
-			if (!config) {
-				char firstChar = bone->name[0];
-				bool isKnown = (firstChar == 'N' && strstr(bone->name, "Nose")) ||
-					((firstChar == 'L' || firstChar == 'R') &&
-					 (strstr(bone->name, "Eye") || strstr(bone->name, "Ear") ||
-					  strstr(bone->name, "Shoulder") || strstr(bone->name, "Elbow") ||
-					  strstr(bone->name, "Wrist") || strstr(bone->name, "Hip") ||
-					  strstr(bone->name, "Knee") || strstr(bone->name, "Ankle"))) ||
-					(firstChar == 'H' && (strstr(bone->name, "Head") || strstr(bone->name, "Hip"))) ||
-					(firstChar == 'C' && strstr(bone->name, "Chest")) ||
-					(firstChar == 'S' && (strstr(bone->name, "Shoulder") || strstr(bone->name, "Spine")));
-
-				if (!isKnown) continue;
-			} else if (!config->visible) continue;
-
-			char boneKey[MAX_BONE_NAME_LENGTH + 20];
-			int keyLen = snprintf(boneKey, sizeof(boneKey), "%s_%s", person->personId, bone->name);
-
-			bool alreadyProcessed = false;
-			for (int i = 0; i < processedCount; i++) {
-				if (memcmp(processedBones[i], boneKey, keyLen + 1) == 0) {
-					alreadyProcessed = true;
-					break;
-				}
-			}
-
-			if (alreadyProcessed) continue;
-
-			if (processedCount < 2000) {
-				memcpy(processedBones[processedCount], boneKey, keyLen + 1);
-				processedCount++;
-			}
-
-			Vector3 midpointPos = CalculateBoneMidpoint(bone->name, person);
-			if (!BonesIsPositionValid(midpointPos)) continue;
-
-			float distance = Vector3Distance(camera.position, midpointPos);
-			if (distance > 50.0f) continue;
-
-			BoneRenderData* renderBone = &(*renderBones)[*renderBonesCount];
-			renderBone->position = midpointPos;
-			renderBone->distance = distance;
-			renderBone->valid = true;
-
-			bool textureFound = false;
-			if (textureSets && textureSets->loaded) {
-				const char* activeTexture = BonesTextureSets_GetActiveTexture(textureSets, bone->name);
-				if (activeTexture) {
-					strncpy(renderBone->texturePath, activeTexture, MAX_FILE_PATH_LENGTH - 1);
-					renderBone->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
-					textureFound = true;
-				}
-			}
-
-			if (!textureFound) {
-				if (config) {
-					strncpy(renderBone->texturePath, config->texturePath, MAX_FILE_PATH_LENGTH - 1);
-					renderBone->visible = config->visible;
-					renderBone->size = config->size;
-				} else {
-					strncpy(renderBone->texturePath, GetTexturePathForBone(boneConfigs, boneConfigCount, bone->name, textureSets), MAX_FILE_PATH_LENGTH - 1);
-					renderBone->visible = IsBoneVisible(boneConfigs, boneConfigCount, bone->name);
-					renderBone->size = GetBoneSize(boneConfigs, boneConfigCount, bone->name);
-				}
-				renderBone->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
-			} else {
-				if (config) {
-					renderBone->visible = config->visible;
-					renderBone->size = config->size;
-				} else {
-					renderBone->visible = true;
-					renderBone->size = 0.35f;
-				}
-			}
-
-			strncpy(renderBone->boneName, bone->name, MAX_BONE_NAME_LENGTH - 1);
-			renderBone->boneName[MAX_BONE_NAME_LENGTH - 1] = '\0';
-			strncpy(renderBone->personId, person->personId, 15);
-			renderBone->personId[15] = '\0';
-
-			EnrichBoneRenderDataWithOrientation(renderBone, person);
-			(*renderBonesCount)++;
-		}
-	}
-
-	// --- *** RECOLECTAR ORNAMENTOS *** ---
-	if (ornaments && ornaments->loaded) {
-		Ornaments_CollectForRendering(ornaments, renderBones, renderBonesCount, 
-				renderBonesCapacity, camera);
-	}
-	// --- *** FIN ORNAMENTOS *** ---
-
-	// Sort by distance
-	if (*renderBonesCount > 1) {
-		for (int i = 0; i < *renderBonesCount - 1; i++) {
-			for (int j = 0; j < *renderBonesCount - i - 1; j++) {
-				if ((*renderBones)[j].distance < (*renderBones)[j + 1].distance) {
-					BoneRenderData temp = (*renderBones)[j];
-					(*renderBones)[j] = (*renderBones)[j + 1];
-					(*renderBones)[j + 1] = temp;
-				}
-			}
-		}
-	}
-}
-
-static inline void EnrichBoneRenderDataWithOrientation(BoneRenderData* renderBone, const Person* person) {
-	if (!renderBone || !person) return;
-
-	if (IsWristBone(renderBone->boneName)) {
-		renderBone->orientation.valid = false;
-		return;
-	}
-
-	BoneOrientation orientation = CalculateBoneOrientation(renderBone->boneName, person, renderBone->position);
-	if (orientation.valid) {
-		renderBone->orientation.position = orientation.position;
-		renderBone->orientation.forward = orientation.forward;
-		renderBone->orientation.up = orientation.up;
-		renderBone->orientation.right = orientation.right;
-		renderBone->orientation.yaw = orientation.yaw;
-		renderBone->orientation.pitch = orientation.pitch;
-		renderBone->orientation.roll = orientation.roll;
-		renderBone->orientation.valid = true;
-	} else {
-		renderBone->orientation.position = renderBone->position;
-		renderBone->orientation.forward = (Vector3){ 0, 0, 1 };
-		renderBone->orientation.up = (Vector3){ 0, 1, 0 };
-		renderBone->orientation.right = (Vector3){ 1, 0, 0 };
-		renderBone->orientation.yaw = 0.0f;
-		renderBone->orientation.pitch = 0.0f;
-		renderBone->orientation.roll = 0.0f;
-		renderBone->orientation.valid = true;
-	}
-}
-
-// ----------------------------------------------------------------------------
-// Rendering Calculation Functions
-// ----------------------------------------------------------------------------
-
-static inline BoneConnectionPositions GetBoneConnectionPositionsEx(const BoneRenderData* boneData, const Person* person) {
-	BoneConnectionPositions result = { 0 };
-	if (!boneData || !boneData->valid) return result;
-
-	result.pos0 = boneData->position;
-	result.pos1 = result.pos0;
-
-	for (int i = 0; BONE_CONNECTIONS[i].boneName[0] != '\0'; i++) {
-		if (strcmp(BONE_CONNECTIONS[i].boneName, boneData->boneName) != 0) continue;
-
-		for (int k = 1; k < 3; k++) {
-			const char* neighborName = BONE_CONNECTIONS[i].connections[k];
-			if (!neighborName || neighborName[0] == '\0') continue;
-			if (strcmp(neighborName, boneData->boneName) == 0) continue;
-
-			if (person) {
-				Vector3 p = GetBonePositionByName(person, neighborName);
-				if (Vector3Length(p) > 1e-6f) {
-					result.pos1 = p;
-					return result;
-				}
-			}
-		}
-		return result;
-	}
-	return result;
-}
-
-static inline void CalculateLimbBoneRenderData(const BoneRenderData* boneData, const Person* person, Camera camera, int* outChosenIndex, float* outRotation, bool* outMirrored) {
-	if (!boneData->orientation.valid) {
-		CalculateHandBoneRenderData(boneData->position, camera, outChosenIndex, outRotation, outMirrored, boneData->boneName);
-		return;
-	}
-
-	static const int indices[3][8] = {
-		{0,4,5,6,7,6,5,4},
-		{2,12,13,14,15,14,13,12},
-		{1,8,9,10,11,10,9,8}
-	};
-
-	Vector3 camDir = Vector3Subtract(boneData->position, camera.position);
-	camDir = SafeNormalize(camDir);
-
-	Vector3 localCamDir = {
-		Vector3DotProduct(camDir, boneData->orientation.right),
-		Vector3DotProduct(camDir, boneData->orientation.up),
-		Vector3DotProduct(camDir, boneData->orientation.forward)
-	};
-
-	float localYaw = atan2f(localCamDir.x, localCamDir.z);
-	if (localYaw < 0.0f) localYaw += 2.0f * PI;
-
-	float localPitchDeg = atan2f(localCamDir.y,
-			sqrtf(localCamDir.x * localCamDir.x + localCamDir.z * localCamDir.z)) * RAD2DEG;
-
-	bool shouldInvertPitch = false;
-	if (boneData->boneName[0] != '\0') {
-		if (strcmp(boneData->boneName, "Neck") != 0 &&
-				strcmp(boneData->boneName, "RShoulder") != 0 &&
-				strcmp(boneData->boneName, "RHip") != 0 && 
-				strcmp(boneData->boneName, "RElbow") != 0 &&
-				strcmp(boneData->boneName, "RKnee") != 0 &&
-				strcmp(boneData->boneName, "LAnkle") != 0) {
-			shouldInvertPitch = true;
-		}
-	}
-	if (shouldInvertPitch) localPitchDeg = -localPitchDeg;
-
-	if (person) {
-		BoneConnectionPositions p = GetBoneConnectionPositionsEx(boneData, person);
-		Vector3 camF = Vector3Subtract(camera.target, camera.position);
-		camF = SafeNormalize(camF);
-
-		Vector3 camR = Vector3CrossProduct(camF, camera.up);
-		camR = SafeNormalize(camR);
-
-		Vector3 camU = Vector3CrossProduct(camR, camF);
-		camU = SafeNormalize(camU);
-
-		Vector3 boneVec = Vector3Subtract(p.pos1, p.pos0);
-		float boneLen = Vector3Length(boneVec);
-		if (boneLen > 1e-6f) {
-			boneVec = Vector3Scale(boneVec, 1.0f / boneLen);
-			Vector3 mid = { (p.pos0.x + p.pos1.x) * 0.5f, (p.pos0.y + p.pos1.y) * 0.5f, (p.pos0.z + p.pos1.z) * 0.5f };
-			Vector3 toCam = Vector3Subtract(camera.position, mid);
-			float toCamLen = Vector3Length(toCam);
-			if (toCamLen > 1e-6f) {
-				toCam = Vector3Scale(toCam, 1.0f / toCamLen);
-				float d = Vector3DotProduct(boneVec, toCam);
-				if (d > 1.0f) d = 1.0f;
-				if (d < -1.0f) d = -1.0f;
-				float angleBetweenDeg = acosf(d) * RAD2DEG;
-
-				Vector3 boneInCam = { Vector3DotProduct(boneVec, camR), Vector3DotProduct(boneVec, camU), Vector3DotProduct(boneVec, camF) };
-				float horizLen = sqrtf(boneInCam.x * boneInCam.x + boneInCam.z * boneInCam.z);
-				float bonePitchInCameraDeg = atan2f(boneInCam.y, horizLen) * RAD2DEG;
-
-				float compensationFactor = 0.0f;
-				if (boneData->boneName[0] != '\0') {
-					if (strstr(boneData->boneName, "Hip") != NULL) compensationFactor = 0.25f;
-					else if (strstr(boneData->boneName, "Knee") != NULL) compensationFactor = 0.25f;
-					else if (strstr(boneData->boneName, "Shoulder") != NULL) compensationFactor = 0.15f;
-					else if (strstr(boneData->boneName, "Elbow") != NULL) compensationFactor = 0.15f;
-				}
-
-				if (compensationFactor > 0.0f && angleBetweenDeg > 45.0f) {
-					float angleIntensity = (angleBetweenDeg - 45.0f) / 45.0f;
-					angleIntensity = fminf(angleIntensity, 1.0f);
-
-					float compensation = bonePitchInCameraDeg * compensationFactor * angleIntensity;
-					float maxCompensation = 12.0f;
-					compensation = fmaxf(fminf(compensation, maxCompensation), -maxCompensation);
-					localPitchDeg += compensation;
-				}
-			}
-		}
-	}
-
-	float normalizedYaw = localYaw * RAD2DEG + 22.5f;
-	if (normalizedYaw >= 360.0f) normalizedYaw -= 360.0f;
-
-	int sector = (int)(normalizedYaw / 45.0f) % 8;
-	float rotationCompensation = 0.0f;
-
-	if (localPitchDeg >= 70.5f) {
-		*outChosenIndex = 3;
-		*outRotation = 0.0f;
-		*outMirrored = false;
-		return;
-	} else if (localPitchDeg <= -60.0f) {
-		*outChosenIndex = 15;
-		*outRotation = (8 - sector) * 45.0f + 180.0f;
-		*outMirrored = true;
-		return;
-	} else {
-		int row = (localPitchDeg >= 22.5f) ? 2 : (localPitchDeg >= -22.5f) ? 0 : 1;
-		*outChosenIndex = indices[row][sector];
-		*outRotation = 0.0f;
-		*outMirrored = (sector >= 1 && sector <= 4);
-		if (boneData->boneName[0] == 'R') *outMirrored = !(*outMirrored);
-
-		if (person) {
-			BoneConnectionPositions p = GetBoneConnectionPositionsEx(boneData, person);
-			Vector3 boneVec = Vector3Subtract(p.pos1, p.pos0);
-			float boneLen = Vector3Length(boneVec);
-
-			if (boneLen > 1e-6f) {
-				boneVec = SafeNormalize(boneVec);
-				Vector3 verticalUp = { 0, 1, 0 };
-				float dotWithVertical = Vector3DotProduct(boneVec, verticalUp);
-				float angleFromVerticalDeg = acosf(fabs(dotWithVertical)) * RAD2DEG;
-				float diagonalThreshold = 30.0f;
-
-				if (angleFromVerticalDeg > diagonalThreshold) {
-					Vector3 camToPos = Vector3Subtract(boneData->position, camera.position);
-					camToPos = SafeNormalize(camToPos);
-
-					Vector3 projectedBone = Vector3Subtract(boneVec, Vector3Scale(camToPos, Vector3DotProduct(boneVec, camToPos)));
-					float projLen = Vector3Length(projectedBone);
-
-					if (projLen > 1e-4f) {
-						projectedBone = SafeNormalize(projectedBone);
-						Vector3 camRight = Vector3Normalize(Vector3CrossProduct(Vector3Subtract(camera.target, camera.position), camera.up));
-						Vector3 camUp = Vector3Normalize(Vector3CrossProduct(camRight, Vector3Subtract(camera.target, camera.position)));
-
-						float rightDot = Vector3DotProduct(projectedBone, camRight);
-						float upDot = Vector3DotProduct(projectedBone, camUp);
-						rotationCompensation = atan2f(rightDot, upDot) * RAD2DEG;
-
-						float diagonalIntensity = (angleFromVerticalDeg - diagonalThreshold) / (90.0f - diagonalThreshold);
-						diagonalIntensity = fminf(diagonalIntensity, 1.0f);
-
-						float rotationFactor = 0.0f;
-						if (boneData->boneName[0] != '\0') {
-							if (strstr(boneData->boneName, "LHip") != NULL) rotationFactor = -0.6f;
-							else if (strstr(boneData->boneName, "RHip") != NULL) rotationFactor = -0.6f;
-							else if (strstr(boneData->boneName, "Knee") != NULL) rotationFactor = 0.5f;
-							else if (strstr(boneData->boneName, "Shoulder") != NULL) rotationFactor = 0.3f;
-							else if (strstr(boneData->boneName, "Elbow") != NULL) rotationFactor = 0.3f;
-						}
-
-						rotationCompensation *= rotationFactor * diagonalIntensity;
-						float maxRotationCompensation = 45.0f;
-						rotationCompensation = fmaxf(fminf(rotationCompensation, maxRotationCompensation), -maxRotationCompensation);
-					}
-				}
-			}
-		}
-	}
-
-	if (strcmp(boneData->boneName, "Neck") == 0) {
-		Vector3 estimatedHeadPos = Vector3Add(boneData->position, Vector3Scale(boneData->orientation.up, 0.15f));
-		Vector3 direction = Vector3Subtract(estimatedHeadPos, boneData->position);
-
-		if (Vector3Length(direction) > 0.001f) {
-			direction = SafeNormalize(direction);
-			Vector3 camForward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
-			Vector3 camRight = Vector3Normalize(Vector3CrossProduct(camForward, camera.up));
-			Vector3 camUp = Vector3Normalize(Vector3CrossProduct(camRight, camForward));
-
-			Vector3 projectedDir = Vector3Subtract(direction, Vector3Scale(camForward, Vector3DotProduct(direction, camForward)));
-			if (Vector3Length(projectedDir) > 0.001f) {
-				projectedDir = SafeNormalize(projectedDir);
-				float angle = atan2f(Vector3DotProduct(projectedDir, camRight),
-						Vector3DotProduct(projectedDir, camUp)) * RAD2DEG;
-				angle = fmodf(angle + 180.0f, 360.0f);
-				*outRotation = angle;
-			}
-		}
-	}
-
-	if ((sector == 0 || sector == 4) && localPitchDeg < 60.0f && localPitchDeg > -60.0f) {
-		rotationCompensation *= 0.01f;
-		if (boneData->boneName[0] != '\0') {
-			if (strcmp(boneData->boneName, "LShoulder") == 0 ||
-					strcmp(boneData->boneName, "RShoulder") == 0 ||
-					strcmp(boneData->boneName, "LElbow") == 0 ||
-					strcmp(boneData->boneName, "RElbow") == 0 ||
-					strcmp(boneData->boneName, "LHip") == 0 ||
-					strcmp(boneData->boneName, "RHip") == 0 ||
-					strcmp(boneData->boneName, "LKnee") == 0 ||
-					strcmp(boneData->boneName, "RKnee") == 0) {
-				rotationCompensation = 0.0f;
-			}
-		}
-	}
-
-	if (((sector >= 7 || sector <= 1) || (sector >= 3 && sector <= 5)) && localPitchDeg < 45.0f && localPitchDeg > -45.0f)
-		rotationCompensation *= 0.3f;
-
-	*outRotation += rotationCompensation;
-	while (*outRotation >= 360.0f) *outRotation -= 360.0f;
-	while (*outRotation < 0.0f) *outRotation += 360.0f;
-}
-
-static inline void CalculateHandBoneRenderData(Vector3 bonePos, Camera camera, int* outChosenIndex,
-		float* outRotation, bool* outMirrored, const char* boneName) {
-	static const int rightHandIndices[3][8] = {
-		{23, 22,  2, 15, 16, 17, 18, 24},
-		{ 9,  4,  0,  5,  6,  7,  8, 14},
-		{20, 19,  1, 10, 11, 12, 13, 21}
-	};
-
-	static const int leftHandIndices[3][8] = {
-		{16, 15,  2, 22, 23, 24, 18, 17},
-		{ 6,  5,  0,  4,  9, 14,  8,  7}, 
-		{11, 10,  1, 19, 20, 21, 13, 12}
-	};
-
-	Vector3 camDir = Vector3Subtract(camera.position, bonePos);
-	camDir = SafeNormalize(camDir);
-
-	bool isWrist = (boneName != NULL) && IsWristBone(boneName);
-	bool isLeftHand = (boneName != NULL) && (strcmp(boneName, "LWrist") == 0);
-
-	float yawOffsetRad = 0.0f, pitchOffsetRad = 0.0f;
-
-	if (boneName) {
-		for (int i = 0; BONE_ANGLE_OFFSETS[i].boneName[0] != '\0'; i++) {
-			if (strcmp(BONE_ANGLE_OFFSETS[i].boneName, boneName) == 0) {
-				yawOffsetRad = BONE_ANGLE_OFFSETS[i].yawOffset * (PI / 180.0f);
-				pitchOffsetRad = BONE_ANGLE_OFFSETS[i].pitchOffset * (PI / 180.0f);
-				break;
-			}
-		}
-	}
-
-	if (fabs(yawOffsetRad) > 1e-6f) {
-		float cosYaw = cosf(yawOffsetRad), sinYaw = sinf(yawOffsetRad);
-		float newX = camDir.x * cosYaw - camDir.z * sinYaw;
-		float newZ = camDir.x * sinYaw + camDir.z * cosYaw;
-		camDir.x = newX; camDir.z = newZ;
-	}
-
-	if (fabs(pitchOffsetRad) > 1e-6f) {
-		float horizDist = sqrtf(camDir.x * camDir.x + camDir.z * camDir.z);
-		if (horizDist > 1e-6f) {
-			float cosP = cosf(pitchOffsetRad), sinP = sinf(pitchOffsetRad);
-			float newY = camDir.y * cosP - horizDist * sinP;
-			float newHoriz = camDir.y * sinP + horizDist * cosP;
-			float scale = newHoriz / horizDist;
-			camDir.x *= scale; camDir.z *= scale; camDir.y = newY;
-		}
-	}
-
-	if (!isWrist) { 
-		float tmp = camDir.x; 
-		camDir.x = camDir.z; 
-		camDir.z = tmp; 
-	}
-
-	float yaw = atan2f(camDir.x, camDir.z);
-	if (yaw < 0.0f) yaw += 2.0f * PI;
-	float pitchDeg = atan2f(camDir.y, sqrtf(camDir.x * camDir.x + camDir.z * camDir.z)) * RAD2DEG;
-
-	float normalizedYaw = yaw * RAD2DEG + 22.5f;
-	if (normalizedYaw >= 360.0f) normalizedYaw -= 360.0f;
-	int sector = (int)(normalizedYaw / 45.0f) % 8;
-
-	if (isWrist) {
-		int pitchRow;
-		if (pitchDeg >= 22.5f) pitchRow = 0;
-		else if (pitchDeg >= -22.5f) pitchRow = 1;
-		else pitchRow = 2;
-
-		if (pitchRow < 0) pitchRow = 0;
-		if (pitchRow > 2) pitchRow = 2;
-		if (sector < 0) sector = 0;
-		if (sector > 7) sector = 7;
-
-		if (isLeftHand) {
-			*outChosenIndex = leftHandIndices[pitchRow][sector];
-			*outMirrored = true;
-		} else {
-			*outChosenIndex = rightHandIndices[pitchRow][sector];
-			*outMirrored = false;
-		}
-
-		*outRotation = 0.0f;
-
-		if (*outChosenIndex < 0) *outChosenIndex = 0;
-		if (*outChosenIndex > 24) *outChosenIndex = *outChosenIndex % 25;
-	} else {
-		*outMirrored = false;
-	}
-
-	if (pitchDeg >= 52.5f) {
-		*outChosenIndex = 22;
-		*outRotation = sector * 45.0f + 180.0f;
-		*outMirrored = isLeftHand;
-	} else if (pitchDeg <= -51.0f) {
-		*outChosenIndex = 3;
-		*outRotation = 0.0f;
-		*outMirrored = isLeftHand;
-	}
-}
-
-static inline void CalculateHandBoneRenderDataWithOrientation(const BoneRenderData* boneData, 
-		Camera camera, int* outChosenIndex, 
-		float* outRotation, bool* outMirrored) {
-	static const int rightHandIndices[3][8] = {
-		{23, 22,  2, 15, 16, 17, 18, 24},
-		{ 9,  4,  0,  5,  6,  7,  8, 14},
-		{20, 19,  1, 10, 11, 12, 13, 21}
-	};
-
-	static const int leftHandIndices[3][8] = {
-		{16, 15,  2, 22, 23, 24, 18, 17},
-		{ 6,  5,  0,  4,  9, 14,  8,  7}, 
-		{11, 10,  1, 19, 20, 21, 13, 12}
-	};
-
-	bool isLeftHand = (strcmp(boneData->boneName, "LWrist") == 0);
-
-	Vector3 camDir = Vector3Subtract(boneData->position, camera.position);
-	camDir = SafeNormalize(camDir);
-
-	Vector3 localCamDir = {
-		Vector3DotProduct(camDir, boneData->orientation.right),
-		Vector3DotProduct(camDir, boneData->orientation.up),
-		Vector3DotProduct(camDir, boneData->orientation.forward)
-	};
-
-	float localYaw = atan2f(localCamDir.x, localCamDir.z);
-	if (localYaw < 0.0f) localYaw += 2.0f * PI;
-
-	float localPitchDeg = atan2f(localCamDir.y,
-			sqrtf(localCamDir.x * localCamDir.x + localCamDir.z * localCamDir.z)) * RAD2DEG;
-	localPitchDeg = -localPitchDeg;
-
-	float normalizedYaw = localYaw * RAD2DEG + 22.5f;
-	if (normalizedYaw >= 360.0f) normalizedYaw -= 360.0f;
-
-	int sector = (int)(normalizedYaw / 45.0f) % 8;
-	sector = (8 - sector) % 8;
-
-	if (localPitchDeg >= 52.5f) {
-		*outChosenIndex = 22;
-		*outRotation = sector * 45.0f + 180.0f;
-		*outMirrored = isLeftHand;
-	} else if (localPitchDeg <= -51.0f) {
-		*outChosenIndex = 3;
-		*outRotation = 0.0f;
-		*outMirrored = isLeftHand;
-	} else {
-		int pitchRow;
-		if (localPitchDeg >= 22.5f) pitchRow = 2;
-		else if (localPitchDeg >= -22.5f) pitchRow = 1;
-		else pitchRow = 0;
-
-		if (isLeftHand) {
-			*outChosenIndex = leftHandIndices[pitchRow][sector];
-			*outMirrored = true;
-		} else {
-			*outChosenIndex = rightHandIndices[pitchRow][sector];
-			*outMirrored = false;
-		}
-
-		*outRotation = 0.0f;
-	}
-}
-
-static inline void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Camera camera,
-		int* outChosenIndex, float* outRotation, bool* outMirrored) {
-	if (!torsoData->orientation.valid) {
-		CalculateHandBoneRenderData(torsoData->position, camera, outChosenIndex, outRotation, outMirrored, "");
-		return;
-	}
-
-	static const int indices[3][8] = {
-		{0,4,5,6,7,6,5,4},
-		{2,12,13,14,15,14,13,12},
-		{1,8,9,10,11,10,9,8}
-	};
-
-	Vector3 camDir = Vector3Subtract(torsoData->position, camera.position);
-	camDir = SafeNormalize(camDir);
-
-	Vector3 localCamDir = {
-		Vector3DotProduct(camDir, torsoData->orientation.right),
-		Vector3DotProduct(camDir, torsoData->orientation.up),
-		Vector3DotProduct(camDir, torsoData->orientation.forward)
-	};
-
-	float localYaw = atan2f(localCamDir.x, localCamDir.z);
-	if (localYaw < 0.0f) localYaw += 2.0f * PI;
-
-	float localPitchDeg = atan2f(localCamDir.y,
-			sqrtf(localCamDir.x * localCamDir.x + localCamDir.z * localCamDir.z)) * RAD2DEG;
-	localPitchDeg = -localPitchDeg;
-
-	float normalizedYaw = localYaw * RAD2DEG + 22.5f;
-	if (normalizedYaw >= 360.0f) normalizedYaw -= 360.0f;
-
-	int sector = (int)(normalizedYaw / 45.0f) % 8;
-
-	if (localPitchDeg >= 70.0f) {
-		*outChosenIndex = 3;
-		*outRotation = sector * 45.0f + 180.0f;
-		*outMirrored = false;
-	} else if (localPitchDeg <= -70.0f) {
-		*outChosenIndex = 15;
-		*outRotation = (8 - sector) * 45.0f + 180.0f;
-		if (*outRotation >= 360.0f) *outRotation -= 360.0f;
-		*outMirrored = true;
-	} else {
-		int row = (localPitchDeg >= 22.5f) ? 2 : (localPitchDeg >= -22.5f) ? 0 : 1;
-		*outChosenIndex = indices[row][sector];
-		*outRotation = 0.0f;
-		*outMirrored = (sector >= 1 && sector <= 4);
-	}
-
-	if (torsoData->person && localPitchDeg < 70.0f && localPitchDeg > -70.0f) {
-		Vector3 otherPosition;
-		bool hasOtherPosition = false;
-
-		if (torsoData->type == TORSO_CHEST) {
-			otherPosition = CalculateHipPosition(torsoData->person);
-			hasOtherPosition = (Vector3Length(otherPosition) > 0.001f);
-		} else if (torsoData->type == TORSO_HIP) {
-			otherPosition = CalculateChestPosition(torsoData->person);
-			hasOtherPosition = (Vector3Length(otherPosition) > 0.001f);
-		}
-
-		if (hasOtherPosition) {
-			Vector3 torsoVector = Vector3Subtract(otherPosition, torsoData->position);
-			float distance = Vector3Length(torsoVector);
-
-			if (distance > 0.001f) {
-				torsoVector = SafeNormalize(torsoVector);
-				float worldPitch = atan2f(torsoVector.y,
-						sqrtf(torsoVector.x * torsoVector.x + torsoVector.z * torsoVector.z)) * RAD2DEG;
-
-				bool viewingFromRight = (localCamDir.x > 0.0f);
-
-				if (torsoData->type == TORSO_CHEST) {
-					if (viewingFromRight) *outRotation = -worldPitch - 80.0f;
-					else *outRotation = worldPitch + 80.0f;
-				} else {
-					if (viewingFromRight) *outRotation = worldPitch - 80.0f;
-					else *outRotation = -worldPitch + 80.0f;
-				}
-
-				while (*outRotation >= 360.0f) *outRotation -= 360.0f;
-				while (*outRotation < 0.0f) *outRotation += 360.0f;
-			}
-		}
-	}
-}
-
-static inline void CalculateHeadRenderData(const HeadRenderData* headData, Camera camera,
-		int* outChosenIndex, float* outRotation, bool* outMirrored) {
-	if (!headData->orientation.valid) {
-		CalculateHandBoneRenderData(headData->position, camera, outChosenIndex, outRotation, outMirrored, "Head");
-		return;
-	}
-
-	static const int indices[3][8] = {
-		{  0,  4,  5,  6,  7,  6,  5,  4 },
-		{  2, 12, 13, 14, 15, 14, 13, 12 },
-		{  1,  8,  9, 10, 11, 10,  9,  8 }
-	};
-
-	Vector3 camDir = Vector3Subtract(camera.position, headData->position);
-	Vector3 localCamDir = {
-		-Vector3DotProduct(camDir, headData->orientation.right),
-		Vector3DotProduct(camDir, headData->orientation.up),
-		Vector3DotProduct(camDir, headData->orientation.forward)
-	};
-
-	float localYaw = atan2f(localCamDir.x, localCamDir.z);
-	if (localYaw < 0.0f) localYaw += 2.0f * PI;
-
-	float localYawDeg = localYaw * RAD2DEG;
-	float horizDistance = sqrtf(localCamDir.x * localCamDir.x + localCamDir.z * localCamDir.z);
-	float localPitchDeg = atan2f(localCamDir.y, horizDistance) * RAD2DEG;
-	int sector;
-
-	if (localPitchDeg >= 65.0f || localPitchDeg <= -65.0f) {
-		Vector3 horizontalDiff = { camera.position.x - headData->position.x, 0.0f, camera.position.z - headData->position.z };
-		float horizontalDistance = Vector3Length(horizontalDiff);
-
-		if (horizontalDistance > 0.05f) {
-			float worldYaw = atan2f(horizontalDiff.x, horizontalDiff.z);
-			if (worldYaw < 0.0f) worldYaw += 2.0f * PI;
-			float normalizedWorldYaw = worldYaw * RAD2DEG + 22.5f;
-			if (normalizedWorldYaw >= 360.0f) normalizedWorldYaw -= 360.0f;
-			sector = (int)(normalizedWorldYaw / 45.0f) % 8;
-		} else sector = 0;
-	} else {
-		float normalizedYaw = localYawDeg + 22.5f;
-		if (normalizedYaw >= 360.0f) normalizedYaw -= 360.0f;
-		sector = (int)(normalizedYaw / 45.0f);
-	}
-
-	if (localPitchDeg >= 50.0f) {
-		*outChosenIndex = 3;
-		*outRotation = sector * 45.0f + 180.0f;
-		*outMirrored = false;
-	} else if (localPitchDeg <= -70.0f) {
-		*outChosenIndex = 15;
-		*outRotation = (8 - sector) * 45.0f + 180.0f;
-		if (*outRotation >= 360.0f) *outRotation -= 360.0f;
-		*outMirrored = true;
-	} else {
-		int chosenRow = (localPitchDeg >= 22.5f) ? 2 : (localPitchDeg >= -22.5f) ? 0 : 1;
-		*outChosenIndex = indices[chosenRow][sector];
-		*outRotation = 0.0f;
-		*outMirrored = !(sector >= 5 && sector <= 7);
-	}
-}
-
-// ----------------------------------------------------------------------------
-// Utility Functions
-// ----------------------------------------------------------------------------
-
-static inline BoneRenderData* FindRenderBoneByName(BoneRenderData* bones, int boneCount, const char* boneName) {
-	for (int i = 0; i < boneCount; i++)
-		if (strcmp(bones[i].boneName, boneName) == 0) return &bones[i];
-	return NULL;
-}
-
-static inline const Person* FindPersonByBoneName(const AnimationFrame* frame, const char* boneName) {
-	if (!frame || !boneName) return NULL;
-	for (int p = 0; p < frame->personCount; p++) {
-		const Person* person = &frame->persons[p];
-		if (!person->active) continue;
-		for (int b = 0; b < person->boneCount; b++)
-			if (strcmp(person->bones[b].name, boneName) == 0) return person;
-	}
-	return NULL;
-}
-
-static inline bool ShouldFlipBoneTexture(const char* boneName) {
-	if (!boneName) return false;
-	static const char* flipBones[] = {
-		"LShoulder", "LElbow", "RShoulder", "RElbow",
-		"LHip", "LKnee", "RHip", "RKnee"
-	};
-
-	for (int i = 0; i < 8; i++)
-		if (strcmp(boneName, flipBones[i]) == 0) return true;
-	return false;
-}
-
-static inline bool GetBoneConnectionsWithPriority(const char* boneName, char connections[3][32], float priorities[3]) {
-	for (int i = 0; BONE_CONNECTIONS[i].boneName[0]; i++) {
-		if (strcmp(BONE_CONNECTIONS[i].boneName, boneName) == 0) {
-			for (int j = 0; j < 3; j++) {
-				strncpy(connections[j], BONE_CONNECTIONS[i].connections[j], 31);
-				connections[j][31] = '\0';
-				priorities[j] = BONE_CONNECTIONS[i].priority[j];
-			}
-			return true;
-		}
-	}
-	return false;
-}
-
-static inline BonesRenderConfig BonesGetDefaultRenderConfig(void) {
-	return g_renderConfig;
-}
-
-static inline void BonesSetRenderConfig(const BonesRenderConfig* config) {
-	if (config) g_renderConfig = *config;
-}
-
-
-// ============================================================================
-// ORNAMENT SYSTEM IMPLEMENTATION
-// ============================================================================
-
-static inline OrnamentSystem* Ornaments_Create(void) {
-	OrnamentSystem* system = (OrnamentSystem*)calloc(1, sizeof(OrnamentSystem));
-	if (!system) return NULL;
-
-	system->ornamentCount = 0;
-	system->loaded = false;
-
-	return system;
-}
-
-static inline void Ornaments_Free(OrnamentSystem* system) {
-	if (system) {
-		free(system);
-	}
-}
-
-static inline void Ornaments_ApplyPreset(BoneOrnament* ornament, OrnamentPhysicsPreset preset) {
-	if (!ornament) return;
-
-	ornament->physicsPreset = preset;
-
-	switch (preset) {
-		case PHYSICS_STIFF:
-			ornament->stiffness = 100.0f;
-			ornament->damping = 0.95f;
-			ornament->gravityScale = 0.05f;
-			break;
-		case PHYSICS_MEDIUM:
-			ornament->stiffness = 80.0f;
-			ornament->damping = 0.88f;
-			ornament->gravityScale = 0.18f;
-			break;
-		case PHYSICS_SOFT:
-			ornament->stiffness = 60.0f;
-			ornament->damping = 0.82f;
-			ornament->gravityScale = 0.28f;
-			break;
-		case PHYSICS_VERYSOFT:
-			ornament->stiffness = 50.0f;
-			ornament->damping = 0.75f;
-			ornament->gravityScale = 0.35f;
-			break;
-	}
-}
-
-static inline bool Ornaments_LoadFromConfig(OrnamentSystem* system, const char* configPath) {
-	if (!system || !configPath) return false;
-
-	char* buffer = LoadFileText(configPath);
-	if (!buffer) return false;
-
-	system->ornamentCount = 0;
-
-	char lineBuffer[512];
-	const char* lineStart = buffer;
-
-	for (const char* ptr = buffer; *ptr && system->ornamentCount < MAX_ORNAMENTS; ptr++) {
-		if (*ptr == '\n') {
-			int lineLen = ptr - lineStart;
-			if (lineLen > 5 && lineLen < 511 && *lineStart == '@') {
-				memcpy(lineBuffer, lineStart, lineLen);
-				lineBuffer[lineLen] = '\0';
-
-				BoneOrnament* orn = &system->ornaments[system->ornamentCount];
-				memset(orn, 0, sizeof(BoneOrnament));
-
-				char presetStr[64];
-				char parentStr[MAX_BONE_NAME_LENGTH];
-				int visible;
-				float offsetX, offsetY, offsetZ;
-
-				if (sscanf(lineBuffer, "@%31s %31s %f,%f,%f %255s %d %f %63s %31s",
-							orn->name,
-							orn->anchorBoneName,
-							&offsetX, &offsetY, &offsetZ,
-							orn->texturePath,
-							&visible,
-							&orn->size,
-							parentStr,
-							presetStr) == 10) {
-
-					orn->offsetFromAnchor = (Vector3){offsetX, offsetY, offsetZ};
-					orn->visible = (visible != 0);
-
-					if (strcmp(parentStr, "-") == 0) {
-						orn->isChained = false;
-						orn->chainParentIndex = -1;
-					} else {
-						orn->isChained = true;
-						strncpy(orn->chainParentName, parentStr, MAX_BONE_NAME_LENGTH - 1);
-						orn->chainRestLength = Vector3Length(orn->offsetFromAnchor);
-					}
-
-					if (strcmp(presetStr, "stiff") == 0) {
-						Ornaments_ApplyPreset(orn, PHYSICS_STIFF);
-					} else if (strcmp(presetStr, "medium") == 0) {
-						Ornaments_ApplyPreset(orn, PHYSICS_MEDIUM);
-					} else if (strcmp(presetStr, "soft") == 0) {
-						Ornaments_ApplyPreset(orn, PHYSICS_SOFT);
-					} else if (strcmp(presetStr, "verysoft") == 0) {
-						Ornaments_ApplyPreset(orn, PHYSICS_VERYSOFT);
-					}
-
-					orn->initialized = false;
-					orn->valid = true;
-					system->ornamentCount++;
-				}
-			}
-			lineStart = ptr + 1;
-		}
-	}
-
-	UnloadFileText(buffer);
-
-	for (int i = 0; i < system->ornamentCount; i++) {
-		BoneOrnament* orn = &system->ornaments[i];
-		if (orn->isChained) {
-			for (int j = 0; j < system->ornamentCount; j++) {
-				if (strcmp(system->ornaments[j].name, orn->chainParentName) == 0) {
-					orn->chainParentIndex = j;
-					break;
-				}
-			}
-		}
-	}
-
-	if (system->ornamentCount > 0) {
-		system->loaded = true;
-		TraceLog(LOG_INFO, "Loaded %d ornaments", system->ornamentCount);
-		return true;
-	}
-
-	return false;
-}
-
-static inline Vector3 Ornaments_GetAnchorPosition(const AnimationFrame* frame, const char* anchorName) {
-	if (!frame || !anchorName) return (Vector3){0, 0, 0};
-
-	for (int p = 0; p < frame->personCount; p++) {
-		const Person* person = &frame->persons[p];
-		if (!person->active) continue;
-
-		// Primero intentar buscar el bone directamente
-		for (int b = 0; b < person->boneCount; b++) {
-			const Bone* bone = &person->bones[b];
-			if (strcmp(bone->name, anchorName) == 0 && bone->position.valid) {
-				return bone->position.position;
-			}
-		}
-
-		// Si no se encontró, verificar si es un bone calculado especial
-		if (strcmp(anchorName, "Head") == 0) {
-			return CalculateHeadPosition(person);
-		}
-		if (strcmp(anchorName, "Chest") == 0) {
-			return CalculateChestPosition(person);
-		}
-		if (strcmp(anchorName, "Hip") == 0) {
-			return CalculateHipPosition(person);
-		}
-
-		// Si aún no se encontró, intentar calcular el midpoint del bone
-		Vector3 midpoint = CalculateBoneMidpoint(anchorName, person);
-		if (Vector3Length(midpoint) > 0.001f) {
-			return midpoint;
-		}
-	}
-
-	return (Vector3){0, 0, 0};
-}
-
-static inline BoneOrientation Ornaments_GetAnchorOrientation(const AnimationFrame* frame, const char* anchorName) {
-	BoneOrientation nullOrient = {0};
-	if (!frame || !anchorName) return nullOrient;
-
-	for (int p = 0; p < frame->personCount; p++) {
-		const Person* person = &frame->persons[p];
-		if (!person->active) continue;
-
-		// Buscar cualquier bone por nombre
-		for (int b = 0; b < person->boneCount; b++) {
-			const Bone* bone = &person->bones[b];
-			if (strcmp(bone->name, anchorName) == 0 && bone->position.valid) {
-				return CalculateBoneOrientation(anchorName, person, bone->position.position);
-			}
-		}
-
-		// Casos especiales para bones calculados
-		if (strcmp(anchorName, "Head") == 0) {
-			HeadOrientation headOrient = CalculateHeadOrientation(person);
-
-			// Convertir HeadOrientation a BoneOrientation
-			BoneOrientation boneOrient;
-			boneOrient.position = headOrient.position;
-			boneOrient.forward = headOrient.forward;
-			boneOrient.up = headOrient.up;
-			boneOrient.right = headOrient.right;
-			boneOrient.yaw = headOrient.yaw;
-			boneOrient.pitch = headOrient.pitch;
-			boneOrient.roll = headOrient.roll;
-			boneOrient.valid = headOrient.valid;
-			return boneOrient;
-		}
-
-		if (strcmp(anchorName, "Chest") == 0) {
-			TorsoOrientation torsoOrient = CalculateChestOrientation(person);
-
-			// Convertir TorsoOrientation a BoneOrientation
-			BoneOrientation boneOrient;
-			boneOrient.position = torsoOrient.position;
-			boneOrient.forward = torsoOrient.forward;
-			boneOrient.up = torsoOrient.up;
-			boneOrient.right = torsoOrient.right;
-			boneOrient.yaw = torsoOrient.yaw;
-			boneOrient.pitch = torsoOrient.pitch;
-			boneOrient.roll = torsoOrient.roll;
-			boneOrient.valid = torsoOrient.valid;
-			return boneOrient;
-		}
-
-		if (strcmp(anchorName, "Hip") == 0) {
-			TorsoOrientation torsoOrient = CalculateHipOrientation(person);
-
-			// Convertir TorsoOrientation a BoneOrientation
-			BoneOrientation boneOrient;
-			boneOrient.position = torsoOrient.position;
-			boneOrient.forward = torsoOrient.forward;
-			boneOrient.up = torsoOrient.up;
-			boneOrient.right = torsoOrient.right;
-			boneOrient.yaw = torsoOrient.yaw;
-			boneOrient.pitch = torsoOrient.pitch;
-			boneOrient.roll = torsoOrient.roll;
-			boneOrient.valid = torsoOrient.valid;
-			return boneOrient;
-		}
-
-		// Para cualquier otro bone, calcular su orientación usando la posición del midpoint
-		Vector3 bonePos = CalculateBoneMidpoint(anchorName, person);
-		if (Vector3Length(bonePos) > 0.001f) {
-			return CalculateBoneOrientation(anchorName, person, bonePos);
-		}
-	}
-
-	return nullOrient;
-}
-
-static inline void Ornaments_InitializePhysics(OrnamentSystem* system, const AnimationFrame* frame) {
-	if (!system || !frame) return;
-
-	for (int i = 0; i < system->ornamentCount; i++) {
-		BoneOrnament* orn = &system->ornaments[i];
-		if (!orn->valid || !orn->visible) continue;
-
-		Vector3 anchorPos;
-		BoneOrientation anchorOrient;
-
-		if (orn->isChained && orn->chainParentIndex >= 0) {
-			BoneOrnament* parent = &system->ornaments[orn->chainParentIndex];
-			anchorPos = parent->currentPosition;
-			anchorOrient = (BoneOrientation){
-				.forward = {0, 0, 1},
-					.up = {0, 1, 0},
-					.right = {1, 0, 0},
-					.valid = true
-			};
-		} else {
-			anchorPos = Ornaments_GetAnchorPosition(frame, orn->anchorBoneName);
-			anchorOrient = Ornaments_GetAnchorOrientation(frame, orn->anchorBoneName);
-		}
-
-		Vector3 localOffset = orn->offsetFromAnchor;
-		Vector3 worldOffset = {0, 0, 0};
-
-		if (anchorOrient.valid) {
-			worldOffset.x = localOffset.x * anchorOrient.right.x +
-				localOffset.y * anchorOrient.up.x +
-				localOffset.z * anchorOrient.forward.x;
-			worldOffset.y = localOffset.x * anchorOrient.right.y +
-				localOffset.y * anchorOrient.up.y +
-				localOffset.z * anchorOrient.forward.y;
-			worldOffset.z = localOffset.x * anchorOrient.right.z +
-				localOffset.y * anchorOrient.up.z +
-				localOffset.z * anchorOrient.forward.z;
-		} else {
-			worldOffset = localOffset;
-		}
-
-		orn->currentPosition = Vector3Add(anchorPos, worldOffset);
-		orn->previousPosition = orn->currentPosition;
-		orn->velocity = (Vector3){0, 0, 0};
-		orn->initialized = true;
-	}
-}
-
-static inline void Ornaments_SolveChainConstraint(BoneOrnament* child, BoneOrnament* parent) {
-	if (!child || !parent) return;
-	if (!child->isChained) return;
-
-	Vector3 toParent = Vector3Subtract(parent->currentPosition, child->currentPosition);
-	float currentDist = Vector3Length(toParent);
-
-	if (currentDist < 0.0001f) return;
-
-	float targetDist = child->chainRestLength;
-	float diff = currentDist - targetDist;
-
-	Vector3 correction = Vector3Scale(Vector3Normalize(toParent), diff * 0.5f);
-	child->currentPosition = Vector3Add(child->currentPosition, correction);
-}
-
-// Añade esta función al principio de la sección ORNAMENT SYSTEM IMPLEMENTATION (después de las otras funciones estáticas)
-static inline void ClampOrnamentToAnchorY(BoneOrnament* orn, Vector3 anchorPos, float maxDownOffset) {
-	float minY = anchorPos.y + orn->offsetFromAnchor.y - maxDownOffset;
-
-	if (orn->currentPosition.y < minY) {
-		orn->currentPosition.y = minY;
-		orn->velocity.y = 0.0f; // mata la caída acumulada
-	}
-}
-
-// Luego modifica la función Ornaments_UpdatePhysics para llamar a esta función:
-static inline void Ornaments_UpdatePhysics(OrnamentSystem* system, const AnimationFrame* frame, float deltaTime) {
-	if (!system || !frame || deltaTime <= 0.0f) return;
-	if (!system->loaded) return;
-
-	if (deltaTime > 0.1f) deltaTime = 0.1f;
-
-	// Primero: actualizar ornamentos no encadenados
-	for (int i = 0; i < system->ornamentCount; i++) {
-		BoneOrnament* orn = &system->ornaments[i];
-		if (!orn->valid || !orn->visible) continue;
-		if (orn->isChained) continue;
-
-		Vector3 anchorPos = Ornaments_GetAnchorPosition(frame, orn->anchorBoneName);
-		BoneOrientation anchorOrient = Ornaments_GetAnchorOrientation(frame, orn->anchorBoneName);
-
-		Vector3 worldOffset = {0, 0, 0};
-		if (anchorOrient.valid) {
-			Vector3 local = orn->offsetFromAnchor;
-			worldOffset.x = local.x * anchorOrient.right.x +
-				local.y * anchorOrient.up.x +
-				local.z * anchorOrient.forward.x;
-			worldOffset.y = local.x * anchorOrient.right.y +
-				local.y * anchorOrient.up.y +
-				local.z * anchorOrient.forward.y;
-			worldOffset.z = local.x * anchorOrient.right.z +
-				local.y * anchorOrient.up.z +
-				local.z * anchorOrient.forward.z;
-		} else {
-			worldOffset = orn->offsetFromAnchor;
-		}
-
-		Vector3 targetPos = Vector3Add(anchorPos, worldOffset);
-
-		Vector3 toTarget = Vector3Subtract(targetPos, orn->currentPosition);
-		Vector3 springForce = Vector3Scale(toTarget, orn->stiffness);
-
-		Vector3 gravity = {0, -9.8f * orn->gravityScale, 0};
-
-		orn->velocity = Vector3Add(orn->velocity, Vector3Scale(springForce, deltaTime));
-		orn->velocity = Vector3Add(orn->velocity, Vector3Scale(gravity, deltaTime));
-
-		orn->velocity = Vector3Scale(orn->velocity, orn->damping);
-
-		orn->previousPosition = orn->currentPosition;
-		orn->currentPosition = Vector3Add(orn->currentPosition, Vector3Scale(orn->velocity, deltaTime));
-
-		// ¡AQUÍ LLAMAMOS A LA FUNCIÓN PARA LIMITAR LA CAÍDA!
-		float maxDownOffset = 0.05f;
-		ClampOrnamentToAnchorY(orn, anchorPos, maxDownOffset);
-	}
-
-	// Segundo: actualizar ornamentos encadenados
-	for (int i = 0; i < system->ornamentCount; i++) {
-		BoneOrnament* orn = &system->ornaments[i];
-		if (!orn->valid || !orn->visible) continue;
-		if (!orn->isChained) continue;
-
-		BoneOrnament* parent = &system->ornaments[orn->chainParentIndex];
-		Vector3 anchorPos = Ornaments_GetAnchorPosition(frame, orn->anchorBoneName); // Anchor original
-
-		Vector3 targetPos = Vector3Add(parent->currentPosition, orn->offsetFromAnchor);
-
-		Vector3 toTarget = Vector3Subtract(targetPos, orn->currentPosition);
-		Vector3 springForce = Vector3Scale(toTarget, orn->stiffness);
-		Vector3 gravity = {0, -9.8f * orn->gravityScale, 0};
-
-		orn->velocity = Vector3Add(orn->velocity, Vector3Scale(springForce, deltaTime));
-		orn->velocity = Vector3Add(orn->velocity, Vector3Scale(gravity, deltaTime));
-		orn->velocity = Vector3Scale(orn->velocity, orn->damping);
-
-		orn->previousPosition = orn->currentPosition;
-		orn->currentPosition = Vector3Add(orn->currentPosition, Vector3Scale(orn->velocity, deltaTime));
-
-		Ornaments_SolveChainConstraint(orn, parent);
-
-		// Para ornamentos encadenados, limitamos respecto al anchor original
-		float maxDownOffset = 0.10f; // Máxima caída permitida
-		ClampOrnamentToAnchorY(orn, anchorPos, maxDownOffset);
-	}
-}
-
-static inline void Ornaments_CollectForRendering(
-		OrnamentSystem* system,
-		BoneRenderData** renderBones,
-		int* renderBonesCount,
-		int* renderBonesCapacity,
-		Camera camera)
-{
-	if (!system || !system->loaded) return;
-	if (!renderBones || !renderBonesCount || !renderBonesCapacity) return;
-
-	for (int i = 0; i < system->ornamentCount; i++) {
-		BoneOrnament* orn = &system->ornaments[i];
-
-		if (!orn->valid) continue;
-		if (!orn->visible) continue;
-		if (!orn->initialized) continue;
-		if (orn->name[0] == '\0') continue;
-
-		float distance = Vector3Distance(camera.position, orn->currentPosition);
-		if (distance > 50.0f) continue;
-
-		if (*renderBonesCount >= *renderBonesCapacity) {
-			if (!ResizeRenderBonesArray(
-						renderBones,
-						renderBonesCapacity,
-						*renderBonesCapacity + 32)) {
-				return;
-			}
-		}
-
-		BoneRenderData* renderData = &(*renderBones)[*renderBonesCount];
-		memset(renderData, 0, sizeof(BoneRenderData));
-
-		strncpy(renderData->boneName, orn->name, MAX_BONE_NAME_LENGTH - 1);
-		renderData->boneName[MAX_BONE_NAME_LENGTH - 1] = '\0';
-
-		if (orn->texturePath[0] != '\0') {
-			strncpy(renderData->texturePath,
-					orn->texturePath,
-					MAX_FILE_PATH_LENGTH - 1);
-			renderData->texturePath[MAX_FILE_PATH_LENGTH - 1] = '\0';
-		} else {
-			continue;
-		}
-
-
-		renderData->position = orn->currentPosition;
-		renderData->distance = distance;
-		renderData->size = orn->size;
-		renderData->visible = true;
-		renderData->valid = true;
-
-		renderData->orientation.position = renderData->position;
-		renderData->orientation.forward = (Vector3){0, 0, -1};
-		renderData->orientation.up = (Vector3){0, 1, 0};
-		renderData->orientation.right = (Vector3){-1, 0, 0};
-
-		Vector3 toCamera = Vector3Subtract(camera.position, renderData->position);
-		if (Vector3Length(toCamera) > 0.001f) {
-			toCamera = Vector3Normalize(toCamera);
-			renderData->orientation.yaw = atan2f(toCamera.x, toCamera.z);
-			renderData->orientation.pitch = 0.0f;
-			renderData->orientation.roll = 0.0f;
-			renderData->orientation.valid = true;
-		} else {
-			renderData->orientation.yaw = 0.0f;
-			renderData->orientation.pitch = 0.0f;
-			renderData->orientation.roll = 0.0f;
-			renderData->orientation.valid = true;
-		}
-
-		(*renderBonesCount)++;
-	}
-}
-
-// ============================================================================
-// SLASH TRAIL SYSTEM IMPLEMENTATION
-// ============================================================================
-
-// Helper: interpolar colores
-static inline Color SlashTrail__LerpColor(Color a, Color b, float t) {
-	if (t < 0.0f) t = 0.0f;
-	if (t > 1.0f) t = 1.0f;
-	return (Color){
-		(unsigned char)(a.r + (int)((b.r - a.r) * t)),
-			(unsigned char)(a.g + (int)((b.g - a.g) * t)),
-			(unsigned char)(a.b + (int)((b.b - a.b) * t)),
-			(unsigned char)(a.a + (int)((b.a - a.a) * t)),
-	};
-}
-
-static inline float SlashTrail__LerpF(float a, float b, float t) {
-	if (t < 0.0f) t = 0.0f;
-	if (t > 1.0f) t = 1.0f;
-	return a + (b - a) * t;
-}
-
-// Obtener posición de un bone por nombre desde un AnimationFrame
-static inline Vector3 SlashTrail__GetBonePos(const AnimationFrame* frame, const char* personId, const char* boneName) {
-	if (!frame || !boneName) return (Vector3){0,0,0};
-	for (int p = 0; p < frame->personCount; p++) {
-		const Person* person = &frame->persons[p];
-		if (personId && personId[0] != '\0' && strcmp(person->personId, personId) != 0) continue;
-		for (int b = 0; b < person->boneCount; b++) {
-			const Bone* bone = &person->bones[b];
-			if (strcmp(bone->name, boneName) == 0 && bone->position.valid)
-				return bone->position.position;
-		}
-		// También calcular bones virtuales (Wrist → mano, Head, etc.)
-		if (strcmp(boneName, "RightHand") == 0 || strcmp(boneName, "RWrist") == 0)
-			return GetBonePositionByName(person, "RWrist");
-		if (strcmp(boneName, "LeftHand") == 0 || strcmp(boneName, "LWrist") == 0)
-			return GetBonePositionByName(person, "LWrist");
-		if (strcmp(boneName, "Head") == 0)
-			return CalculateHeadPosition(person);
-	}
-	return (Vector3){0,0,0};
-}
-
-// Inicializar el sistema
-static inline void SlashTrail_InitSystem(SlashTrailSystem* sys) {
-	if (!sys) return;
-	memset(sys, 0, sizeof(SlashTrailSystem));
-}
-
-// Liberar texturas y limpiar
-static inline void SlashTrail_FreeSystem(SlashTrailSystem* sys) {
-	if (!sys) return;
-	for (int i = 0; i < SLASH_TRAIL_MAX_ACTIVE; i++) {
-		SlashTrail* t = &sys->trails[i];
-		if (t->hasTexture) {
-			UnloadTexture(t->texture);
-			t->hasTexture = false;
-		}
-	}
-	memset(sys, 0, sizeof(SlashTrailSystem));
-}
-
-// Activar un trail para un evento slash específico
-static inline void SlashTrail_Activate(SlashTrailSystem* sys, int slashIndex, const SlashEventConfig* config) {
-	if (!sys || !config) return;
-
-	// Buscar si ya existe uno para este slashIndex (evitar duplicados)
-	for (int i = 0; i < SLASH_TRAIL_MAX_ACTIVE; i++) {
-		if (sys->trails[i].slashIndex == slashIndex && sys->trails[i].alive) return;
-	}
-
-	// Buscar slot libre
-	SlashTrail* slot = NULL;
-	for (int i = 0; i < SLASH_TRAIL_MAX_ACTIVE; i++) {
-		if (!sys->trails[i].alive) { slot = &sys->trails[i]; break; }
-	}
-	if (!slot) return;
-
-	memset(slot, 0, sizeof(SlashTrail));
-	slot->active      = true;
-	slot->alive       = true;
-	slot->slashIndex  = slashIndex;
-	slot->config      = *config;
-	slot->pointCount  = 0;
-	slot->spawnTimer  = 0.0f;
-
-	int maxSeg = config->segments > 0 ? config->segments : 24;
-	if (maxSeg > SLASH_TRAIL_MAX_SEGMENTS) maxSeg = SLASH_TRAIL_MAX_SEGMENTS;
-	slot->config.segments = maxSeg;
-
-	// spawnRate: repartir puntos uniformemente durante la vida del trail
-	slot->spawnRate = config->lifetime / (float)maxSeg;
-	if (slot->spawnRate < 0.006f) slot->spawnRate = 0.006f;
-
-	// Cargar textura si se especificó
-	if (config->texturePath[0] != '\0') {
-		slot->texture    = LoadTexture(config->texturePath);
-		slot->hasTexture = (slot->texture.id != 0);
-		if (!slot->hasTexture) {
-			TraceLog(LOG_WARNING, "SlashTrail: no se pudo cargar textura '%s', usando solo color", config->texturePath);
-		} else {
-			TraceLog(LOG_INFO, "SlashTrail: textura cargada '%s' (id=%d)", config->texturePath, slot->texture.id);
-		}
-	} else {
-		TraceLog(LOG_INFO, "SlashTrail: sin textura, usando solo color para evento %d", slashIndex);
-	}
-}
-
-// Detener la emisión (los puntos ya vivos se desvanecen solos)
-static inline void SlashTrail_Deactivate(SlashTrailSystem* sys, int slashIndex) {
-	if (!sys) return;
-	for (int i = 0; i < SLASH_TRAIL_MAX_ACTIVE; i++) {
-		if (sys->trails[i].slashIndex == slashIndex && sys->trails[i].alive)
-			sys->trails[i].active = false; // Deja de emitir pero sigue viviendo
-	}
-}
-
-// Actualizar un trail concreto con la posición del bone
-static inline void SlashTrail_UpdateTrail(SlashTrailSystem* sys, float deltaTime, int slashIndex, Vector3 bonePosition) {
-	if (!sys) return;
-
-	for (int i = 0; i < SLASH_TRAIL_MAX_ACTIVE; i++) {
-		SlashTrail* trail = &sys->trails[i];
-		if (!trail->alive || trail->slashIndex != slashIndex) continue;
-
-		// Envejecer todos los puntos
-		bool anyAlive = false;
-		for (int p = 0; p < trail->config.segments; p++) {
-			SlashTrailPoint* pt = &trail->points[p];
-			if (!pt->active) continue;
-			pt->age += deltaTime;
-			if (pt->age >= pt->lifetime) {
-				pt->active = false;
-			} else {
-				anyAlive = true;
-			}
-		}
-
-		// Emitir nuevos puntos si el trail está activo
-		if (trail->active) {
-			trail->spawnTimer += deltaTime;
-			while (trail->spawnTimer >= trail->spawnRate) {
-				trail->spawnTimer -= trail->spawnRate;
-
-				// Buscar slot libre
-				int slot = -1;
-				for (int p = 0; p < trail->config.segments; p++) {
-					if (!trail->points[p].active) { slot = p; break; }
-				}
-				// Sin slot libre: reemplazar el más viejo
-				if (slot < 0) {
-					float maxAge = -1.0f;
-					for (int p = 0; p < trail->config.segments; p++) {
-						if (trail->points[p].age > maxAge) {
-							maxAge = trail->points[p].age;
-							slot = p;
-						}
-					}
-				}
-				if (slot >= 0) {
-					trail->points[slot].position = bonePosition;
-					trail->points[slot].age      = 0.0f;
-					trail->points[slot].lifetime = trail->config.lifetime;
-					trail->points[slot].active   = true;
-					anyAlive = true;
-				}
-			}
-		}
-
-		// Limpiar slot del sistema si no hay nada vivo y no emite
-		if (!trail->active && !anyAlive) {
-			if (trail->hasTexture) {
-				UnloadTexture(trail->texture);
-				trail->hasTexture = false;
-			}
-			memset(trail, 0, sizeof(SlashTrail));
-		}
-		trail->alive = anyAlive || trail->active;
-	}
-}
-
-// Dibujar todos los trails — se llama dentro de un BeginMode3D/EndMode3D
-static inline void SlashTrail_Draw(SlashTrailSystem* sys, Camera camera) {
-	if (!sys) return;
-
-	Vector3 camForward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
-
-	rlDisableDepthTest();
-	rlDisableBackfaceCulling();
-	BeginBlendMode(BLEND_ADDITIVE);
-
-	for (int i = 0; i < SLASH_TRAIL_MAX_ACTIVE; i++) {
-		SlashTrail* trail = &sys->trails[i];
-		if (!trail->alive) continue;
-
-		// --- Recoger y ordenar puntos activos por edad (punta=joven primero, cola=viejo al final) ---
-		SlashTrailPoint* live[SLASH_TRAIL_MAX_SEGMENTS];
-		int lc = 0;
-		for (int p = 0; p < trail->config.segments; p++) {
-			if (trail->points[p].active) {
-				live[lc++] = &trail->points[p];
-			}
-		}
-
-		if (lc < 2) continue;
-
-		// Ordenar por age ascendente (más joven = punta del slash)
-		for (int a = 0; a < lc - 1; a++) {
-			for (int b2 = a + 1; b2 < lc; b2++) {
-				if (live[b2]->age < live[a]->age) {
-					SlashTrailPoint* tmp = live[a];
-					live[a] = live[b2];
-					live[b2] = tmp;
-				}
-			}
-		}
-
-		// --- Construir el ribbon como pares de triángulos usando DrawTriangle3D ---
-		// Cada segmento: quad dividido en 2 triángulos
-		//
-		//   c0 -------- n0
-		//   |  \        |
-		//   |   \       |
-		//   c1 -------- n1
-		//
-		// Tri 1: c0, n0, c1
-		// Tri 2: n0, n1, c1
-
-		for (int p = 0; p < lc - 1; p++) {
-			SlashTrailPoint* curr = live[p];
-			SlashTrailPoint* next = live[p + 1];
-
-			// t=0 en la punta (joven), t=1 en la cola (viejo)
-			float tCurr = curr->age / curr->lifetime;
-			float tNext = next->age / next->lifetime;
-			if (tCurr < 0.0f) tCurr = 0.0f;
-			if (tCurr > 1.0f) tCurr = 1.0f;
-			if (tNext < 0.0f) tNext = 0.0f;
-			if (tNext > 1.0f) tNext = 1.0f;
-
-			// Ancho: máximo en punta, cero en cola
-			float wCurr = SlashTrail__LerpF(trail->config.widthStart, trail->config.widthEnd, tCurr);
-			float wNext = SlashTrail__LerpF(trail->config.widthStart, trail->config.widthEnd, tNext);
-			if (wCurr < 0.001f && wNext < 0.001f) continue;
-
-			// Colores con fade de alpha
-			Color cCurr = SlashTrail__LerpColor(trail->config.colorStart, trail->config.colorEnd, tCurr);
-			Color cNext  = SlashTrail__LerpColor(trail->config.colorStart, trail->config.colorEnd, tNext);
-			cCurr.a = (unsigned char)(cCurr.a * (1.0f - tCurr));
-			cNext.a  = (unsigned char)(cNext.a  * (1.0f - tNext));
-
-			// Usar la media de los dos colores para DrawTriangle3D (no tiene per-vertex color)
-			Color colA = SlashTrail__LerpColor(cCurr, cNext, 0.0f); // cara punta
-			Color colB = SlashTrail__LerpColor(cCurr, cNext, 0.5f); // cara media
-			Color colC = SlashTrail__LerpColor(cCurr, cNext, 1.0f); // cara cola
-
-			// Perpendicular al segmento vista desde la cámara → ribbon orientado a cámara
-			Vector3 segDir = Vector3Subtract(next->position, curr->position);
-			if (Vector3Length(segDir) < 0.0001f) continue;
-			segDir = Vector3Normalize(segDir);
-
-			// Si el segmento es casi paralelo al forward de cámara, usar camera.up como fallback
-			Vector3 axis = camForward;
-			if (fabsf(Vector3DotProduct(segDir, camForward)) > 0.99f) {
-				axis = camera.up;
-			}
-			Vector3 perp = Vector3Normalize(Vector3CrossProduct(segDir, axis));
-
-			Vector3 c0 = Vector3Add(curr->position,  Vector3Scale(perp,  wCurr * 0.5f));
-			Vector3 c1 = Vector3Add(curr->position,  Vector3Scale(perp, -wCurr * 0.5f));
-			Vector3 n0 = Vector3Add(next->position,  Vector3Scale(perp,  wNext * 0.5f));
-			Vector3 n1 = Vector3Add(next->position,  Vector3Scale(perp, -wNext * 0.5f));
-
-			// Triángulo 1: c0 → n0 → c1 (cara frontal)
-			DrawTriangle3D(c0, n0, c1, colA);
-			// Triángulo 2: n0 → n1 → c1 (cara frontal)
-			DrawTriangle3D(n0, n1, c1, colB);
-			// Cara trasera (backface manual)
-			DrawTriangle3D(c1, n0, c0, colA);
-			DrawTriangle3D(c1, n1, n0, colB);
-
-			// Con textura: superponer un quad texturizado encima usando rlgl
-			if (trail->hasTexture && trail->texture.id > 0) {
-				rlSetTexture(trail->texture.id);
-				rlBegin(RL_QUADS);
-
-				float uC = (float)p       / (float)(lc - 1);
-				float uN = (float)(p + 1) / (float)(lc - 1);
-
-				rlColor4ub(colA.r, colA.g, colA.b, colA.a);
-				rlTexCoord2f(uC, 0.0f); rlVertex3f(c0.x, c0.y, c0.z);
-				rlColor4ub(colB.r, colB.g, colB.b, colB.a);
-				rlTexCoord2f(uN, 0.0f); rlVertex3f(n0.x, n0.y, n0.z);
-				rlColor4ub(colC.r, colC.g, colC.b, colC.a);
-				rlTexCoord2f(uN, 1.0f); rlVertex3f(n1.x, n1.y, n1.z);
-				rlColor4ub(colA.r, colA.g, colA.b, colA.a);
-				rlTexCoord2f(uC, 1.0f); rlVertex3f(c1.x, c1.y, c1.z);
-
-				rlEnd();
-				rlSetTexture(0);
-			}
-		}
-	}
-
-	EndBlendMode();
-	rlEnableBackfaceCulling();
-	rlEnableDepthTest();
-}
-
-static inline Vector3 SlashTrail__GetEmitPos(
-		const AnimationFrame* frame,
-		const char*           personId,
-		const SlashEventConfig* ev)
-{
-	// Si no hay frame o evento, devolver (0,0,0)
-	if (!frame || !ev) return (Vector3){0, 0, 0};
-
-	Vector3 bonePos = SlashTrail__GetBonePos(frame, personId, ev->boneName);
-
-	// Sin offset configurado: devolver posición del bone directamente
-	if (fabsf(ev->emitOffsetX) < 0.0001f &&
-			fabsf(ev->emitOffsetY) < 0.0001f &&
-			fabsf(ev->emitOffsetZ) < 0.0001f)
-		return bonePos;
-
-	// Calcular orientación del bone para aplicar el offset en espacio local
-	const Person* person = NULL;
-	for (int p = 0; p < frame->personCount; p++) {
-		if (!frame->persons[p].active) continue;
-		if (personId && personId[0] != '\0') {
-			if (strcmp(frame->persons[p].personId, personId) == 0) {
-				person = &frame->persons[p]; break;
-			}
-		} else { person = &frame->persons[p]; break; }
-	}
-
-	// Si no encontramos persona, devolver bonePos sin offset
-	if (!person) return bonePos;
-
-	Vector3 fwd   = {0, 0, 1};
-	Vector3 up    = {0, 1, 0};
-	Vector3 right = {1, 0, 0};
-
-	const char* proximalName = NULL;
-	const char* bn = ev->boneName;
-	if      (strcmp(bn, "RWrist") == 0) proximalName = "RElbow";
-	else if (strcmp(bn, "LWrist") == 0) proximalName = "LElbow";
-	else if (strcmp(bn, "RElbow") == 0) proximalName = "RShoulder";
-	else if (strcmp(bn, "LElbow") == 0) proximalName = "LShoulder";
-	else if (strcmp(bn, "RAnkle") == 0) proximalName = "RKnee";
-	else if (strcmp(bn, "LAnkle") == 0) proximalName = "LKnee";
-	else if (strcmp(bn, "RKnee")  == 0) proximalName = "RHip";
-	else if (strcmp(bn, "LKnee")  == 0) proximalName = "LHip";
-
-	Vector3 proxPos = proximalName
-		? GetBonePositionByName(person, proximalName)
-		: (Vector3){bonePos.x, bonePos.y - 0.1f, bonePos.z};
-
-	Vector3 dir = Vector3Subtract(bonePos, proxPos);
-	float len = Vector3Length(dir);
-	if (len > 1e-4f) {
-		fwd = Vector3Scale(dir, 1.0f / len);
-		Vector3 worldUp = {0, 1, 0};
-		if (fabsf(Vector3DotProduct(fwd, worldUp)) > 0.95f)
-			worldUp = (Vector3){0, 0, 1};
-		right = SafeNormalize(Vector3CrossProduct(fwd, worldUp));
-		up    = SafeNormalize(Vector3CrossProduct(right, fwd));
-	}
-
-	return (Vector3){
-		bonePos.x + right.x * ev->emitOffsetX + up.x * ev->emitOffsetY + fwd.x * ev->emitOffsetZ,
-			bonePos.y + right.y * ev->emitOffsetX + up.y * ev->emitOffsetY + fwd.y * ev->emitOffsetZ,
-			bonePos.z + right.z * ev->emitOffsetX + up.z * ev->emitOffsetY + fwd.z * ev->emitOffsetZ,
-	};
-}
-// Punto de entrada principal: gestiona activación/desactivación automática por frames
-// Llamar cada frame con el frame actual de la animación.
-static inline void SlashTrail_Tick(
-		SlashTrailSystem*       sys,
-		float                   deltaTime,
-		int                     currentFrame,
-		const SlashEventConfig* events,
-		int                     eventCount,
-		const AnimationFrame*   frame,
-		const char*             personId,
-		Vector3                 worldPos,
-		Vector3                 pivot,
-		Matrix                  rot,
-		bool                    applyWorldTransform)
-{
-	if (!sys || !events || !frame) return;
-
-	for (int e = 0; e < eventCount; e++) {
-		const SlashEventConfig* ev = &events[e];
-		bool inRange = (currentFrame >= ev->frameStart && currentFrame <= ev->frameEnd);
-
-		// Buscar si ya existe un trail activo o vivo para este evento
-		bool exists = false;
-		for (int i = 0; i < SLASH_TRAIL_MAX_ACTIVE; i++) {
-			if (sys->trails[i].alive && sys->trails[i].slashIndex == e) {
-				exists = true;
-				break;
-			}
-		}
-
-		// Activar si entramos al rango y no existe todavía
-		if (inRange && !exists) {
-			TraceLog(LOG_INFO, "SlashTrail: activando evento %d bone='%s' frames [%d-%d]",
-					e, ev->boneName, ev->frameStart, ev->frameEnd);
-			SlashTrail_Activate(sys, e, ev);
-		}
-
-		// Desactivar emisión si salimos del rango
-		if (!inRange) {
-			SlashTrail_Deactivate(sys, e);
-		}
-
-		if (inRange) {
-			// Dentro del rango: actualizar con posicion real del bone
-			Vector3 bonePos = SlashTrail__GetEmitPos(frame, personId, ev);
-			if (applyWorldTransform) {
-				Vector3 rel = Vector3Subtract(bonePos, pivot);
-				Vector3 rotated = Vector3Transform(rel, rot);
-				Vector3 pivotWorld = Vector3Add(worldPos, pivot);
-				bonePos = Vector3Add(pivotWorld, rotated);
-			}
-			SlashTrail_UpdateTrail(sys, deltaTime, e, bonePos);
-		} else if (exists) {
-			// Fuera del rango: envejecer puntos directamente sin pasar posicion
-			// Evita completamente spawnear nada en (0,0,0)
-			for (int _ti = 0; _ti < SLASH_TRAIL_MAX_ACTIVE; _ti++) {
-				SlashTrail* _tr = &sys->trails[_ti];
-				if (!_tr->alive || _tr->slashIndex != e) continue;
-				_tr->active = false;
-				_tr->spawnTimer = 0.0f;
-				bool _anyAlive = false;
-				for (int _p = 0; _p < _tr->config.segments; _p++) {
-					SlashTrailPoint* _pt = &_tr->points[_p];
-					if (!_pt->active) continue;
-					_pt->age += deltaTime;
-					if (_pt->age >= _pt->lifetime) _pt->active = false;
-					else _anyAlive = true;
-				}
-				if (!_anyAlive) {
-					if (_tr->hasTexture) { UnloadTexture(_tr->texture); _tr->hasTexture = false; }
-					memset(_tr, 0, sizeof(SlashTrail));
-				} else {
-					_tr->alive = true;
-				}
-			}
-		}
-	}
-}
-
-// ============================================================================
-// SLASH HITBOX QUERY
-// ============================================================================
-
-// Resultado de consultar qué slash está activo en el frame actual.
-// Usar para construir la hitbox de impacto perfectamente sincronizada con el trail.
-typedef struct {
-	bool        active;                         // true = hay un slash activo ahora mismo
-	char        boneName[BONES_AE_MAX_NAME];    // bone que genera el slash (RWrist, LAnkle, Head...)
-	Vector3     bonePosition;                   // posición del bone en espacio mundo (ya transformada)
-	int         frameStart;                     // rango del slash (para debug / lógica externa)
-	int         frameEnd;
-	int         slashIndex;                     // índice dentro de slashEvents[]
-} SlashHitboxInfo;
-
-// Devuelve el primer slash activo en el frame actual del controller.
-// Si hay varios activos simultáneamente (combo multi-hit), llama con slashIndexHint
-// incremental (0, 1, 2...) para iterar sobre todos. Devuelve active=false cuando no hay más.
-//
-//   frame          — AnimationFrame actual (necesario para leer la posición del bone)
-//   personId       — ID de la persona en el frame (igual que en SlashTrail_Tick)
-//   worldPos/pivot/rot/applyWorldTransform — mismo transform que en SlashTrail_Tick
-//   slashIndexHint — 0 para el primero activo; incrementar para obtener el siguiente
-//
-static inline SlashHitboxInfo AnimController_GetActiveSlashHitbox(
-		const AnimationController* controller,
-		const AnimationFrame*      frame,
-		const char*                personId,
-		Vector3                    worldPos,
-		Vector3                    pivot,
-		Matrix                     rot,
-		bool                       applyWorldTransform,
-		int                        slashIndexHint)
-{
-	SlashHitboxInfo result = {0};
-	if (!controller || !frame || controller->currentClipIndex < 0) return result;
-
-	const AnimationClipMetadata* clip = &controller->clips[controller->currentClipIndex];
-	if (!clip->valid || clip->slashEventCount == 0) return result;
-
-	int currentFrame = controller->currentFrameInJSON;
-	int found = 0;
-
-	for (int s = 0; s < clip->slashEventCount; s++) {
-		const SlashEventConfig* se = &clip->slashEvents[s];
-		if (currentFrame < se->frameStart || currentFrame > se->frameEnd) continue;
-
-		// Es un slash activo — ¿es el que nos piden?
-		if (found < slashIndexHint) { found++; continue; }
-
-		// Leer posición del bone y aplicar transform mundo (igual que SlashTrail_Tick)
-		Vector3 bonePos = SlashTrail__GetBonePos(frame, personId, se->boneName);
-		if (applyWorldTransform) {
-			Vector3 rel      = Vector3Subtract(bonePos, pivot);
-			Vector3 rotated  = Vector3Transform(rel, rot);
-			Vector3 pivotW   = Vector3Add(worldPos, pivot);
-			bonePos          = Vector3Add(pivotW, rotated);
-		}
-
-		result.active       = true;
-		result.bonePosition = bonePos;
-		result.frameStart   = se->frameStart;
-		result.frameEnd     = se->frameEnd;
-		result.slashIndex   = s;
-		strncpy(result.boneName, se->boneName, BONES_AE_MAX_NAME - 1);
-		result.boneName[BONES_AE_MAX_NAME - 1] = '\0';
-		return result;
-	}
-
-	return result; // active = false
-}
-
-// ============================================================================
-// MODEL 3D ATTACHMENT IMPLEMENTATION
-// ============================================================================
-
-static inline void Model3D_InitSystem(Model3DAttachmentSystem* sys) {
-	if (!sys) return;
-	memset(sys, 0, sizeof(Model3DAttachmentSystem));
-}
-
-static inline void Model3D_FreeSystem(Model3DAttachmentSystem* sys)
-{
-	if (!sys) return;
-
-	for (int i = 0; i < sys->instanceCount; i++)
-	{
-		if (sys->instances[i].loaded)
-		{
-			UnloadModel(sys->instances[i].model);
-			sys->instances[i].loaded = false;
-		}
-	}
-	sys->instanceCount = 0;
-}
-
-
-
-
-static inline void Model3D_LoadFromClip(Model3DAttachmentSystem* sys,
-        const AnimationClipMetadata* clip)
-{
-    if (!sys || !clip) return;
-
-    /* ── Leer campos volátiles en stack ANTES de tocar el heap ── */
-    if (!clip->valid) return;
-    int eventCount = clip->model3dEventCount;
-    if (eventCount < 0 || eventCount > BONES_MAX_MODEL3D_EVENTS) return;
-
-    /* Copiar todos los eventos a stack — cada uno es ~320 bytes, total ≤ 8×320 = 2560 bytes */
-    Model3DEventConfig events[BONES_MAX_MODEL3D_EVENTS];
-    for (int i = 0; i < eventCount; i++)
-        events[i] = clip->model3dEvents[i];   /* copia por valor, segura */
-
-    /* ── Ahora sí liberamos el sistema anterior (puede perturbar el heap) ── */
-    Model3D_FreeSystem(sys);
-
-    /* ── Cargar instancias usando la copia local ── */
-    for (int i = 0; i < eventCount; i++) {
-        const Model3DEventConfig* cfg = &events[i];
-        if (!cfg->valid || cfg->modelPath[0] == '\0') continue;
-        if (sys->instanceCount >= BONES_MAX_MODEL3D_EVENTS) break;
-
-        Model3DInstance* inst = &sys->instances[sys->instanceCount];
-        inst->config  = *cfg;
-        inst->visible = false;
-        inst->loaded  = false;
-
-        if (FileExists(cfg->modelPath)) {
-            inst->model  = LoadModel(cfg->modelPath);
-            inst->loaded = true;
-            TraceLog(LOG_INFO, "Model3D: cargado '%s' bone='%s' frames[%d-%d]",
-                    cfg->modelPath, cfg->boneName, cfg->frameStart, cfg->frameEnd);
+    if (!character) return;
+
+    if (character->animController && character->autoPlay) {
+        AnimController_Update(character->animController, deltaTime);
+        int fc = AnimController_GetCurrentFrame(character->animController);
+        if (fc != character->currentFrame) {
+            BonesSetFrame(&character->animation, fc);
+            character->currentFrame = fc;
+            character->forceUpdate  = true;
+        }
+    }
+
+    static AnimationFrame transitionFrame;
+    bool usingTransition = false;
+
+    if (g_isTransitioning) {
+        g_transitionTime += deltaTime;
+        float t = g_transitionTime / g_transitionDuration;
+        if (t >= 1.0f) {
+            g_isTransitioning = false;
+        } else if (character->animation.isLoaded &&
+                   character->currentFrame >= 0 &&
+                   character->currentFrame < character->animation.frameCount) {
+            CopyAnimationFrame(&g_transitionToFrame, &character->animation.frames[character->currentFrame]);
+            InterpolateTransitionFrames(&g_transitionFromFrame, &g_transitionToFrame, &transitionFrame, t);
+            usingTransition = true;
         } else {
-            TraceLog(LOG_WARNING, "Model3D: archivo no encontrado '%s'", cfg->modelPath);
+            g_isTransitioning = false;
+        }
+    }
+
+    static AnimationFrame interpolatedFrame;
+    bool usingInterpolation = false;
+
+    if (!usingTransition && character->animation.isLoaded && character->autoPlay &&
+        character->currentFrame >= 0 && character->currentFrame < character->animation.frameCount - 1 &&
+        character->animController && character->animController->currentClipIndex >= 0)
+    {
+        AnimationClipMetadata* clip =
+            &character->animController->clips[character->animController->currentClipIndex];
+        if (clip->fps > 0.0f) {
+            float frameDuration = 1.0f / clip->fps;
+            float timeInFrame   = fmodf(character->animController->localTime, frameDuration);
+            float t             = timeInFrame / frameDuration;
+            t = t * t * (3.0f - 2.0f * t);
+
+            AnimationFrame* curF  = &character->animation.frames[character->currentFrame];
+            AnimationFrame* nextF = &character->animation.frames[character->currentFrame + 1];
+
+            if (t > 0.05f && t < 0.95f && curF->valid && nextF->valid) {
+                memset(&interpolatedFrame, 0, sizeof(AnimationFrame));
+                interpolatedFrame.frameNumber = curF->frameNumber;
+                interpolatedFrame.valid       = true;
+                interpolatedFrame.personCount = curF->personCount;
+
+                for (int p = 0; p < interpolatedFrame.personCount; p++) {
+                    Person*       dp  = &interpolatedFrame.persons[p];
+                    Person*       pA  = &curF->persons[p];
+                    Person*       pB  = (p < nextF->personCount) ? &nextF->persons[p] : pA;
+
+                    strncpy(dp->personId, pA->personId, 15); dp->personId[15] = '\0';
+                    dp->active    = pA->active;
+                    dp->boneCount = pA->boneCount;
+
+                    for (int b = 0; b < dp->boneCount; b++) {
+                        Bone* bA = &pA->bones[b];
+                        Bone* bB = (b < pB->boneCount) ? &pB->bones[b] : bA;
+                        InterpolateBone(bA, bB, &dp->bones[b], t);
+                    }
+                }
+                usingInterpolation = true;
+            }
+        }
+    }
+
+    const AnimationFrame* frameToUse = NULL;
+    if (usingTransition)      frameToUse = &transitionFrame;
+    else if (usingInterpolation) frameToUse = &interpolatedFrame;
+    else if (character->animation.isLoaded && BonesIsValidFrame(&character->animation, character->currentFrame))
+        frameToUse = &character->animation.frames[character->currentFrame];
+
+    if (frameToUse && frameToUse->valid) {
+        Vector3 totalPos = {0,0,0}; int validCount = 0;
+        for (int p = 0; p < frameToUse->personCount; p++) {
+            const Person* person = &frameToUse->persons[p];
+            if (!person->active) continue;
+            Vector3 headPos  = CalculateHeadPosition(person);
+            Vector3 chestPos = CalculateChestPosition(person);
+            Vector3 hipPos   = CalculateHipPosition(person);
+            if (Vector3Length(headPos)  > 0.01f) { totalPos = Vector3Add(totalPos, headPos);  validCount++; }
+            if (Vector3Length(chestPos) > 0.01f) { totalPos = Vector3Add(totalPos, chestPos); validCount++; }
+            if (Vector3Length(hipPos)   > 0.01f) { totalPos = Vector3Add(totalPos, hipPos);   validCount++; }
+        }
+        if (validCount > 0) {
+            Vector3 newCenter = Vector3Scale(totalPos, 1.0f / validCount);
+            if (!character->autoCenterCalculated) character->autoCenter = newCenter;
+            else character->autoCenter = Vector3Lerp(character->autoCenter, newCenter, 0.3f);
+            character->autoCenterCalculated = true;
+        }
+    }
+
+    if (character->ornaments && character->ornaments->loaded && frameToUse && frameToUse->valid) {
+        if (!character->ornaments->ornaments[0].initialized)
+            Ornaments_InitializePhysics(character->ornaments, frameToUse);
+        Ornaments_UpdatePhysics(character->ornaments, frameToUse, deltaTime);
+    }
+
+    if (!usingTransition && character->animController && character->animController->currentClipIndex >= 0) {
+        AnimationClipMetadata* activeClip =
+            &character->animController->clips[character->animController->currentClipIndex];
+
+        if (activeClip->slashEventCount > 0 && character->animation.isLoaded) {
+            int jsonFrame = character->animController->currentFrameInJSON;
+            const AnimationFrame* realFrame = NULL;
+            for (int f = 0; f < character->animation.frameCount; f++) {
+                if (character->animation.frames[f].frameNumber == jsonFrame) {
+                    realFrame = &character->animation.frames[f]; break;
+                }
+            }
+            if (realFrame && realFrame->valid) {
+                const char* personId = (realFrame->personCount > 0) ? realFrame->persons[0].personId : "";
+                SlashTrail_Tick(&character->slashTrails, deltaTime, jsonFrame,
+                    activeClip->slashEvents, activeClip->slashEventCount, realFrame, personId,
+                    character->worldPosition, character->worldPivot,
+                    MatrixRotateY(character->worldRotation), character->hasWorldTransform);
+                Model3D_Tick(&character->model3dAttachments, jsonFrame);
+            }
+        }
+        if (activeClip->slashEventCount == 0 && character->model3dAttachments.instanceCount > 0)
+            Model3D_Tick(&character->model3dAttachments, character->animController->currentFrameInJSON);
+    }
+
+    if (character->forceUpdate || character->currentFrame != character->lastProcessedFrame ||
+        usingInterpolation || usingTransition)
+    {
+        character->renderBonesCount  = 0;
+        character->renderHeadsCount  = 0;
+        character->renderTorsosCount = 0;
+
+        AnimationFrame backup; bool needsRestore = false;
+        if (usingTransition || usingInterpolation) {
+            backup = character->animation.frames[character->currentFrame];
+            character->animation.frames[character->currentFrame] =
+                usingTransition ? transitionFrame : interpolatedFrame;
+            needsRestore = true;
         }
 
-        sys->instanceCount++;
+        CollectBonesForRendering(&character->animation, character->renderer->camera,
+            &character->renderBones, &character->renderBonesCount, &character->renderBonesCapacity,
+            character->boneConfigs, character->boneConfigCount,
+            character->textureSets, character->ornaments);
+
+        if (character->renderHeadBillboards)
+            CollectHeadsForRendering(&character->animation, &character->renderHeads,
+                &character->renderHeadsCount, &character->renderHeadsCapacity,
+                character->boneConfigs, character->boneConfigCount, character->textureSets);
+
+        if (character->renderTorsoBillboards)
+            CollectTorsosForRendering(&character->animation, &character->renderTorsos,
+                &character->renderTorsosCount, &character->renderTorsosCapacity,
+                character->boneConfigs, character->boneConfigCount, character->textureSets);
+
+        if (needsRestore)
+            character->animation.frames[character->currentFrame] = backup;
+
+        character->lastProcessedFrame = character->currentFrame;
+        character->forceUpdate        = false;
     }
 }
 
-
-
-static inline void Model3D_Tick(Model3DAttachmentSystem* sys, int currentFrame) {
-	if (!sys) return;
-	for (int i = 0; i < sys->instanceCount; i++) {
-		Model3DInstance* inst = &sys->instances[i];
-		inst->visible = inst->loaded &&
-			(currentFrame >= inst->config.frameStart) &&
-			(currentFrame <= inst->config.frameEnd);
-
-	}
-
+static inline Vector3 RotatePointAroundPivot(Vector3 point, Vector3 pivot, Vector3 worldPos, Matrix rotY) {
+    return Vector3Add(Vector3Add(worldPos, pivot), Vector3Transform(Vector3Subtract(point, pivot), rotY));
 }
 
-static inline void Model3D_Draw(
-		Model3DAttachmentSystem* sys,
-		const AnimationFrame*    frame,
-		const char*              personId,
-		Vector3                  worldPos,
-		Vector3                  pivot,
-		Matrix                   rot,
-		bool                     applyWorldTransform)
+static inline void DrawModel3DWithDepthOrder(Model3DAttachmentSystem* attachments,
+        const AnimationFrame* frame, const char* personId,
+        Vector3 worldPos, Vector3 pivot, Matrix rot, bool applyTransform,
+        Camera camera, Vector3 characterCenter, bool drawBefore)
 {
-	if (!sys || !frame) return;
+    if (!attachments || attachments->instanceCount == 0 || !frame) return;
 
-	for (int i = 0; i < sys->instanceCount; i++) {
-		Model3DInstance* inst = &sys->instances[i];
-		if (!inst->visible || !inst->loaded) continue;
+    float modelDist = 1e9f; bool hasVisible = false;
+    for (int i = 0; i < attachments->instanceCount; i++) {
+        Model3DInstance* inst = &attachments->instances[i];
+        if (!inst->visible || !inst->loaded) continue;
+        hasVisible = true;
+        Vector3 bp = SlashTrail__GetBonePos(frame, personId, inst->config.boneName);
+        if (applyTransform) {
+            Vector3 rel = Vector3Subtract(bp, pivot);
+            bp = Vector3Add(Vector3Add(worldPos, pivot), Vector3Transform(rel, rot));
+        }
+        float d = Vector3Distance(camera.position, bp);
+        if (d < modelDist) modelDist = d;
+    }
+    if (!hasVisible) return;
 
-		// --- 1. Posición del bone ---
-		Vector3 bonePos = SlashTrail__GetBonePos(frame, personId, inst->config.boneName);
+    float charDist = Vector3Distance(camera.position, characterCenter);
+    bool  isFarther = (modelDist > charDist);
 
-		// --- 2. Orientación estable del brazo ---
-		// Calculamos forward directamente desde los bones del brazo (elbow→wrist),
-		// y construimos up/right con Gram-Schmidt usando Y-mundo como referencia estable.
-		// Esto evita los saltos de GetStablePerpendicularVector.
-		const Person* person = NULL;
-		for (int p = 0; p < frame->personCount; p++) {
-			if (!frame->persons[p].active) continue;
-			if (personId && personId[0] != '\0') {
-				if (strcmp(frame->persons[p].personId, personId) == 0) {
-					person = &frame->persons[p]; break;
-				}
-			} else { person = &frame->persons[p]; break; }
-		}
-
-		Vector3 bFwd   = {0, 0, 1};
-		Vector3 bUp    = {0, 1, 0};
-		Vector3 bRight = {1, 0, 0};
-
-		if (person) {
-			// Determinar el bone "proximal" (el que está un nivel más arriba del bone objetivo)
-			// RWrist → viene de RElbow; LWrist → LElbow; cualquier otro → usar posición del bone
-			const char* proximalName = NULL;
-			const char* bn = inst->config.boneName;
-			if      (strcmp(bn, "RWrist") == 0) proximalName = "RElbow";
-			else if (strcmp(bn, "LWrist") == 0) proximalName = "LElbow";
-			else if (strcmp(bn, "RElbow") == 0) proximalName = "RShoulder";
-			else if (strcmp(bn, "LElbow") == 0) proximalName = "LShoulder";
-			else if (strcmp(bn, "RAnkle") == 0) proximalName = "RKnee";
-			else if (strcmp(bn, "LAnkle") == 0) proximalName = "LKnee";
-			else if (strcmp(bn, "RKnee")  == 0) proximalName = "RHip";
-			else if (strcmp(bn, "LKnee")  == 0) proximalName = "LHip";
-
-			Vector3 proxPos = proximalName
-				? GetBonePositionByName(person, proximalName)
-				: (Vector3){bonePos.x, bonePos.y - 0.1f, bonePos.z};
-
-			Vector3 dir = Vector3Subtract(bonePos, proxPos);
-			float dirLen = Vector3Length(dir);
-
-			if (dirLen > 1e-4f) {
-				bFwd = Vector3Scale(dir, 1.0f / dirLen); // proximal→distal = forward de la espada
-
-				// Gram-Schmidt con Y-mundo como referencia de up.
-				// Si el brazo es casi vertical (|dot| > 0.95), usar Z-mundo para evitar singularidad.
-				Vector3 worldUp = {0, 1, 0};
-				if (fabsf(Vector3DotProduct(bFwd, worldUp)) > 0.95f)
-					worldUp = (Vector3){0, 0, 1};
-
-				bRight = SafeNormalize(Vector3CrossProduct(bFwd, worldUp));
-				bUp    = SafeNormalize(Vector3CrossProduct(bRight, bFwd));
-			}
-		}
-
-		// --- 3. Transform mundo ---
-		if (applyWorldTransform) {
-			Vector3 rel    = Vector3Subtract(bonePos, pivot);
-			Vector3 rotVec = Vector3Transform(rel, rot);
-			bonePos = Vector3Add(Vector3Add(worldPos, pivot), rotVec);
-			bFwd    = Vector3Transform(bFwd,   rot);
-			bUp     = Vector3Transform(bUp,    rot);
-			bRight  = Vector3Transform(bRight, rot);
-		}
-
-		// --- 4. Rotaciones locales ajuste fino (espacio del bone) ---
-		// rot_x → inclina adelante/atrás (alrededor de bRight)
-		// rot_y → abre izquierda/derecha  (alrededor de bUp)
-		// rot_z → rueda sobre el eje del brazo (alrededor de bFwd)
-		if (fabsf(inst->config.rotationEuler.x) > 0.001f) {
-			float a = DEG2RAD * inst->config.rotationEuler.x;
-			Vector3 newFwd = SafeNormalize(Vector3Add(
-						Vector3Scale(bFwd, cosf(a)), Vector3Scale(bUp, sinf(a))));
-			bUp  = SafeNormalize(Vector3CrossProduct(bRight, newFwd));
-			bFwd = newFwd;
-		}
-		if (fabsf(inst->config.rotationEuler.y) > 0.001f) {
-			float a = DEG2RAD * inst->config.rotationEuler.y;
-			Vector3 newFwd = SafeNormalize(Vector3Add(
-						Vector3Scale(bFwd, cosf(a)), Vector3Scale(bRight, -sinf(a))));
-			bRight = SafeNormalize(Vector3CrossProduct(newFwd, bUp));
-			bFwd   = newFwd;
-		}
-		if (fabsf(inst->config.rotationEuler.z) > 0.001f) {
-			float a = DEG2RAD * inst->config.rotationEuler.z;
-			Vector3 newUp  = SafeNormalize(Vector3Add(
-						Vector3Scale(bUp, cosf(a)), Vector3Scale(bRight, sinf(a))));
-			bRight = SafeNormalize(Vector3CrossProduct(bFwd, newUp));
-			bUp    = newUp;
-		}
-
-		// --- 5. Offset en espacio local del bone ---
-		bonePos = Vector3Add(bonePos, Vector3Scale(bRight, inst->config.offset.x));
-		bonePos = Vector3Add(bonePos, Vector3Scale(bUp,    inst->config.offset.y));
-		bonePos = Vector3Add(bonePos, Vector3Scale(bFwd,   inst->config.offset.z));
-
-		// --- 6. Matrix column-major de raylib ---
-		float s = inst->config.scale;
-		Matrix m;
-		m.m0  = bRight.x * s;  m.m4  = bUp.x * s;  m.m8  = bFwd.x * s;  m.m12 = bonePos.x;
-		m.m1  = bRight.y * s;  m.m5  = bUp.y * s;  m.m9  = bFwd.y * s;  m.m13 = bonePos.y;
-		m.m2  = bRight.z * s;  m.m6  = bUp.z * s;  m.m10 = bFwd.z * s;  m.m14 = bonePos.z;
-		m.m3  = 0.0f;          m.m7  = 0.0f;        m.m11 = 0.0f;        m.m15 = 1.0f;
-
-		inst->model.transform = m;
-		DrawModel(inst->model, (Vector3){0, 0, 0}, 1.0f, WHITE);
-	}
-	
+    if ((drawBefore && isFarther) || (!drawBefore && !isFarther)) {
+        BeginMode3D(camera);
+        rlDisableDepthTest();
+        Model3D_Draw(attachments, frame, personId, worldPos, pivot, rot, applyTransform);
+        rlEnableDepthTest();
+        EndMode3D();
+    }
 }
 
+static inline void DrawAnimatedCharacterTransformed(AnimatedCharacter* character, Camera camera,
+                                                     Vector3 worldPosition, float worldRotation)
+{
+    if (!character || !character->animation.isLoaded) return;
 
-#endif // BONES_CORE_H
+    character->worldPosition     = worldPosition;
+    character->worldRotation     = worldRotation;
+    character->worldPivot        = character->autoCenter;
+    character->hasWorldTransform = true;
+
+    Camera origCam = character->renderer->camera;
+    character->renderer->camera  = camera;
+
+    Matrix  rot   = MatrixRotateY(worldRotation);
+    Vector3 pivot = character->autoCenter;
+
+    int bc = character->renderBonesCount;
+    int hc = character->renderHeadsCount;
+    int tc = character->renderTorsosCount;
+
+    BoneRenderData*   bonesCopy  = bc > 0 ? malloc(sizeof(BoneRenderData)  * bc) : NULL;
+    HeadRenderData*   headsCopy  = hc > 0 ? malloc(sizeof(HeadRenderData)  * hc) : NULL;
+    TorsoRenderData*  torsosCopy = tc > 0 ? malloc(sizeof(TorsoRenderData) * tc) : NULL;
+
+    if (bonesCopy && bc > 0)  memcpy(bonesCopy,  character->renderBones,  sizeof(BoneRenderData)  * bc);
+    if (headsCopy && hc > 0)  memcpy(headsCopy,  character->renderHeads,  sizeof(HeadRenderData)  * hc);
+    if (torsosCopy && tc > 0) memcpy(torsosCopy, character->renderTorsos, sizeof(TorsoRenderData) * tc);
+
+    AnimationFrame* transformedFrame = NULL;
+    if (tc > 0 && character->animation.isLoaded &&
+        character->currentFrame >= 0 && character->currentFrame < character->animation.frameCount)
+    {
+        transformedFrame = malloc(sizeof(AnimationFrame));
+        if (transformedFrame) {
+            *transformedFrame = character->animation.frames[character->currentFrame];
+            for (int p = 0; p < transformedFrame->personCount; p++) {
+                Person* person = &transformedFrame->persons[p];
+                for (int b = 0; b < person->boneCount; b++) {
+                    Bone* bone = &person->bones[b];
+                    if (bone->position.valid)
+                        bone->position.position = RotatePointAroundPivot(bone->position.position, pivot, worldPosition, rot);
+                }
+            }
+        }
+    }
+
+    if (bonesCopy) {
+        for (int i = 0; i < bc; i++) {
+            BoneRenderData* b = &bonesCopy[i];
+            if (!b->valid) continue;
+            b->position = RotatePointAroundPivot(b->position, pivot, worldPosition, rot);
+            if (b->orientation.valid) {
+                b->orientation.forward = SafeNormalize(Vector3Transform(b->orientation.forward, rot));
+                b->orientation.up      = SafeNormalize(Vector3Transform(b->orientation.up,      rot));
+                b->orientation.right   = SafeNormalize(Vector3Transform(b->orientation.right,   rot));
+                b->orientation.position = b->position;
+                b->orientation.yaw    += worldRotation;
+                while (b->orientation.yaw >  PI) b->orientation.yaw -= 2.0f * PI;
+                while (b->orientation.yaw < -PI) b->orientation.yaw += 2.0f * PI;
+            }
+            if (IsWristBone(b->boneName)) {
+                Vector3 charFwd = SafeNormalize((Vector3){ sinf(worldRotation), 0.0f, cosf(worldRotation) });
+                Vector3 up      = {0,1,0};
+                Vector3 right   = SafeNormalize(Vector3CrossProduct(charFwd, up));
+                b->orientation.forward  = charFwd;
+                b->orientation.right    = right;
+                b->orientation.up       = SafeNormalize(Vector3CrossProduct(right, charFwd));
+                b->orientation.position = b->position;
+                b->orientation.yaw      = atan2f(charFwd.x, charFwd.z) + PI;
+                while (b->orientation.yaw >  PI) b->orientation.yaw -= 2.0f * PI;
+                while (b->orientation.yaw < -PI) b->orientation.yaw += 2.0f * PI;
+                b->orientation.valid = true;
+            }
+        }
+    }
+
+    if (headsCopy) {
+        for (int i = 0; i < hc; i++) {
+            HeadRenderData* h = &headsCopy[i];
+            if (!h->valid) continue;
+            h->position = RotatePointAroundPivot(h->position, pivot, worldPosition, rot);
+            if (h->orientation.valid) {
+                h->orientation.forward  = SafeNormalize(Vector3Transform(h->orientation.forward, rot));
+                h->orientation.up       = SafeNormalize(Vector3Transform(h->orientation.up,      rot));
+                h->orientation.right    = SafeNormalize(Vector3Transform(h->orientation.right,   rot));
+                h->orientation.position = h->position;
+                h->orientation.yaw     += worldRotation;
+            }
+        }
+    }
+
+    if (torsosCopy) {
+        for (int i = 0; i < tc; i++) {
+            TorsoRenderData* t = &torsosCopy[i];
+            if (!t->valid) continue;
+            if (transformedFrame && t->person) {
+                for (int p = 0; p < transformedFrame->personCount; p++) {
+                    if (strcmp(transformedFrame->persons[p].personId, t->personId) == 0) {
+                        t->person = &transformedFrame->persons[p]; break;
+                    }
+                }
+            }
+            if (t->orientation.valid) {
+                t->orientation.forward  = SafeNormalize(Vector3Transform(t->orientation.forward, rot));
+                t->orientation.up       = SafeNormalize(Vector3Transform(t->orientation.up,      rot));
+                t->orientation.right    = SafeNormalize(Vector3Transform(t->orientation.right,   rot));
+                t->orientation.yaw     += worldRotation;
+                while (t->orientation.yaw >  PI) t->orientation.yaw -= 2.0f * PI;
+                while (t->orientation.yaw < -PI) t->orientation.yaw += 2.0f * PI;
+            }
+            t->position = RotatePointAroundPivot(t->position, pivot, worldPosition, rot);
+            if (t->orientation.valid) t->orientation.position = t->position;
+            t->disableCompensation = false;
+        }
+    }
+
+    Vector3 transformedCenter = Vector3Add(worldPosition, pivot);
+
+    const AnimationFrame* rf  = NULL;
+    const char*           pid = "";
+    if (character->currentFrame >= 0 && character->currentFrame < character->animation.frameCount) {
+        rf  = &character->animation.frames[character->currentFrame];
+        pid = (rf->personCount > 0) ? rf->persons[0].personId : "";
+    }
+
+    DrawModel3DWithDepthOrder(&character->model3dAttachments, rf, pid,
+        character->worldPosition, character->worldPivot, rot, true, camera, transformedCenter, true);
+
+    BonesRenderer_RenderFrame(character->renderer,
+        bonesCopy  ? bonesCopy  : character->renderBones,  bc,
+        headsCopy  ? headsCopy  : character->renderHeads,   hc,
+        torsosCopy ? torsosCopy : character->renderTorsos, tc,
+        transformedCenter, character->autoCenterCalculated);
+
+    DrawModel3DWithDepthOrder(&character->model3dAttachments, rf, pid,
+        character->worldPosition, character->worldPivot, rot, true, camera, transformedCenter, false);
+
+    free(bonesCopy); free(headsCopy); free(torsosCopy); free(transformedFrame);
+    character->renderer->camera = origCam;
+
+    bool hasLiveTrail = false;
+    for (int i = 0; i < SLASH_TRAIL_MAX_ACTIVE; i++)
+        if (character->slashTrails.trails[i].alive) { hasLiveTrail = true; break; }
+    if (hasLiveTrail) {
+        BeginMode3D(camera);
+        SlashTrail_Draw(&character->slashTrails, camera);
+        EndMode3D();
+    }
+}
+
+static inline void SetCharacterFrame(AnimatedCharacter* character, int frame) {
+    if (!character || frame < 0 || frame >= character->maxFrames) return;
+    character->currentFrame = frame;
+    BonesSetFrame(&character->animation, frame);
+    character->forceUpdate = true;
+    if (character->animController)
+        character->animController->currentFrameInJSON = frame;
+}
+
+static inline void SetCharacterAutoPlay(AnimatedCharacter* character, bool autoPlay) {
+    if (!character) return;
+    character->autoPlay = autoPlay;
+    if (!autoPlay || !character->animController) return;
+
+    if (character->animController->currentClipIndex >= 0) {
+        AnimationClipMetadata* clip =
+            &character->animController->clips[character->animController->currentClipIndex];
+        if (!clip->loop && !character->animController->playing)
+            RestartAnimation(character);
+        else
+            character->animController->playing = true;
+    }
+}
+
+static inline void RestartAnimation(AnimatedCharacter* character) {
+    if (!character) return;
+    if (character->animation.isLoaded && character->animation.frameCount > 0)
+        SetCharacterFrame(character, 0);
+
+    if (character->animController) {
+        character->animController->localTime = 0.0f;
+        character->animController->playing   = true;
+        if (character->animController->currentClipIndex >= 0) {
+            AnimationClipMetadata* clip =
+                &character->animController->clips[character->animController->currentClipIndex];
+            for (int i = 0; i < clip->eventCount; i++)
+                clip->events[i].processed = false;
+        }
+    }
+    character->autoPlay = true;
+}
+
+static inline bool BonesInterpolateFrames(BonesAnimation* animation, int frameA, int frameB, int framesToAdd) {
+    if (!animation || frameA < 0 || frameB <= frameA || frameB >= animation->frameCount ||
+        framesToAdd <= 0 || animation->frameCount + framesToAdd > animation->maxFrames) return false;
+
+    for (int i = animation->frameCount - 1; i >= frameB; i--) {
+        animation->frames[i + framesToAdd] = animation->frames[i];
+        animation->frames[i + framesToAdd].frameNumber = i + framesToAdd;
+    }
+
+    AnimationFrame* srcA = &animation->frames[frameA];
+    AnimationFrame* srcB = &animation->frames[frameB + framesToAdd];
+
+    for (int i = 0; i < framesToAdd; i++) {
+        int   newIdx = frameA + i + 1;
+        float t      = (float)(i + 1) / (float)(framesToAdd + 1);
+
+        AnimationFrame* dest = &animation->frames[newIdx];
+        dest->frameNumber        = newIdx;
+        dest->personCount        = srcA->personCount > srcB->personCount ? srcA->personCount : srcB->personCount;
+        dest->valid              = true;
+        dest->isOriginalKeyframe = false;
+
+        for (int p = 0; p < dest->personCount; p++) {
+            if      (p < srcA->personCount && p < srcB->personCount) InterpolatePerson(&srcA->persons[p], &srcB->persons[p], &dest->persons[p], t);
+            else if (p < srcA->personCount)                          dest->persons[p] = srcA->persons[p];
+            else                                                     dest->persons[p] = srcB->persons[p];
+        }
+    }
+
+    animation->frameCount += framesToAdd;
+    return true;
+}
+
+static inline bool BonesInsertEmptyFrame(BonesAnimation* animation, int position) {
+    if (!animation || position < 0 || position > animation->frameCount ||
+        animation->frameCount >= animation->maxFrames) return false;
+
+    for (int i = animation->frameCount; i > position; i--) {
+        animation->frames[i] = animation->frames[i - 1];
+        animation->frames[i].frameNumber = i;
+    }
+
+    AnimationFrame* newFrame = &animation->frames[position];
+    memset(newFrame, 0, sizeof(AnimationFrame));
+    newFrame->frameNumber = position;
+    newFrame->valid       = true;
+    animation->frameCount++;
+    return true;
+}
+
+static inline bool BonesCopyFrame(BonesAnimation* animation, int sourceFrame, int targetFrame) {
+    if (!animation || sourceFrame < 0 || sourceFrame >= animation->frameCount ||
+        targetFrame < 0 || targetFrame >= animation->maxFrames) return false;
+
+    animation->frames[targetFrame]             = animation->frames[sourceFrame];
+    animation->frames[targetFrame].frameNumber = targetFrame;
+    if (targetFrame >= animation->frameCount) animation->frameCount = targetFrame + 1;
+    return true;
+}
+
+static inline void DrawAnimatedCharacter(AnimatedCharacter* character, Camera camera) {
+    if (!character || !character->animation.isLoaded) return;
+    character->renderer->camera = camera;
+
+    const AnimationFrame* rf  = NULL;
+    const char*           pid = "";
+    if (character->currentFrame >= 0 && character->currentFrame < character->animation.frameCount) {
+        rf  = &character->animation.frames[character->currentFrame];
+        pid = (rf->personCount > 0) ? rf->persons[0].personId : "";
+    }
+
+    float modelDist = 1e9f; bool hasVisibleModel = false;
+    if (character->model3dAttachments.instanceCount > 0 && rf) {
+        for (int i = 0; i < character->model3dAttachments.instanceCount; i++) {
+            Model3DInstance* inst = &character->model3dAttachments.instances[i];
+            if (!inst->visible || !inst->loaded) continue;
+            hasVisibleModel = true;
+            float d = Vector3Distance(camera.position, SlashTrail__GetBonePos(rf, pid, inst->config.boneName));
+            if (d < modelDist) modelDist = d;
+        }
+    }
+    float charDist = Vector3Distance(camera.position, character->autoCenter);
+
+    if (hasVisibleModel && modelDist > charDist) {
+        BeginMode3D(camera); rlDisableDepthTest();
+        Model3D_Draw(&character->model3dAttachments, rf, pid,
+            character->worldPosition, character->worldPivot,
+            MatrixRotateY(character->worldRotation), character->hasWorldTransform);
+        rlEnableDepthTest(); EndMode3D();
+    }
+
+    BonesRenderer_RenderFrame(character->renderer,
+        character->renderBones,  character->renderBonesCount,
+        character->renderHeads,  character->renderHeadsCount,
+        character->renderTorsos, character->renderTorsosCount,
+        character->autoCenter, character->autoCenterCalculated);
+
+    if (hasVisibleModel && modelDist <= charDist) {
+        BeginMode3D(camera); rlDisableDepthTest();
+        Model3D_Draw(&character->model3dAttachments, rf, pid,
+            character->worldPosition, character->worldPivot,
+            MatrixRotateY(character->worldRotation), character->hasWorldTransform);
+        rlEnableDepthTest(); EndMode3D();
+    }
+
+    BeginMode3D(camera);
+    SlashTrail_Draw(&character->slashTrails, camera);
+    EndMode3D();
+}
+
+static inline void SetCharacterBillboards(AnimatedCharacter* character, bool heads, bool torsos) {
+    if (!character) return;
+    character->renderHeadBillboards  = heads;
+    character->renderTorsoBillboards = torsos;
+    character->forceUpdate           = true;
+}
+
+#endif
