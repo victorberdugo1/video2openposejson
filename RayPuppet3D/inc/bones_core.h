@@ -460,6 +460,13 @@ typedef struct AnimatedCharacter {
     Vector3                 worldPivot;
     bool                    hasWorldTransform;
     bool                    lockRootXZ;
+    // Per-character transition state (replaces globals — safe for multi-player)
+    AnimationFrame          transitionFromFrame;
+    AnimationFrame          transitionToFrame;
+    bool                    isTransitioning;
+    float                   transitionTime;
+    float                   transitionDuration;
+    bool                    hasValidFromFrame;
 } AnimatedCharacter;
 
 typedef struct {
@@ -569,21 +576,17 @@ static const struct {
     {"", 0.5f, 0.5f}
 };
 
-static AnimationFrame g_transitionFromFrame;
-static AnimationFrame g_transitionToFrame;
-static bool           g_isTransitioning    = false;
-static float          g_transitionTime     = 0.0f;
-static float          g_transitionDuration = 0.85f;
-static bool           g_hasValidFromFrame  = false;
-
-static BonesRenderConfig g_renderConfig = {
-    .defaultBoneSize    = 0.35f,
-    .drawDebugSpheres   = false,
-    .enableDepthSorting = true,
-    .debugColor         = RED,
-    .debugSphereRadius  = 0.035f,
-    .showInvalidBones   = false
-};
+static BonesRenderConfig BonesGetDefaultRenderConfig(void) {
+    return (BonesRenderConfig){
+        .defaultBoneSize   = 0.35f,
+        .drawDebugSpheres  = false,
+        .enableDepthSorting= true,
+        .debugColor        = RED,
+        .debugSphereRadius = 0.035f,
+        .showInvalidBones  = false
+    };
+}
+static inline void BonesSetRenderConfig(const BonesRenderConfig* config) { (void)config; }
 
 static inline bool BonesIsPositionValid(Vector3 position);
 static inline int BonesGetCurrentFrame(const BonesAnimation* animation);
@@ -618,8 +621,6 @@ static inline bool ShouldRenderHip(const Person* person);
 static inline bool ShouldUseVariableHeight(const char* boneName);
 static inline bool ShouldFlipBoneTexture(const char* boneName);
 static inline bool GetBoneConnectionsWithPriority(const char* boneName, char connections[3][32], float priorities[3]);
-static inline BonesRenderConfig BonesGetDefaultRenderConfig(void);
-static inline void BonesSetRenderConfig(const BonesRenderConfig* config);
 
 static inline bool LoadSimpleTextureConfig(SimpleTextureSystem* system, const char* filename);
 static inline void LoadBoneConfigurations(SimpleTextureSystem* textureSystem, BoneConfig** boneConfigs, int* boneConfigCount);
@@ -732,7 +733,7 @@ static inline void LockAnimationRootXZ(AnimatedCharacter* character, bool lock);
 static inline float GetCurrentAnimDuration(const AnimatedCharacter* character);
 static inline bool IsSlashActiveForCharacter(const AnimatedCharacter* character);
 static inline Vector3 GetActiveSlashBonePos(const AnimatedCharacter* character, Vector3 fallback);
-static inline void SetAnimationTransitionDuration(float duration);
+static inline void SetAnimationTransitionDuration(AnimatedCharacter* character, float duration);
 static inline bool BonesInterpolateFrames(BonesAnimation* animation, int frameA, int frameB, int framesToAdd);
 static inline bool BonesInsertEmptyFrame(BonesAnimation* animation, int position);
 static inline bool BonesCopyFrame(BonesAnimation* animation, int sourceFrame, int targetFrame);
@@ -870,7 +871,7 @@ static inline BonesError ParseJSONFrame(const char* jsonData, int* outFrameNum, 
             };
             bone->position.valid      = BonesIsPositionValid(bone->position.position);
             bone->position.confidence = 1.0f;
-            bone->size                = (Vector2){ g_renderConfig.defaultBoneSize, g_renderConfig.defaultBoneSize };
+            bone->size                = (Vector2){ 0.35f, 0.35f };
             bone->visible             = true;
             p->boneCount++;
         }
@@ -1605,9 +1606,6 @@ static inline int BonesRenderer_LoadTexture(BonesRenderer* renderer, const char*
     renderer->texturePaths[renderer->textureCount][MAX_FILE_PATH_LENGTH - 1] = '\0';
     return renderer->textureCount++;
 }
-
-static inline BonesRenderConfig BonesGetDefaultRenderConfig(void) { return g_renderConfig; }
-static inline void BonesSetRenderConfig(const BonesRenderConfig* config) { if (config) g_renderConfig = *config; }
 
 static void DrawQuadTextured3D(Texture2D tex, Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3,
                                 float u0, float v0t, float u1, float v1t) {
@@ -3859,17 +3857,17 @@ static inline void CaptureCurrentFrame(AnimatedCharacter* character) {
         character->currentFrame < 0 ||
         character->currentFrame >= character->animation.frameCount)
     {
-        g_hasValidFromFrame = false;
+        character->hasValidFromFrame = false;
         return;
     }
-    CopyAnimationFrame(&g_transitionFromFrame, &character->animation.frames[character->currentFrame]);
-    g_hasValidFromFrame = true;
+    CopyAnimationFrame(&character->transitionFromFrame, &character->animation.frames[character->currentFrame]);
+    character->hasValidFromFrame = true;
 }
 
-static inline void StartAnimationTransition(void) {
-    if (!g_hasValidFromFrame) return;
-    g_isTransitioning = true;
-    g_transitionTime  = 0.0f;
+static inline void StartAnimationTransition(AnimatedCharacter* character) {
+    if (!character || !character->hasValidFromFrame) return;
+    character->isTransitioning = true;
+    character->transitionTime  = 0.0f;
 }
 
 static void InterpolateTransitionFrames(const AnimationFrame* fromFrame, const AnimationFrame* toFrame,
@@ -3966,7 +3964,7 @@ static inline bool LoadAnimation(AnimatedCharacter* character,
     character->hasWorldTransform = false;
 
     if (BonesLoadFromJSON(&character->animation, animationPath) != BONES_SUCCESS) {
-        g_hasValidFromFrame = false;
+        character->hasValidFromFrame = false;
         return false;
     }
 
@@ -3974,7 +3972,7 @@ static inline bool LoadAnimation(AnimatedCharacter* character,
     character->maxFrames    = BonesGetFrameCount(&character->animation);
     character->currentFrame = 0;
     BonesSetFrame(&character->animation, 0);
-    StartAnimationTransition();
+    StartAnimationTransition(character);
 
     character->animController = AnimController_Create(&character->animation, character->textureSets);
     if (!character->animController) return false;
@@ -4011,8 +4009,9 @@ static inline bool LoadAnimation(AnimatedCharacter* character,
     return true;
 }
 
-static inline void SetAnimationTransitionDuration(float duration) {
-    if (duration > 0.0f && duration < 1.0f) g_transitionDuration = duration;
+static inline void SetAnimationTransitionDuration(AnimatedCharacter* character, float duration) {
+    if (character && duration > 0.0f && duration < 1.0f)
+        character->transitionDuration = duration;
 }
 
 static inline void ResetCharacterAutoCenter(AnimatedCharacter* character) {
@@ -4107,6 +4106,7 @@ static inline AnimatedCharacter* CreateAnimatedCharacter(const char* textureConf
     character->autoPlay              = true;
     character->autoPlaySpeed         = 0.1f;
     character->lastProcessedFrame    = -1;
+    character->transitionDuration    = 0.85f;
 
     character->renderConfig                    = BonesGetDefaultRenderConfig();
     character->renderConfig.drawDebugSpheres   = true;
@@ -4154,26 +4154,26 @@ static inline void UpdateAnimatedCharacter(AnimatedCharacter* character, float d
         }
     }
 
-    static AnimationFrame transitionFrame;
+    AnimationFrame transitionFrame;
     bool usingTransition = false;
 
-    if (g_isTransitioning) {
-        g_transitionTime += deltaTime;
-        float t = g_transitionTime / g_transitionDuration;
+    if (character->isTransitioning) {
+        character->transitionTime += deltaTime;
+        float t = character->transitionTime / character->transitionDuration;
         if (t >= 1.0f) {
-            g_isTransitioning = false;
+            character->isTransitioning = false;
         } else if (character->animation.isLoaded &&
                    character->currentFrame >= 0 &&
                    character->currentFrame < character->animation.frameCount) {
-            CopyAnimationFrame(&g_transitionToFrame, &character->animation.frames[character->currentFrame]);
-            InterpolateTransitionFrames(&g_transitionFromFrame, &g_transitionToFrame, &transitionFrame, t);
+            CopyAnimationFrame(&character->transitionToFrame, &character->animation.frames[character->currentFrame]);
+            InterpolateTransitionFrames(&character->transitionFromFrame, &character->transitionToFrame, &transitionFrame, t);
             usingTransition = true;
         } else {
-            g_isTransitioning = false;
+            character->isTransitioning = false;
         }
     }
 
-    static AnimationFrame interpolatedFrame;
+    AnimationFrame interpolatedFrame;
     bool usingInterpolation = false;
 
     if (!usingTransition && character->animation.isLoaded && character->autoPlay &&
