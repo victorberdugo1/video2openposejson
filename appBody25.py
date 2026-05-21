@@ -4,7 +4,7 @@ import json
 import numpy as np
 from PIL import Image, ImageDraw
 import gradio as gr
-from moviepy.editor import ImageSequenceClip
+from moviepy import ImageSequenceClip
 
 # --- MediaPipe Tasks API 0.10.x ---
 import mediapipe as mp
@@ -480,7 +480,7 @@ def process_video_single(video_path, resize_height=None, target_fps=None):
     out_fps = target_fps if target_fps and target_fps > 0 else input_fps
     clip = ImageSequenceClip(frames_paths, fps=out_fps)
     out_video = "singleperson_openpose_result.mp4"
-    clip.write_videofile(out_video, fps=out_fps, verbose=False, logger=None)
+    clip.write_videofile(out_video, fps=out_fps, logger=None)
     
     # Guardar JSON
     json_path = "singleperson_openpose_result.json"
