@@ -39,7 +39,7 @@
 #define BONES_AE_MAX_NAME           64
 #define BONES_AE_MAX_PATH           256
 
-#define HEAD_DEPTH_OFFSET           0.04f
+#define HEAD_DEPTH_OFFSET           0.0f
 #define CHEST_OFFSET_Y              -0.06f
 #define CHEST_OFFSET_Z              -0.005f
 #define CHEST_FALLBACK_Y            -0.08f
