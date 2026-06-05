@@ -39,11 +39,12 @@
 #define BONES_AE_MAX_NAME           64
 #define BONES_AE_MAX_PATH           256
 
-#define HEAD_DEPTH_OFFSET           0.0f
+#define HEAD_DEPTH_OFFSET           -0.02f
 #define CHEST_OFFSET_Y              -0.06f
-#define CHEST_OFFSET_Z              -0.005f
+#define CHEST_OFFSET_Z              0.025f
 #define CHEST_FALLBACK_Y            -0.08f
 #define HIP_OFFSET_Y                -0.02f
+#define CHEST_SIDE_TILT_DEG         -10.0f
 
 #define SLASH_TRAIL_MAX_SEGMENTS    64
 #define SLASH_TRAIL_MAX_ACTIVE      8
@@ -556,7 +557,7 @@ static const struct {
     {"RHip",      -90.0f, -45.0f,  -90.0f},
     {"RKnee",     -90.0f,  90.0f,   90.0f},
     {"RAnkle",     90.0f, 180.0f,   90.0f},
-    {"Neck",      -90.0f, 180.0f,  -90.0f},
+    {"Neck",       90.0f,   0.0f,   90.0f},
     {"", 0.0f, 0.0f, 0.0f}
 };
 
@@ -2867,7 +2868,9 @@ static inline void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Ca
         *outMirrored    = (sector >= 1 && sector <= 4);
     }
 
-    if (torsoData->person && pitchDeg < 70.0f && pitchDeg > -70.0f) {
+    // Only apply spine-tilt on side views; frontal/rear (sector 0,4) keep rot=0.
+    bool isSideView = (sector >= 1 && sector <= 3) || (sector >= 5 && sector <= 7);
+    if (isSideView && torsoData->person && pitchDeg < 70.0f && pitchDeg > -70.0f) {
         Vector3 other = (torsoData->type == TORSO_CHEST)
             ? CalculateHipPosition(torsoData->person)
             : CalculateChestPosition(torsoData->person);
@@ -2878,9 +2881,10 @@ static inline void CalculateTorsoRenderData(const TorsoRenderData* torsoData, Ca
                 torsoVec = SafeNormalize(torsoVec);
                 float wPitch = atan2f(torsoVec.y, sqrtf(torsoVec.x*torsoVec.x + torsoVec.z*torsoVec.z)) * RAD2DEG;
                 bool viewRight = (local.x > 0.0f);
-                if (torsoData->type == TORSO_CHEST)
-                    *outRotation = viewRight ? -wPitch - 80.0f : wPitch + 80.0f;
-                else
+                if (torsoData->type == TORSO_CHEST) {
+                    float tilt = CHEST_SIDE_TILT_DEG;
+                    *outRotation = viewRight ? -wPitch - 80.0f + tilt : wPitch + 80.0f - tilt;
+                } else
                     *outRotation = viewRight ? wPitch - 80.0f : -wPitch + 80.0f;
                 while (*outRotation >= 360.0f) *outRotation -= 360.0f;
                 while (*outRotation <    0.0f) *outRotation += 360.0f;
@@ -2976,12 +2980,102 @@ static inline void DrawTorsoBillboard(Texture2D texture, Camera camera, const To
 
         CalculateAsymmetricBoneRenderData(&tempBone, camera, &ci, &rot, &mir);
         mir = false;
+
+        // Apply spine tilt only on side views; frontal/rear keep rot=0.
+        if (torsoData->person && torsoData->orientation.valid) {
+            Vector3 camDir = SafeNormalize(Vector3Subtract(torsoData->position, camera.position));
+            float localX   = Vector3DotProduct(camDir, torsoData->orientation.right);
+            float localY   = Vector3DotProduct(camDir, torsoData->orientation.up);
+            float localZ   = Vector3DotProduct(camDir, torsoData->orientation.forward);
+            float pitchDeg = -atan2f(localY, sqrtf(localX*localX + localZ*localZ)) * RAD2DEG;
+            float normYawA = atan2f(localX, localZ);
+            if (normYawA < 0.0f) normYawA += 2.0f * PI;
+            normYawA = normYawA * RAD2DEG + 22.5f;
+            if (normYawA >= 360.0f) normYawA -= 360.0f;
+            int sectorA = (8 - (int)(normYawA / 45.0f) % 8) % 8;
+            bool isSideA = (sectorA >= 1 && sectorA <= 3) || (sectorA >= 5 && sectorA <= 7);
+            if (isSideA && pitchDeg < 70.0f && pitchDeg > -70.0f) {
+                Vector3 other = (torsoData->type == TORSO_CHEST)
+                    ? CalculateHipPosition(torsoData->person)
+                    : CalculateChestPosition(torsoData->person);
+                if (Vector3Length(other) > 0.001f) {
+                    Vector3 torsoVec = Vector3Subtract(other, torsoData->position);
+                    if (Vector3Length(torsoVec) > 0.001f) {
+                        torsoVec = SafeNormalize(torsoVec);
+                        float wPitch   = atan2f(torsoVec.y, sqrtf(torsoVec.x*torsoVec.x + torsoVec.z*torsoVec.z)) * RAD2DEG;
+                        bool viewRight = (localX > 0.0f);
+                        if (torsoData->type == TORSO_CHEST) {
+                            float tilt = CHEST_SIDE_TILT_DEG;
+                            rot = viewRight ? -wPitch - 80.0f + tilt : wPitch + 80.0f - tilt;
+                        } else
+                            rot = viewRight ? wPitch - 80.0f : -wPitch + 80.0f;
+                        while (rot >= 360.0f) rot -= 360.0f;
+                        while (rot <    0.0f) rot += 360.0f;
+                    }
+                }
+            }
+        }
     } else {
         CalculateTorsoRenderData(torsoData, camera, &ci, &rot, &mir);
     }
 
+    // CalculateTorsoRenderData always returns ci in 4x4 space (0-15).
+    // When the physical atlas is 5x5, remap ci to the matching cell in the 5x5 grid
+    // using the same pose layout as asymTorsoIndices so that row/col land correctly.
+    int logicalCols = ATLAS_COLS; // 4
+    if (!torsoData->isAsymmetric && cols == ASYM_ATLAS_COLS) {
+        // Map 4x4 ci to its (row, sector) then look up the equivalent 5x5 index.
+        // asymTorsoIndices[row][sector] uses the same orientation convention.
+        // Direct lookup table: 4x4 ci (0-15) -> 5x5 ci via asymTorsoIndices
+        static const int remap4to5[16] = {
+            // ci=0: row0,sec0 -> asymTorsoIndices[0][0]=1  ... but row mapping differs.
+            // CalculateTorsoRenderData row: pitch>=22.5->2, pitch>=-22.5->0, else->1
+            // asymTorsoIndices       row: pitch>=22.5->0, pitch>=-22.5->1, else->2
+            // So 4x4 row 0 <-> asym row 1 (side), 4x4 row 2 <-> asym row 0 (high), 4x4 row 1 <-> asym row 2 (low)
+            // indices[0][s]={0,4,5,6,7,6,5,4}  (side) -> asymTorsoIndices[1][s]={0,4,9,14,8,7,6,5}
+            // indices[2][s]={1,8,9,10,11,10,9,8} (low) -> asymTorsoIndices[2][s]={2,22,23,24,18,17,16,15}
+            // indices[1][s]={2,12,13,14,15,14,13,12} (high)-> asymTorsoIndices[0][s]={1,19,20,21,13,12,11,10}
+            // ci0 =indices[0][0]=0 -> asym[1][0]=0
+            /* 0*/  0,
+            // ci1 =indices[2][0]=1 -> asym[2][0]=2
+            /* 1*/  2,
+            // ci2 =indices[1][0]=2 -> asym[0][0]=1
+            /* 2*/  1,
+            // ci3 = special top, keep
+            /* 3*/  3,
+            // ci4 =indices[0][1]=4 -> asym[1][1]=4
+            /* 4*/  4,
+            // ci5 =indices[0][2]=5 -> asym[1][2]=9
+            /* 5*/  9,
+            // ci6 =indices[0][3]=6 -> asym[1][3]=14
+            /* 6*/ 14,
+            // ci7 =indices[0][4]=7 -> asym[1][4]=8
+            /* 7*/  8,
+            // ci8 =indices[2][1]=8 -> asym[2][1]=22
+            /* 8*/ 22,
+            // ci9 =indices[2][2]=9 -> asym[2][2]=23
+            /* 9*/ 23,
+            // ci10=indices[2][3]=10-> asym[2][3]=24
+            /*10*/ 24,
+            // ci11=indices[2][4]=11-> asym[2][4]=18
+            /*11*/ 18,
+            // ci12=indices[1][1]=12-> asym[0][1]=19
+            /*12*/ 19,
+            // ci13=indices[1][2]=13-> asym[0][2]=20
+            /*13*/ 20,
+            // ci14=indices[1][3]=14-> asym[0][3]=21
+            /*14*/ 21,
+            // ci15=indices[1][4]=15-> asym[0][4]=13
+            /*15*/ 13,
+        };
+        if (ci >= 0 && ci <= 15) ci = remap4to5[ci];
+        logicalCols = ASYM_ATLAS_COLS; // now ci is in 5x5 space
+    } else if (torsoData->isAsymmetric) {
+        logicalCols = ASYM_ATLAS_COLS;
+    }
+
     bool fm;
-    Rectangle src = SrcFromLogical(texture, ci % cols, ci / cols, cols, rows, mir, &fm);
+    Rectangle src = SrcFromLogical(texture, ci % logicalCols, ci / logicalCols, cols, rows, mir, &fm);
     DrawBonetileCustom(texture, camera, src, torsoData->position, (Vector2){torsoData->size, torsoData->size}, rot, fm, "");
 }
 
