@@ -1,12 +1,12 @@
 # Bone Variant TexturePath
 # Expresiones de cabeza
-Head idle data/textures/eld/Head.png
-Head blink data/textures/eld/Head.png
-Head talk_open data/textures/eld/Head.png
-Head talk_closed data/textures/eld/Head.png
-Head happy data/textures/eld/Head.png
-Head sad data/textures/eld/Head.png
-Head angry data/textures/eld/Head.png
+Head idle data/textures/eld/head.png
+Head blink data/textures/eld/head.png
+Head talk_open data/textures/eld/head.png
+Head talk_closed data/textures/eld/head.png
+Head happy data/textures/eld/head.png
+Head sad data/textures/eld/head.png
+Head angry data/textures/eld/head.png
 
 # Puedes añadir variantes de otras partes
 # LWrist idle hil/HandR.png
