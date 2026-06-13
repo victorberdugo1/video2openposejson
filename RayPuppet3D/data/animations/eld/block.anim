@@ -1,0 +1,10 @@
+{
+  "name": "Block",
+  "fps": 60,
+  "start_frame": 0,
+  "end_frame": 62,
+  "loop": true,
+  "events": [
+    {"time": 0.2, "type": "texture", "bone": "Head", "variant": "idle"}
+  ]
+}

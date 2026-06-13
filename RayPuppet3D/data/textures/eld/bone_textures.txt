@@ -25,3 +25,41 @@ LKnee data/textures/eld/shin.png 1 0.13
 RKnee data/textures/eld/shin.png 1 0.13
 LAnkle data/textures/eld/foot.png 1 0.13
 RAnkle data/textures/eld/foot.png 1 0.13
+
+# CLOTH — taparabos (falda abierta por delante)
+# Formato: @CLOTH nombre ancla wTop wBot height offY offX offZ rot colorRGBA physics
+#
+# Tabla de ángulos (personaje mirando +Z):
+#   rot=  0  → panel mira hacia ADELANTE  (+Z)  right apunta a la derecha
+#   rot= 90  → panel mira hacia la DERECHA (+X)  (tu derecha)
+#   rot=180  → panel mira hacia ATRÁS     (-Z)
+#   rot=270  → panel mira hacia la IZQUIERDA (-X)
+#   rot= 45  → diagonal adelante-derecha
+#   rot=135  → diagonal atrás-derecha
+#   rot=225  → diagonal atrás-izquierda
+#   rot=315  → diagonal adelante-izquierda
+#
+#  offsetZ desplaza el panel en la dirección outward (fwd) → siempre hacia afuera del cuerpo
+#  El constraint cilíndrico evita que cualquier vértice se meta dentro del cuerpo
+#  desde cualquier dirección, no solo la frontal.
+#
+#      nombre     ancla wTop	wBot	height	offY	offX	offZ	rot	color	  physics
+@CLOTH LoinBack   Hip	0.05  	0.02	0.19	0.03	0.00	0.06	0.0	2f3e81FF  veryhard
+@CLOTH LoinBLeft   Hip	0.05	0.01	0.15	0.031	0.00	0.06	325.0	2f3e81EF  soft
+@CLOTH LoinBRight  Hip	0.05	0.01	0.15	0.031	0.00	0.06	40.0	2f3e81EF  soft
+@CLOTH LoinLeft   Hip	0.05  	0.02	0.19	0.032	0.00	0.06	290.0	2f3e81FF  veryhard
+@CLOTH LoinRight   Hip	0.05  	0.02	0.19	0.032	0.00	0.06	80.0	2f3e81FF  veryhard
+@CLOTH LoinLeft   Hip	0.02  	0.005	0.19	0.03	0.00	0.06	265.0	2f3e81FF  hard
+@CLOTH LoinRight   Hip	0.02  	0.005	0.19	0.03	0.00	0.06	105.0	2f3e81FF  hard
+#@CLOTH LoinRigth  Hip  0.12 0.17  0.19  0.05 0.00  45   2f3e81FF  veryhard
+#@CLOTH LoinLeft   Hip  0.12 0.17  0.19  0.05 0.00 135   2f3e81FF  veryhard
+#@CLOTH LoinBack   Hip  0.12 0.17  0.19  0.05 0.00 180   2f3e81FF  veryhard
+
+# Ejemplos:
+#@CLOTH SkirtOuter  Hip  0.10 0.28  0.20  0.00  0.00    0   7B2060BB  soft
+#@CLOTH SkirtMid    Hip  0.10 0.24  0.22  -0.01 0.00    0   5C1848AA  soft
+#@CLOTH SkirtPeak   Hip  0.06 0.14  0.26  -0.02 0.00    0   3D1030DD  verysoft
+# Panel lateral derecho
+#@CLOTH SideRight   Hip  0.10 0.18  0.20  0.00  0.05   90   5B2080CC  medium
+# Panel lateral izquierdo
+#@CLOTH SideLeft    Hip  0.10 0.18  0.20  0.00 -0.05  -90   5B2080CC  medium

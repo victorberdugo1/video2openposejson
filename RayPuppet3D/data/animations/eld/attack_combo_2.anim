@@ -1,8 +1,8 @@
 {
-  "name": "suavizada",
-  "fps": 30,
+  "name": "punch_fast",
+  "fps": 60,
   "start_frame": 0,
-  "end_frame": 120,
+  "end_frame": 21,
   "loop": true,
   "events": [
     {"time": 2.0, "type": "texture", "bone": "Head", "variant": "blink"},

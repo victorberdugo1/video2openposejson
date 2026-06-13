@@ -24,6 +24,7 @@
 #define MAX_TEXTURES                64
 #define MAX_RENDER_ITEMS            512
 #define MAX_ORNAMENTS               32
+#define MAX_CLOTH_PANELS            16
 
 #define TORSO_BIAS                  0.001f
 #define BONE_BIAS                   0.0f
@@ -82,6 +83,8 @@ typedef enum {
 } AnimEventType;
 
 typedef enum {
+    PHYSICS_VERYHARD,
+    PHYSICS_HARD,
     PHYSICS_STIFF,
     PHYSICS_MEDIUM,
     PHYSICS_SOFT,
@@ -425,6 +428,37 @@ typedef struct {
     bool         loaded;
 } OrnamentSystem;
 
+typedef struct {
+    char    name[MAX_BONE_NAME_LENGTH];
+    char    anchorBoneName[MAX_BONE_NAME_LENGTH];
+    float   width;          // ancho del borde superior
+    float   widthBottom;    // ancho del borde inferior (trapecio si != width)
+    float   height;
+    float   offsetY;        // desplazamiento vertical del borde superior desde ancla
+    float   offsetX;        // desplazamiento lateral del centro del panel (en unidades right del ancla)
+    float   offsetZ;        // desplazamiento en profundidad del panel (en unidades forward del ancla; + = adelante)
+    float   rotationDeg;    // rotación del panel alrededor del eje Y del ancla (0=front,180=back,90=right...)
+    Color   color;
+    OrnamentPhysicsPreset physicsPreset;
+    float   stiffness;
+    float   damping;
+    float   gravityScale;
+    Vector3 topLeft,  topRight;
+    Vector3 botLeft,  botRight;
+    Vector3 prevBotLeft, prevBotRight;
+    Vector3 velBotLeft,  velBotRight;
+    Vector3 panelForward; // normal outward del panel (apunta hacia afuera del cuerpo)
+    bool    initialized;
+    bool    visible;
+    bool    valid;
+} ClothPanel;
+
+typedef struct {
+    ClothPanel panels[MAX_CLOTH_PANELS];
+    int        panelCount;
+    bool       loaded;
+} ClothSystem;
+
 typedef struct AnimatedCharacter {
     BonesAnimation          animation;
     BonesRenderer*          renderer;
@@ -454,6 +488,7 @@ typedef struct AnimatedCharacter {
     AnimationController*    animController;
     TextureSetCollection*   textureSets;
     OrnamentSystem*         ornaments;
+    ClothSystem*            clothPanels;
     SlashTrailSystem        slashTrails;
     Model3DAttachmentSystem model3dAttachments;
     Vector3                 worldPosition;
@@ -649,6 +684,14 @@ static inline void Ornaments_ApplyPreset(BoneOrnament* ornament, OrnamentPhysics
 static inline Vector3 Ornaments_GetAnchorPosition(const AnimationFrame* frame, const char* anchorName);
 static inline BoneOrientation Ornaments_GetAnchorOrientation(const AnimationFrame* frame, const char* anchorName);
 static inline void Ornaments_SolveChainConstraint(BoneOrnament* child, BoneOrnament* parent);
+
+static inline ClothSystem* Cloth_Create(void);
+static inline void Cloth_Free(ClothSystem* sys);
+static inline bool Cloth_LoadFromConfig(ClothSystem* sys, const char* configPath);
+static inline void Cloth_InitializePhysics(ClothSystem* sys, const AnimationFrame* frame);
+static inline void Cloth_UpdatePhysics(ClothSystem* sys, const AnimationFrame* frame, float dt);
+static inline void Cloth_Draw(ClothSystem* sys, Camera camera, Vector3 characterCenter, bool behindOnly, Vector3 worldPos, Matrix worldRot, Vector3 worldPivot);
+static inline Vector3 RotatePointAroundPivot(Vector3 point, Vector3 pivot, Vector3 worldPos, Matrix rotY);
 
 static inline void SlashTrail_InitSystem(SlashTrailSystem* sys);
 static inline void SlashTrail_FreeSystem(SlashTrailSystem* sys);
@@ -3157,6 +3200,35 @@ static void RenderBoneInternal(BonesRenderer* renderer, const BoneRenderData* bo
                                haveNeighbor, neighborPos, bone, bonePerson);
 }
 
+// El sistema de profundidad de bones/cloth es "painter's algorithm": ni los
+// billboards ni los paneles de tela escriben en el depth buffer, así que el
+// orden visual depende solo del orden de dibujado. El cloth se dibuja en dos
+// pasadas (detrás/delante del centro del personaje) usando solo la distancia
+// del centro del panel — una heurística que puede fallar vista desde abajo,
+// dejando manos (LWrist/RWrist) tapadas por un panel "delantero".
+// Para garantizar que las manos sean siempre visibles, se redibujan encima
+// de ambas pasadas de cloth, sin tocar el resto del pipeline de profundidad.
+static inline void RedrawWristsOnTop(BonesRenderer* renderer, BoneRenderData* bones, int boneCount) {
+    if (!renderer || !bones || boneCount <= 0) return;
+
+    bool any = false;
+    for (int i = 0; i < boneCount; i++) {
+        if (bones[i].valid && bones[i].visible && IsWristBone(bones[i].boneName)) { any = true; break; }
+    }
+    if (!any) return;
+
+    BeginBlendMode(BLEND_ALPHA_PREMULTIPLY);
+    rlEnableDepthTest();
+    rlDisableDepthMask();
+    for (int i = 0; i < boneCount; i++) {
+        BoneRenderData* b = &bones[i];
+        if (!b->valid || !b->visible || !IsWristBone(b->boneName)) continue;
+        RenderBoneInternal(renderer, b, b->position, NULL, bones, boneCount);
+    }
+    EndBlendMode();
+    rlEnableDepthMask();
+}
+
 static inline void BonesRenderer_RenderFrame(BonesRenderer* renderer,
         BoneRenderData* bones, int boneCount,
         HeadRenderData* heads, int headCount,
@@ -3264,6 +3336,8 @@ static inline void Ornaments_ApplyPreset(BoneOrnament* ornament, OrnamentPhysics
     if (!ornament) return;
     ornament->physicsPreset = preset;
     switch (preset) {
+        case PHYSICS_VERYHARD: ornament->stiffness = 260.0f; ornament->damping = 0.55f; ornament->gravityScale = 0.003f; break;
+        case PHYSICS_HARD:     ornament->stiffness = 190.0f; ornament->damping = 0.65f; ornament->gravityScale = 0.008f; break;
         case PHYSICS_STIFF:    ornament->stiffness = 100.0f; ornament->damping = 0.95f; ornament->gravityScale = 0.05f; break;
         case PHYSICS_MEDIUM:   ornament->stiffness =  80.0f; ornament->damping = 0.88f; ornament->gravityScale = 0.18f; break;
         case PHYSICS_SOFT:     ornament->stiffness =  60.0f; ornament->damping = 0.82f; ornament->gravityScale = 0.28f; break;
@@ -3309,7 +3383,9 @@ static inline bool Ornaments_LoadFromConfig(OrnamentSystem* system, const char* 
                     orn->chainRestLength = Vector3Length(orn->offsetFromAnchor);
                 }
 
-                if      (strcmp(presetStr, "stiff")    == 0) Ornaments_ApplyPreset(orn, PHYSICS_STIFF);
+                if      (strcmp(presetStr, "veryhard") == 0) Ornaments_ApplyPreset(orn, PHYSICS_VERYHARD);
+                else if (strcmp(presetStr, "hard")     == 0) Ornaments_ApplyPreset(orn, PHYSICS_HARD);
+                else if (strcmp(presetStr, "stiff")    == 0) Ornaments_ApplyPreset(orn, PHYSICS_STIFF);
                 else if (strcmp(presetStr, "medium")   == 0) Ornaments_ApplyPreset(orn, PHYSICS_MEDIUM);
                 else if (strcmp(presetStr, "soft")     == 0) Ornaments_ApplyPreset(orn, PHYSICS_SOFT);
                 else if (strcmp(presetStr, "verysoft") == 0) Ornaments_ApplyPreset(orn, PHYSICS_VERYSOFT);
@@ -3516,6 +3592,319 @@ static inline void Ornaments_CollectForRendering(OrnamentSystem* system,
         rd->orientation.valid = true;
         (*renderBonesCount)++;
     }
+}
+
+// ============================================================
+// ClothSystem — paneles de tela con física Verlet
+// ============================================================
+
+static inline ClothSystem* Cloth_Create(void) {
+    ClothSystem* sys = (ClothSystem*)calloc(1, sizeof(ClothSystem));
+    return sys;
+}
+
+static inline void Cloth_Free(ClothSystem* sys) {
+    free(sys);
+}
+
+static inline bool Cloth_LoadFromConfig(ClothSystem* sys, const char* configPath) {
+    if (!sys || !configPath) return false;
+    char* buf = LoadFileText(configPath);
+    if (!buf) return false;
+
+    const char* lineStart = buf;
+    for (const char* p = buf; *p && sys->panelCount < MAX_CLOTH_PANELS; p++) {
+        if (*p != '\n' && *(p+1) != '\0') continue;
+        int len = (int)(p - lineStart);
+        if (*(p+1) == '\0' && *p != '\n') len++;   // last line no newline
+        if (len > 7 && strncmp(lineStart, "@CLOTH ", 7) == 0) {
+            char line[512];
+            int copyLen = len < 511 ? len : 511;
+            memcpy(line, lineStart, copyLen);
+            line[copyLen] = '\0';
+
+            ClothPanel* cp = &sys->panels[sys->panelCount];
+            memset(cp, 0, sizeof(ClothPanel));
+            char hexColor[16], physStr[16];
+
+            if (sscanf(line, "@CLOTH %63s %63s %f %f %f %f %f %f %f %15s %15s",
+                       cp->name, cp->anchorBoneName,
+                       &cp->width, &cp->widthBottom, &cp->height,
+                       &cp->offsetY, &cp->offsetX, &cp->offsetZ, &cp->rotationDeg,
+                       hexColor, physStr) == 11)
+            {
+                unsigned long rgba = strtoul(hexColor, NULL, 16);
+                cp->color = (Color){
+                    (unsigned char)((rgba >> 24) & 0xFF),
+                    (unsigned char)((rgba >> 16) & 0xFF),
+                    (unsigned char)((rgba >>  8) & 0xFF),
+                    (unsigned char)( rgba        & 0xFF)
+                };
+
+                OrnamentPhysicsPreset pr =
+                    strcmp(physStr, "veryhard") == 0 ? PHYSICS_VERYHARD :
+                    strcmp(physStr, "hard")     == 0 ? PHYSICS_HARD     :
+                    strcmp(physStr, "stiff")    == 0 ? PHYSICS_STIFF   :
+                    strcmp(physStr, "medium")   == 0 ? PHYSICS_MEDIUM  :
+                    strcmp(physStr, "soft")     == 0 ? PHYSICS_SOFT    : PHYSICS_VERYSOFT;
+                cp->physicsPreset = pr;
+
+                BoneOrnament tmp; memset(&tmp, 0, sizeof(BoneOrnament));
+                Ornaments_ApplyPreset(&tmp, pr);
+                cp->stiffness    = tmp.stiffness;
+                cp->damping      = tmp.damping;
+                cp->gravityScale = tmp.gravityScale;
+                cp->visible      = true;
+                cp->valid        = true;
+                sys->panelCount++;
+            }
+        }
+        lineStart = p + 1;
+    }
+
+    UnloadFileText(buf);
+    sys->loaded = (sys->panelCount > 0);
+    return sys->loaded;
+}
+
+static inline void Cloth_InitializePhysics(ClothSystem* sys, const AnimationFrame* frame) {
+    if (!sys || !frame) return;
+    for (int i = 0; i < sys->panelCount; i++) {
+        ClothPanel* cp = &sys->panels[i];
+        if (!cp->valid) continue;
+
+        Vector3 anchor = Ornaments_GetAnchorPosition(frame, cp->anchorBoneName);
+        BoneOrientation ori = Ornaments_GetAnchorOrientation(frame, cp->anchorBoneName);
+        // Eje right del panel: combinación de right/forward del ancla rotada por
+        // rotationDeg dentro del plano horizontal del ancla. Como right y forward
+        // ya reflejan el yaw actual del hueso (cadera, etc.), el panel queda
+        // rígidamente orientado con el ancla en todo momento.
+        Vector3 right;
+        if (ori.valid) {
+            float rad = cp->rotationDeg * DEG2RAD;
+            right = Vector3Add(Vector3Scale(ori.right,   cosf(rad)),
+                                Vector3Scale(ori.forward, sinf(rad)));
+            right = SafeNormalize(right);
+        } else {
+            float rad = cp->rotationDeg * DEG2RAD;
+            right = (Vector3){ cosf(rad), 0.0f, -sinf(rad) };
+        }
+
+        // Centro del borde superior con offset lateral y de profundidad
+        float y = anchor.y + cp->offsetY;
+
+        // forward del panel = perpendicular a right en el plano horizontal
+        // rotado igual que right: apunta "hacia afuera" del cuerpo según rotationDeg
+        Vector3 fwd;
+        if (ori.valid) {
+            float rad = cp->rotationDeg * DEG2RAD;
+            fwd = Vector3Add(Vector3Scale(ori.forward, cosf(rad)),
+                             Vector3Scale(Vector3Negate(ori.right), sinf(rad)));
+            fwd = SafeNormalize(fwd);
+        } else {
+            float rad = cp->rotationDeg * DEG2RAD;
+            fwd = (Vector3){ sinf(rad), 0.0f, cosf(rad) };
+        }
+        cp->panelForward = fwd;
+
+        Vector3 center = (Vector3){
+            anchor.x + right.x * cp->offsetX + fwd.x * cp->offsetZ,
+            y,
+            anchor.z + right.z * cp->offsetX + fwd.z * cp->offsetZ
+        };
+
+        float halfTop = cp->width       * 0.5f;
+        float halfBot = cp->widthBottom * 0.5f;
+
+        cp->topLeft  = (Vector3){center.x - right.x*halfTop, y,               center.z - right.z*halfTop};
+        cp->topRight = (Vector3){center.x + right.x*halfTop, y,               center.z + right.z*halfTop};
+        cp->botLeft  = (Vector3){center.x - right.x*halfBot, y - cp->height,  center.z - right.z*halfBot};
+        cp->botRight = (Vector3){center.x + right.x*halfBot, y - cp->height,  center.z + right.z*halfBot};
+        cp->prevBotLeft  = cp->botLeft;
+        cp->prevBotRight = cp->botRight;
+        cp->velBotLeft   = (Vector3){0, 0, 0};
+        cp->velBotRight  = (Vector3){0, 0, 0};
+        cp->initialized  = true;
+    }
+}
+
+static inline void Cloth_UpdatePhysics(ClothSystem* sys, const AnimationFrame* frame, float dt) {
+    if (!sys || !frame || dt <= 0.0f) return;
+    if (dt > 0.1f) dt = 0.1f;
+
+    for (int i = 0; i < sys->panelCount; i++) {
+        ClothPanel* cp = &sys->panels[i];
+        if (!cp->valid || !cp->visible) continue;
+        if (!cp->initialized) { Cloth_InitializePhysics(sys, frame); }
+
+        Vector3 anchor = Ornaments_GetAnchorPosition(frame, cp->anchorBoneName);
+        BoneOrientation ori = Ornaments_GetAnchorOrientation(frame, cp->anchorBoneName);
+
+        // Eje right del panel: mismo cálculo que en Cloth_InitializePhysics —
+        // combina right/forward del ancla (que ya incluyen el yaw actual del
+        // hueso) con rotationDeg, así el borde superior gira con el hueso.
+        Vector3 right;
+        if (ori.valid) {
+            float rad = cp->rotationDeg * DEG2RAD;
+            right = Vector3Add(Vector3Scale(ori.right,   cosf(rad)),
+                                Vector3Scale(ori.forward, sinf(rad)));
+            right = SafeNormalize(right);
+        } else {
+            float rad = cp->rotationDeg * DEG2RAD;
+            right = (Vector3){ cosf(rad), 0.0f, -sinf(rad) };
+        }
+
+        float y = anchor.y + cp->offsetY;
+
+        // forward del panel (misma fórmula que en Init)
+        Vector3 fwd;
+        if (ori.valid) {
+            float rad = cp->rotationDeg * DEG2RAD;
+            fwd = Vector3Add(Vector3Scale(ori.forward, cosf(rad)),
+                             Vector3Scale(Vector3Negate(ori.right), sinf(rad)));
+            fwd = SafeNormalize(fwd);
+        } else {
+            float rad = cp->rotationDeg * DEG2RAD;
+            fwd = (Vector3){ sinf(rad), 0.0f, cosf(rad) };
+        }
+        cp->panelForward = fwd;
+
+        Vector3 center = (Vector3){
+            anchor.x + right.x * cp->offsetX + fwd.x * cp->offsetZ,
+            y,
+            anchor.z + right.z * cp->offsetX + fwd.z * cp->offsetZ
+        };
+        float halfTop = cp->width       * 0.5f;
+        float halfBot = cp->widthBottom * 0.5f;
+
+        cp->topLeft  = (Vector3){center.x - right.x*halfTop, y,              center.z - right.z*halfTop};
+        cp->topRight = (Vector3){center.x + right.x*halfTop, y,              center.z + right.z*halfTop};
+
+        Vector3 targetBL = (Vector3){center.x - right.x*halfBot, y - cp->height, center.z - right.z*halfBot};
+        Vector3 targetBR = (Vector3){center.x + right.x*halfBot, y - cp->height, center.z + right.z*halfBot};
+
+        // Verlet botLeft
+        cp->velBotLeft = Vector3Add(cp->velBotLeft,
+            Vector3Scale(Vector3Subtract(targetBL, cp->botLeft), cp->stiffness * dt));
+        cp->velBotLeft = Vector3Add(cp->velBotLeft,
+            Vector3Scale((Vector3){0, -9.8f * cp->gravityScale, 0}, dt));
+        cp->velBotLeft  = Vector3Scale(cp->velBotLeft, cp->damping);
+        cp->prevBotLeft = cp->botLeft;
+        cp->botLeft     = Vector3Add(cp->botLeft, Vector3Scale(cp->velBotLeft, dt));
+
+        // Verlet botRight
+        cp->velBotRight = Vector3Add(cp->velBotRight,
+            Vector3Scale(Vector3Subtract(targetBR, cp->botRight), cp->stiffness * dt));
+        cp->velBotRight = Vector3Add(cp->velBotRight,
+            Vector3Scale((Vector3){0, -9.8f * cp->gravityScale, 0}, dt));
+        cp->velBotRight  = Vector3Scale(cp->velBotRight, cp->damping);
+        cp->prevBotRight = cp->botRight;
+        cp->botRight     = Vector3Add(cp->botRight, Vector3Scale(cp->velBotRight, dt));
+
+        // --- Constraint cilíndrico (todos los lados) ---
+        // Cada vértice bot no puede alejarse lateralmente (en XZ) más de maxRadius
+        // desde su target.  Esto evita que el panel atraviese el cuerpo por cualquier
+        // dirección, no solo por la frontal.
+        //
+        // maxRadius = distancia horizontal entre el target y el ancla horizontal +
+        // un margen extra (swingMargin) para permitir algo de balanceo natural.
+        // Usamos halfBot como radio base (es el semiancho natural del borde inferior).
+        {
+            const float swingMargin = 0.06f; // margen extra de balanceo en unidades mundo
+
+            // botLeft
+            {
+                Vector3 delta = { cp->botLeft.x - targetBL.x, 0.0f, cp->botLeft.z - targetBL.z };
+                float dist2 = delta.x*delta.x + delta.z*delta.z;
+                float maxR  = halfBot + swingMargin;
+                if (dist2 > maxR*maxR && dist2 > 0.00001f) {
+                    float scale = maxR / sqrtf(dist2);
+                    cp->botLeft.x = targetBL.x + delta.x * scale;
+                    cp->botLeft.z = targetBL.z + delta.z * scale;
+                    // cancelar la componente de velocidad que salía del cilindro
+                    Vector3 n = { delta.x / sqrtf(dist2), 0.0f, delta.z / sqrtf(dist2) };
+                    float vDot = cp->velBotLeft.x*n.x + cp->velBotLeft.z*n.z;
+                    if (vDot > 0.0f) {
+                        cp->velBotLeft.x -= n.x * vDot;
+                        cp->velBotLeft.z -= n.z * vDot;
+                    }
+                }
+            }
+            // botRight
+            {
+                Vector3 delta = { cp->botRight.x - targetBR.x, 0.0f, cp->botRight.z - targetBR.z };
+                float dist2 = delta.x*delta.x + delta.z*delta.z;
+                float maxR  = halfBot + swingMargin;
+                if (dist2 > maxR*maxR && dist2 > 0.00001f) {
+                    float scale = maxR / sqrtf(dist2);
+                    cp->botRight.x = targetBR.x + delta.x * scale;
+                    cp->botRight.z = targetBR.z + delta.z * scale;
+                    Vector3 n = { delta.x / sqrtf(dist2), 0.0f, delta.z / sqrtf(dist2) };
+                    float vDot = cp->velBotRight.x*n.x + cp->velBotRight.z*n.z;
+                    if (vDot > 0.0f) {
+                        cp->velBotRight.x -= n.x * vDot;
+                        cp->velBotRight.z -= n.z * vDot;
+                    }
+                }
+            }
+        }
+    }
+}
+
+static inline void Cloth_Draw(ClothSystem* sys, Camera camera, Vector3 characterCenter, bool behindOnly, Vector3 worldPos, Matrix worldRot, Vector3 worldPivot) {
+    if (!sys || !sys->loaded) return;
+
+    // Transforma un vértice local al espacio mundo (igual que RotatePointAroundPivot).
+    #define CLOTH_XFORM(v) Vector3Add(Vector3Add(worldPos, worldPivot), Vector3Transform(Vector3Subtract(v, worldPivot), worldRot))
+
+    float centerDist = Vector3Distance(camera.position, characterCenter);
+
+    rlDisableBackfaceCulling();
+    rlDisableDepthMask();
+
+    for (int i = 0; i < sys->panelCount; i++) {
+        ClothPanel* cp = &sys->panels[i];
+        if (!cp->valid || !cp->visible || !cp->initialized) continue;
+
+        Vector3 tl = CLOTH_XFORM(cp->topLeft);
+        Vector3 tr = CLOTH_XFORM(cp->topRight);
+        Vector3 bl = CLOTH_XFORM(cp->botLeft);
+        Vector3 br = CLOTH_XFORM(cp->botRight);
+
+        Vector3 panelCenter = (Vector3){
+            (tl.x + tr.x + bl.x + br.x) * 0.25f,
+            (tl.y + tr.y + bl.y + br.y) * 0.25f,
+            (tl.z + tr.z + bl.z + br.z) * 0.25f
+        };
+        float panelDist = Vector3Distance(camera.position, panelCenter);
+
+        bool isBehind = (panelDist > centerDist);
+        if (behindOnly != isBehind) continue;
+
+        rlBegin(RL_TRIANGLES);
+            rlColor4ub(cp->color.r, cp->color.g, cp->color.b, cp->color.a);
+            // Front face
+            rlVertex3f(tl.x, tl.y, tl.z);
+            rlVertex3f(tr.x, tr.y, tr.z);
+            rlVertex3f(bl.x, bl.y, bl.z);
+
+            rlVertex3f(tr.x, tr.y, tr.z);
+            rlVertex3f(br.x, br.y, br.z);
+            rlVertex3f(bl.x, bl.y, bl.z);
+            // Back face
+            rlVertex3f(bl.x, bl.y, bl.z);
+            rlVertex3f(tr.x, tr.y, tr.z);
+            rlVertex3f(tl.x, tl.y, tl.z);
+
+            rlVertex3f(bl.x, bl.y, bl.z);
+            rlVertex3f(br.x, br.y, br.z);
+            rlVertex3f(tr.x, tr.y, tr.z);
+        rlEnd();
+    }
+
+    rlEnableDepthMask();
+    rlEnableBackfaceCulling();
+    #undef CLOTH_XFORM
 }
 
 static inline Vector3 SlashTrail__GetBonePos(const AnimationFrame* frame, const char* personId, const char* boneName) {
@@ -4213,6 +4602,10 @@ static inline AnimatedCharacter* CreateAnimatedCharacter(const char* textureConf
     if (textureConfigPath)
         Ornaments_LoadFromConfig(character->ornaments, textureConfigPath);
 
+    character->clothPanels = Cloth_Create();
+    if (textureConfigPath)
+        Cloth_LoadFromConfig(character->clothPanels, textureConfigPath);
+
     SlashTrail_InitSystem(&character->slashTrails);
     Model3D_InitSystem(&character->model3dAttachments);
 
@@ -4232,6 +4625,7 @@ static inline void DestroyAnimatedCharacter(AnimatedCharacter* character) {
     CleanupTextureSystem(&character->textureSystem, &character->boneConfigs, &character->boneConfigCount);
     BonesFree(&character->animation);
     Ornaments_Free(character->ornaments);
+    Cloth_Free(character->clothPanels);
     free(character);
 }
 
@@ -4341,6 +4735,12 @@ static inline void UpdateAnimatedCharacter(AnimatedCharacter* character, float d
         if (!character->ornaments->ornaments[0].initialized)
             Ornaments_InitializePhysics(character->ornaments, frameToUse);
         Ornaments_UpdatePhysics(character->ornaments, frameToUse, deltaTime);
+    }
+
+    if (character->clothPanels && character->clothPanels->loaded && frameToUse && frameToUse->valid) {
+        if (!character->clothPanels->panels[0].initialized)
+            Cloth_InitializePhysics(character->clothPanels, frameToUse);
+        Cloth_UpdatePhysics(character->clothPanels, frameToUse, deltaTime);
     }
 
     if (!usingTransition && character->animController && character->animController->currentClipIndex >= 0) {
@@ -4572,11 +4972,24 @@ static inline void DrawAnimatedCharacterTransformed(AnimatedCharacter* character
     DrawModel3DWithDepthOrder(&character->model3dAttachments, rf, pid,
         character->worldPosition, character->worldPivot, rot, true, camera, transformedCenter, true);
 
+    if (character->clothPanels && character->clothPanels->loaded) {
+        BeginMode3D(camera);
+        Cloth_Draw(character->clothPanels, camera, transformedCenter, true,  character->worldPosition, MatrixRotateY(character->worldRotation), character->worldPivot);
+        EndMode3D();
+    }
+
     BonesRenderer_RenderFrame(character->renderer,
         bonesCopy  ? bonesCopy  : character->renderBones,  bc,
         headsCopy  ? headsCopy  : character->renderHeads,   hc,
         torsosCopy ? torsosCopy : character->renderTorsos, tc,
         transformedCenter, character->autoCenterCalculated);
+
+    if (character->clothPanels && character->clothPanels->loaded) {
+        BeginMode3D(camera);
+        Cloth_Draw(character->clothPanels, camera, transformedCenter, false, character->worldPosition, MatrixRotateY(character->worldRotation), character->worldPivot);
+        RedrawWristsOnTop(character->renderer, bonesCopy ? bonesCopy : character->renderBones, bc);
+        EndMode3D();
+    }
 
     DrawModel3DWithDepthOrder(&character->model3dAttachments, rf, pid,
         character->worldPosition, character->worldPivot, rot, true, camera, transformedCenter, false);
@@ -4700,6 +5113,8 @@ static inline void DrawAnimatedCharacter(AnimatedCharacter* character, Camera ca
     if (!character || !character->animation.isLoaded) return;
     character->renderer->camera = camera;
 
+
+
     const AnimationFrame* rf  = NULL;
     const char*           pid = "";
     if (character->currentFrame >= 0 && character->currentFrame < character->animation.frameCount) {
@@ -4727,11 +5142,24 @@ static inline void DrawAnimatedCharacter(AnimatedCharacter* character, Camera ca
         rlEnableDepthTest(); EndMode3D();
     }
 
+    if (character->clothPanels && character->clothPanels->loaded) {
+        BeginMode3D(camera);
+        Cloth_Draw(character->clothPanels, camera, character->autoCenter, true,  (Vector3){0,0,0}, MatrixIdentity(), (Vector3){0,0,0});
+        EndMode3D();
+    }
+
     BonesRenderer_RenderFrame(character->renderer,
         character->renderBones,  character->renderBonesCount,
         character->renderHeads,  character->renderHeadsCount,
         character->renderTorsos, character->renderTorsosCount,
         character->autoCenter, character->autoCenterCalculated);
+
+    if (character->clothPanels && character->clothPanels->loaded) {
+        BeginMode3D(camera);
+        Cloth_Draw(character->clothPanels, camera, character->autoCenter, false, (Vector3){0,0,0}, MatrixIdentity(), (Vector3){0,0,0});
+        RedrawWristsOnTop(character->renderer, character->renderBones, character->renderBonesCount);
+        EndMode3D();
+    }
 
     if (hasVisibleModel && modelDist <= charDist) {
         BeginMode3D(camera); rlDisableDepthTest();
