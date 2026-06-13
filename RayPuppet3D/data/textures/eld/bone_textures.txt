@@ -49,11 +49,18 @@ RAnkle data/textures/eld/foot.png 1 0.13
 @CLOTH LoinBRight  Hip	0.05	0.01	0.15	0.031	0.00	0.06	40.0	2f3e81EF  soft
 @CLOTH LoinLeft   Hip	0.05  	0.02	0.19	0.032	0.00	0.06	290.0	2f3e81FF  veryhard
 @CLOTH LoinRight   Hip	0.05  	0.02	0.19	0.032	0.00	0.06	80.0	2f3e81FF  veryhard
-@CLOTH LoinLeft   Hip	0.02  	0.005	0.19	0.03	0.00	0.06	265.0	2f3e81FF  hard
-@CLOTH LoinRight   Hip	0.02  	0.005	0.19	0.03	0.00	0.06	105.0	2f3e81FF  hard
-#@CLOTH LoinRigth  Hip  0.12 0.17  0.19  0.05 0.00  45   2f3e81FF  veryhard
-#@CLOTH LoinLeft   Hip  0.12 0.17  0.19  0.05 0.00 135   2f3e81FF  veryhard
-#@CLOTH LoinBack   Hip  0.12 0.17  0.19  0.05 0.00 180   2f3e81FF  veryhard
+@CLOTH LoLeft   Hip	0.02  	0.005	0.19	0.03	0.00	0.06	265.0	2f3e81FF  hard
+@CLOTH LoRight   Hip	0.02  	0.005	0.19	0.03	0.00	0.06	105.0	2f3e81FF  hard
+@CLOTH LBack1   Hip	0.03  	0.02	0.03	0.031	0.00	0.063	0.0	fcb235FF  veryhard
+@CLOTH LBack2   Hip	0.02  	0.01	0.02	0.028	0.00	0.064	0.0	fae572FF  veryhard
+@CLOTH LBLeft1   Hip	0.03  	0.02	0.03	0.031	0.00	0.063	325.0	fcb235FF  veryhard
+@CLOTH LBLeft2   Hip	0.02  	0.01	0.02	0.028	0.00	0.064	325.0	fae572FF  veryhard
+@CLOTH LBRight1   Hip	0.03  	0.02	0.03	0.031	0.00	0.063	40.0	fcb235FF  veryhard
+@CLOTH LBRight2   Hip	0.02  	0.01	0.02	0.028	0.00	0.064	40.0	fae572FF  veryhard
+@CLOTH LoLeft1   Hip	0.03  	0.02	0.03	0.031	0.00	0.063	290.0	fcb235FF  veryhard
+@CLOTH LoLeft2   Hip	0.02  	0.01	0.02	0.028	0.00	0.064	290.0	fae572FF  veryhard
+@CLOTH LoRight1   Hip	0.03  	0.02	0.03	0.031	0.00	0.063	80.0	fcb235FF  veryhard
+@CLOTH LoRight2   Hip	0.02  	0.01	0.02	0.028	0.00	0.064	80.0	fae572FF  veryhard
 
 # Ejemplos:
 #@CLOTH SkirtOuter  Hip  0.10 0.28  0.20  0.00  0.00    0   7B2060BB  soft

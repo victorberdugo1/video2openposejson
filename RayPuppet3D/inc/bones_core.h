@@ -24,7 +24,7 @@
 #define MAX_TEXTURES                64
 #define MAX_RENDER_ITEMS            512
 #define MAX_ORNAMENTS               32
-#define MAX_CLOTH_PANELS            16
+#define MAX_CLOTH_PANELS            32
 
 #define TORSO_BIAS                  0.001f
 #define BONE_BIAS                   0.0f
