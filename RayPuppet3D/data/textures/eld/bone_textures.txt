@@ -19,10 +19,10 @@ RElbow data/textures/eld/forearm.png 1 0.13
 LWrist data/textures/eld/hand.png 2 0.05
 RWrist data/textures/eld/hand.png 2 0.05
 Hip data/textures/eld/hip.png 1 0.15
-LHip data/textures/eld/leg.png 1 0.15
-RHip data/textures/eld/leg.png 1 0.15
-LKnee data/textures/eld/shin.png 1 0.13
-RKnee data/textures/eld/shin.png 1 0.13
+LHip data/textures/eld/leg.png 1 0.18
+RHip data/textures/eld/leg.png 1 0.18
+LKnee data/textures/eld/shin.png 1 0.18
+RKnee data/textures/eld/shin.png 1 0.18
 LAnkle data/textures/eld/foot.png 1 0.13
 RAnkle data/textures/eld/foot.png 1 0.13
 
@@ -57,10 +57,10 @@ RAnkle data/textures/eld/foot.png 1 0.13
 @CLOTH LBLeft2   Hip	0.02  	0.01	0.02	0.028	0.00	0.064	325.0	fae572FF  veryhard
 @CLOTH LBRight1   Hip	0.03  	0.02	0.03	0.031	0.00	0.063	40.0	fcb235FF  veryhard
 @CLOTH LBRight2   Hip	0.02  	0.01	0.02	0.028	0.00	0.064	40.0	fae572FF  veryhard
-@CLOTH LoLeft1   Hip	0.03  	0.02	0.03	0.031	0.00	0.063	290.0	fcb235FF  veryhard
-@CLOTH LoLeft2   Hip	0.02  	0.01	0.02	0.028	0.00	0.064	290.0	fae572FF  veryhard
-@CLOTH LoRight1   Hip	0.03  	0.02	0.03	0.031	0.00	0.063	80.0	fcb235FF  veryhard
-@CLOTH LoRight2   Hip	0.02  	0.01	0.02	0.028	0.00	0.064	80.0	fae572FF  veryhard
+@CLOTH LoLeft1   Hip	0.03  	0.02	0.03	0.031	0.00	0.065	275.0	fcb235FF  veryhard
+@CLOTH LoLeft2   Hip	0.02  	0.01	0.02	0.028	0.00	0.066	275.0	fae572FF  veryhard
+@CLOTH LoRight1   Hip	0.03  	0.02	0.03	0.031	0.00	0.065	100.0	fcb235FF  veryhard
+@CLOTH LoRight2   Hip	0.02  	0.01	0.02	0.028	0.00	0.066	100.0	fae572FF  veryhard
 
 # Ejemplos:
 #@CLOTH SkirtOuter  Hip  0.10 0.28  0.20  0.00  0.00    0   7B2060BB  soft

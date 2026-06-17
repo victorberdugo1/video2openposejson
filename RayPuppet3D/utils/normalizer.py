@@ -499,10 +499,14 @@ def calculate_center(points_dict):
 def ground_and_center_animation(animation_data, verbose=False):
     """
     Posiciona la animación con los tobillos en el suelo y centrada.
-    Aplica a todos los frames manteniendo la forma original.
+    
+    Cambio respecto a la versión original: X y Z se centran usando las caderas
+    (LHip/RHip) en vez de min/max de todos los joints. Esto evita que los pies
+    (que se separan mucho en Z/X durante el caminar) arrastren la cabeza y el 
+    tronco al centrar, eliminando la deriva de cabeza entre frames.
     """
     if verbose:
-        print("📍 Posicionando en suelo y centrando...")
+        print("📍 Posicionando en suelo y centrando (por caderas)...")
     
     grounded_animation = {}
     
@@ -510,7 +514,7 @@ def ground_and_center_animation(animation_data, verbose=False):
         grounded_frame = {}
         
         for person_id, person_data in frame_data.items():
-            # Encontrar la Y más alta de los tobillos (que será el suelo)
+            # --- Y: anclar tobillo más bajo al suelo ---
             ankle_y_values = []
             if 'LAnkle' in person_data:
                 ankle_y_values.append(person_data['LAnkle']['y'])
@@ -524,49 +528,49 @@ def ground_and_center_animation(animation_data, verbose=False):
                 continue
             
             # En el sistema, Y está invertido (0=arriba, 1=abajo)
-            # Queremos que el tobillo más bajo (mayor Y) esté en y=1.0
             max_ankle_y = max(ankle_y_values)
-            
-            # Calcular el offset necesario para poner los tobillos en y=1.0
             y_offset = 1.0 - max_ankle_y
             
-            # Encontrar el centro en X y Z
-            x_values = []
-            z_values = []
-            for joint_name, joint_data in person_data.items():
-                if isinstance(joint_data, dict) and 'x' in joint_data:
-                    x_values.append(joint_data['x'])
-                    z_values.append(joint_data['z'])
+            # --- X/Z: centrar usando caderas (estables durante el caminar) ---
+            # Las caderas se mueven poco en X/Z vs los pies, evitando que el
+            # movimiento de los pies desplace toda la figura lateralmente.
+            hip_x = []
+            hip_z = []
+            for hip in ('LHip', 'RHip'):
+                if hip in person_data:
+                    hip_x.append(person_data[hip]['x'])
+                    hip_z.append(person_data[hip]['z'])
             
-            if not x_values:
-                grounded_frame[person_id] = person_data
-                continue
+            if hip_x:
+                center_x = sum(hip_x) / len(hip_x)
+                center_z = sum(hip_z) / len(hip_z)
+            else:
+                # Fallback: min/max de todos los joints (comportamiento original)
+                x_values = [j['x'] for j in person_data.values() if isinstance(j, dict) and 'x' in j]
+                z_values = [j['z'] for j in person_data.values() if isinstance(j, dict) and 'z' in j]
+                if not x_values:
+                    grounded_frame[person_id] = person_data
+                    continue
+                center_x = (min(x_values) + max(x_values)) / 2.0
+                center_z = (min(z_values) + max(z_values)) / 2.0
             
-            # Calcular centro
-            center_x = (min(x_values) + max(x_values)) / 2.0
-            center_z = (min(z_values) + max(z_values)) / 2.0
-            
-            # Calcular offsets para centrar en (0.5, 0.5)
             x_offset = 0.5 - center_x
             z_offset = 0.5 - center_z
             
-            # Aplicar offsets a todos los huesos
+            # --- Aplicar offsets a todos los joints ---
             grounded_person = {}
             for joint_name, joint_data in person_data.items():
-                grounded_joint = {}
-                
                 if isinstance(joint_data, dict) and 'x' in joint_data:
-                    grounded_joint['x'] = joint_data['x'] + x_offset
-                    grounded_joint['y'] = joint_data['y'] + y_offset
-                    grounded_joint['z'] = joint_data['z'] + z_offset
-                    
-                    # Preservar otros campos
+                    grounded_joint = {
+                        'x': joint_data['x'] + x_offset,
+                        'y': joint_data['y'] + y_offset,
+                        'z': joint_data['z'] + z_offset,
+                    }
                     for key, value in joint_data.items():
                         if key not in ['x', 'y', 'z']:
                             grounded_joint[key] = value
                 else:
                     grounded_joint = joint_data
-                
                 grounded_person[joint_name] = grounded_joint
             
             grounded_frame[person_id] = grounded_person
@@ -574,8 +578,8 @@ def ground_and_center_animation(animation_data, verbose=False):
             if verbose and frame_name == list(animation_data.keys())[0]:
                 print(f"   Primer frame ({frame_name}/{person_id}):")
                 print(f"     Y offset: {y_offset:+.6f} (tobillos al suelo)")
-                print(f"     X offset: {x_offset:+.6f} (centrado)")
-                print(f"     Z offset: {z_offset:+.6f} (centrado)")
+                print(f"     X offset: {x_offset:+.6f} (caderas centradas)")
+                print(f"     Z offset: {z_offset:+.6f} (caderas centradas)")
                 if 'LAnkle' in grounded_person:
                     print(f"     LAnkle Y final: {grounded_person['LAnkle']['y']:.6f}")
                 if 'RAnkle' in grounded_person:

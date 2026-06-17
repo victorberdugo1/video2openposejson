@@ -3,32 +3,36 @@
 # Path a la hiltura
 # Visible: 1=si, 0=no
 # Size: tamaño del billboard (0.1-1.0)
-
+1
 Nose NULL 0 0.25
-Head data/textures/hil/Head.png 1 0.131
+Head data/textures/hil/head.png 1 0.131
 LEye NULL 0 0.20
 REye NULL 0 0.20
 LEar NULLg 0 0.15
 REar NULLg 0 0.15
-Neck data/textures/hil/Neck.png 1 0.1
-LShoulder data/textures/hil/Arm.png 1 0.13
-RShoulder data/textures/hil/Arm.png 1 0.13
-Chest data/textures/hil/Chest.png 1 0.19
-LElbow data/textures/hil/Forearm.png 1 0.13
-RElbow data/textures/hil/Forearm.png 1 0.13
-LWrist data/textures/hil/Hand.png 1 0.1
-RWrist data/textures/hil/Hand.png 1 0.1
-Hip data/textures/hil/Hip.png 1 0.17
-LHip data/textures/hil/Leg.png 1 0.15
-RHip data/textures/hil/Leg.png 1 0.15
-LKnee data/textures/hil/Shin.png 1 0.13
-RKnee data/textures/hil/Shin.png 1 0.13
-LAnkle data/textures/hil/Foot.png 1 0.13 
-RAnkle data/textures/hil/Foot.png 1 0.13 
+Neck data/textures/hil/neck.png 1 0.075
+LShoulder data/textures/hil/arm.png 1 0.13
+RShoulder data/textures/hil/arm.png 1 0.13
+Chest data/textures/hil/chest.png 1 0.2
+LElbow data/textures/hil/forearm.png 1 0.13
+RElbow data/textures/hil/forearm.png 1 0.13
+LWrist data/textures/hil/hand.png 1 0.055S1
+RWrist data/textures/hil/hand.png 1 0.055
+Hip data/textures/hil/hip.png 1 0.17
+LHip data/textures/hil/leg.png 1 0.22
+RHip data/textures/hil/leg.png 1 0.22
+LKnee data/textures/hil/shin.png 1 0.22
+RKnee data/textures/hil/shin.png 1 0.22
+LAnkle data/textures/hil/foot.png 1 0.14 
+RAnkle data/textures/hil/foot.png 1 0.14 
 
 # ORNAMENTOS - Nueva
-@HairBack Head 0.0,-0.01,-0.1 data/textures/hil/HairBack.png 1 0.20 - stiff
-@HairTip HairBack 0.0,-0.08,-0.03 data/textures/hil/HairTip.png 1 0.18 @HairBack medium 
+# @HairBack Head 0.0,-0.01,-0.1 data/textures/hil/HairBack.png 1 0.20 - stiff
+# @HairTip HairBack 0.0,-0.08,-0.03 data/textures/hil/HairTip.png 1 0.18 @HairBack medium 
 # @TailBase Hip 0.0,-0.05,-0.1 data/textures/hil/Tail.png 1 0.15 - medium
 # @TailMid TailBase 0.0,-0.12,0.0 data/textures/hil/Tail.png 1 0.14 @TailBase soft
 # @TailTip TailMid 0.0,-0.12,0.0 data/textures/hil/TailTip.png 1 0.12 @TailMid verysoft
+
+#type	    nombre ancla wTop	wBot	height	offY	offX	offZ	rot	color	 physics ScurveDepth	color2
+@WAISTCLOTH Loin   Hip	 0.11	0.35	0.38	0.038	0.00	0.00	0.0	5d3487FF medium  0.05		fff7dfFF
+@WAISTCLOTH Loin2   Hip	 0.12	0.3	0.055	0.048	0.00	0.01	0.0	ffd93dFF medium  0.05		fed04bFF

@@ -25,6 +25,9 @@
 #define MAX_RENDER_ITEMS            512
 #define MAX_ORNAMENTS               32
 #define MAX_CLOTH_PANELS            32
+#define MAX_WAIST_CLOTHS            8
+#define WAIST_CLOTH_COLS            8   /* 7 polígonos → 8 vértices */
+#define WAIST_CLOTH_ROWS            12  /* más filas = más resolución vertical cerca de rodilla/tobillo, donde más rápido se mueve la pierna */
 
 #define TORSO_BIAS                  0.001f
 #define BONE_BIAS                   0.0f
@@ -46,6 +49,12 @@
 #define CHEST_FALLBACK_Y            -0.08f
 #define HIP_OFFSET_Y                -0.02f
 #define CHEST_SIDE_TILT_DEG         -10.0f
+
+/* Radio de las cápsulas de colisión usadas para evitar que CLOTH/WAISTCLOTH
+   atraviesen las piernas. Ajusta este valor al grosor real del muslo/pantorrilla
+   de tu personaje (en las mismas unidades que el resto del esqueleto). */
+#define CLOTH_LEG_COLLISION_RADIUS  0.06f
+#define CLOTH_COLLISION_PUSH_MARGIN 0.005f /* pequeño margen extra para evitar z-fighting justo en la superficie */
 
 #define SLASH_TRAIL_MAX_SEGMENTS    64
 #define SLASH_TRAIL_MAX_ACTIVE      8
@@ -459,6 +468,54 @@ typedef struct {
     bool       loaded;
 } ClothSystem;
 
+/* ── WaistCloth: malla continua WAIST_CLOTH_COLS×WAIST_CLOTH_ROWS (7×7 polígonos) ── */
+#define WC_V (WAIST_CLOTH_COLS * WAIST_CLOTH_ROWS)   /* 64 vértices */
+
+typedef struct {
+    char                  name[MAX_BONE_NAME_LENGTH];
+    char                  anchorBoneName[MAX_BONE_NAME_LENGTH];
+    float                 width;          /* ancho total en la fila superior */
+    float                 widthBottom;    /* ancho total en la fila inferior */
+    float                 height;         /* altura total */
+    float                 offsetY;        /* offset vertical desde ancla */
+    float                 offsetX;        /* offset lateral desde ancla */
+    float                 offsetZ;        /* offset profundidad desde ancla */
+    float                 rotationDeg;    /* rotación del plano del mesh alrededor Y del ancla */
+    float                 curveDepth;     /* profundidad del arco elíptico (0 = plano, >0 = envuelve hacia atrás en el centro) */
+    Color                 color;          /* color de la cara exterior (la que mira hacia afuera del cuerpo) */
+    Color                 colorInside;    /* color de la cara interior (la que mira hacia el cuerpo). Si no se especifica en la config, es igual a 'color'. */
+    OrnamentPhysicsPreset physicsPreset;
+    float                 stiffness;
+    float                 damping;
+    float                 gravityScale;
+    float                 bodyScale;      /* factor detectado: 1.0 = esqueleto en metros reales; <1.0 = esqueleto en coordenadas normalizadas u otra escala más pequeña */
+
+    /* posiciones del mesh — fila 0 = top, fila ROWS-1 = bottom */
+    Vector3 pos[WC_V];
+    Vector3 vel[WC_V];
+    Vector3 prev[WC_V];
+
+    /* Cache de la pose de piernas del frame anterior, usada para interpolar
+       (swept capsule) la posición de la pierna dentro de cada sub-step de
+       integración. Sin esto, una pierna que recorre un ángulo grande entre
+       dos frames de animación (carrera, ataque, fps bajo) solo es chequeada
+       contra su posición final del frame, y puede "saltarse" la cápsula de
+       colisión en el camino, dejando la pierna visualmente atravesando el
+       cloth durante ese tramo. */
+    Vector3 prevLHip, prevRHip, prevLKnee, prevRKnee, prevLAnkle, prevRAnkle;
+    bool    hasPrevLegPose;
+
+    bool initialized;
+    bool visible;
+    bool valid;
+} WaistCloth;
+
+typedef struct {
+    WaistCloth cloths[MAX_WAIST_CLOTHS];
+    int        clothCount;
+    bool       loaded;
+} WaistClothSystem;
+
 typedef struct AnimatedCharacter {
     BonesAnimation          animation;
     BonesRenderer*          renderer;
@@ -489,6 +546,7 @@ typedef struct AnimatedCharacter {
     TextureSetCollection*   textureSets;
     OrnamentSystem*         ornaments;
     ClothSystem*            clothPanels;
+    WaistClothSystem*       waistCloths;
     SlashTrailSystem        slashTrails;
     Model3DAttachmentSystem model3dAttachments;
     Vector3                 worldPosition;
@@ -693,6 +751,13 @@ static inline void Cloth_UpdatePhysics(ClothSystem* sys, const AnimationFrame* f
 static inline void Cloth_Draw(ClothSystem* sys, Camera camera, Vector3 characterCenter, bool behindOnly, Vector3 worldPos, Matrix worldRot, Vector3 worldPivot);
 static inline Vector3 RotatePointAroundPivot(Vector3 point, Vector3 pivot, Vector3 worldPos, Matrix rotY);
 
+static inline WaistClothSystem* WaistCloth_Create(void);
+static inline void WaistCloth_Free(WaistClothSystem* sys);
+static inline bool WaistCloth_LoadFromConfig(WaistClothSystem* sys, const char* configPath);
+static inline void WaistCloth_InitializePhysics(WaistClothSystem* sys, const AnimationFrame* frame);
+static inline void WaistCloth_UpdatePhysics(WaistClothSystem* sys, const AnimationFrame* frame, float dt);
+static inline void WaistCloth_Draw(WaistClothSystem* sys, Camera camera, Vector3 characterCenter, bool behindOnly, Vector3 worldPos, Matrix worldRot, Vector3 worldPivot);
+
 static inline void SlashTrail_InitSystem(SlashTrailSystem* sys);
 static inline void SlashTrail_FreeSystem(SlashTrailSystem* sys);
 static inline void SlashTrail_Activate(SlashTrailSystem* sys, int slashIndex, const SlashEventConfig* config);
@@ -779,6 +844,7 @@ static inline bool IsSlashActiveForCharacter(const AnimatedCharacter* character)
 static inline Vector3 GetActiveSlashBonePos(const AnimatedCharacter* character, Vector3 fallback);
 static inline void SetAnimationTransitionDuration(AnimatedCharacter* character, float duration);
 static inline bool BonesInterpolateFrames(BonesAnimation* animation, int frameA, int frameB, int framesToAdd);
+static inline bool BonesExpandSparseKeyframes(BonesAnimation* animation);
 static inline bool BonesInsertEmptyFrame(BonesAnimation* animation, int position);
 static inline bool BonesCopyFrame(BonesAnimation* animation, int sourceFrame, int targetFrame);
 static inline void DrawAnimatedCharacter(AnimatedCharacter* character, Camera camera);
@@ -951,6 +1017,7 @@ static inline BonesError BonesLoadFromString(BonesAnimation* animation, const ch
     }
 
     if (animation->frameCount > 0) {
+        BonesExpandSparseKeyframes(animation);
         animation->currentFrame = 0;
         animation->isLoaded     = true;
         return BONES_SUCCESS;
@@ -3595,6 +3662,319 @@ static inline void Ornaments_CollectForRendering(OrnamentSystem* system,
 }
 
 // ============================================================
+// Colisión CLOTH/WAISTCLOTH vs piernas (evita que el paño las atraviese)
+// ============================================================
+
+/* Distancia mínima de 'point' al segmento capA-capB (solo lectura, no
+   corrige nada). Se usa para medir qué tan cerca está un vértice del paño
+   del eje rodilla-tobillo, y así dar prioridad de resolución de colisión
+   a los vértices que de verdad están cerca de esa zona, en vez de basarse
+   en el índice de fila (que no escala bien si el panel tiene más o menos
+   polígonos de los originales). */
+static inline float Cloth__PointToSegmentDistance(Vector3 point, Vector3 segA, Vector3 segB) {
+    Vector3 ab = Vector3Subtract(segB, segA);
+    float   abLenSq = ab.x*ab.x + ab.y*ab.y + ab.z*ab.z;
+    float   t = 0.0f;
+    if (abLenSq > 1e-8f) {
+        Vector3 ap = Vector3Subtract(point, segA);
+        t = (ap.x*ab.x + ap.y*ab.y + ap.z*ab.z) / abLenSq;
+        if (t < 0.0f) t = 0.0f;
+        if (t > 1.0f) t = 1.0f;
+    }
+    Vector3 closest = Vector3Add(segA, Vector3Scale(ab, t));
+    return Vector3Distance(point, closest);
+}
+
+/* Empuja 'point' fuera de la cápsula definida por el segmento capA-capB con
+   radio 'radius', si quedó dentro. Devuelve true si hubo corrección.
+   También anula la componente de 'vel' que apunta hacia dentro de la cápsula,
+   y si se pasa 'prev' lo ajusta a la nueva posición corregida para que el
+   siguiente paso de integración no "recuerde" una posición que estaba dentro
+   de la pierna (lo que generaría velocidad falsa empujando de vuelta hacia
+   dentro en el próximo frame). */
+static inline bool Cloth__ResolveCapsuleCollision(Vector3* point, Vector3* vel, Vector3* prev,
+                                                    Vector3 capA, Vector3 capB, float radius)
+{
+    Vector3 ab  = Vector3Subtract(capB, capA);
+    float   abLenSq = ab.x*ab.x + ab.y*ab.y + ab.z*ab.z;
+    float   t = 0.0f;
+    if (abLenSq > 1e-8f) {
+        Vector3 ap = Vector3Subtract(*point, capA);
+        t = (ap.x*ab.x + ap.y*ab.y + ap.z*ab.z) / abLenSq;
+        if (t < 0.0f) t = 0.0f;
+        if (t > 1.0f) t = 1.0f;
+    }
+    Vector3 closest = Vector3Add(capA, Vector3Scale(ab, t));
+    Vector3 toPoint = Vector3Subtract(*point, closest);
+    float   dist    = Vector3Length(toPoint);
+
+    float minDist = radius + CLOTH_COLLISION_PUSH_MARGIN;
+
+    /* Caso degenerado: el punto cayó casi exactamente sobre el eje de la cápsula
+       (dist ~ 0). En vez de ignorarlo (lo que dejaría el vértice "dentro" sin
+       corregir, justo el caso de tunneling más visible), lo empujamos en una
+       dirección perpendicular arbitraria pero estable basada en 'ab'. */
+    if (dist < 1e-5f) {
+        Vector3 arbitrary = (fabsf(ab.y) < 0.9f) ? (Vector3){0,1,0} : (Vector3){1,0,0};
+        Vector3 n = SafeNormalize(Vector3CrossProduct(ab, arbitrary));
+        if (Vector3Length(n) < 1e-5f) n = (Vector3){1,0,0};
+        *point = Vector3Add(closest, Vector3Scale(n, minDist));
+        if (prev) *prev = *point;
+        if (vel)  *vel  = (Vector3){0,0,0};
+        return true;
+    }
+
+    if (dist >= minDist) return false; /* fuera de la cápsula */
+
+    Vector3 n = Vector3Scale(toPoint, 1.0f / dist);
+    *point = Vector3Add(closest, Vector3Scale(n, minDist));
+    if (prev) *prev = *point;
+
+    if (vel) {
+        float vDot = vel->x*n.x + vel->y*n.y + vel->z*n.z;
+        if (vDot < 0.0f) { /* solo si la velocidad apunta hacia dentro de la cápsula */
+            vel->x -= n.x * vDot;
+            vel->y -= n.y * vDot;
+            vel->z -= n.z * vDot;
+        }
+    }
+    return true;
+}
+
+/* Aplica colisión contra las cápsulas de ambas piernas (muslo Hip→Knee y
+   pantorrilla Knee→Ankle) usando los nombres de hueso reales del esqueleto.
+
+   El radio de la cápsula NO se toma como una constante absoluta en metros:
+   distintas fuentes de animación usan distintas escalas (un esqueleto real
+   en metros, o coordenadas normalizadas 0..1 tipo MediaPipe/OpenPose donde
+   todo el cuerpo cabe en una caja unitaria). Una constante fija calibrada
+   para metros (p.ej. 0.06) puede ser más ancha que la cadera entera en una
+   animación normalizada, haciendo que las cápsulas de ambas piernas casi se
+   fusionen y dejando que el pie/pantorrilla "se cuele" visualmente en el
+   cloth porque la cápsula ya no representa el grosor real del muslo en esa
+   escala. Para evitarlo, el radio se calcula como una fracción del ancho de
+   cadera (LHip-RHip) de ESE frame, que es una medida proporcional al cuerpo
+   y por tanto válida en cualquier escala. CLOTH_LEG_COLLISION_RADIUS sigue
+   usándose como tope absoluto y como valor de respaldo si no hay caderas
+   válidas en el frame. */
+/* Snapshot de la pose de ambas piernas en un instante dado, usado para
+   interpolar (swept capsule) entre la pose anterior y la actual dentro de
+   los sub-steps de integración del WaistCloth. Evitar volver a llamar a
+   Ornaments_GetAnchorPosition por cada sub-step/vértice/iteración (coste
+   de búsqueda por nombre de hueso repetido) y, sobre todo, permitir
+   construir la cápsula barrida correcta para ese instante intermedio. */
+typedef struct {
+    Vector3 lHip, rHip, lKnee, rKnee, lAnkle, rAnkle;
+    bool    valid;
+} LegPoseSnapshot;
+
+static inline LegPoseSnapshot Cloth__CaptureLegPose(const AnimationFrame* frame) {
+    LegPoseSnapshot s;
+    memset(&s, 0, sizeof(s));
+    if (!frame) return s;
+    s.lHip   = Ornaments_GetAnchorPosition(frame, "LHip");
+    s.rHip   = Ornaments_GetAnchorPosition(frame, "RHip");
+    s.lKnee  = Ornaments_GetAnchorPosition(frame, "LKnee");
+    s.rKnee  = Ornaments_GetAnchorPosition(frame, "RKnee");
+    s.lAnkle = Ornaments_GetAnchorPosition(frame, "LAnkle");
+    s.rAnkle = Ornaments_GetAnchorPosition(frame, "RAnkle");
+    s.valid  = true;
+    return s;
+}
+
+static inline LegPoseSnapshot Cloth__LerpLegPose(const LegPoseSnapshot* a, const LegPoseSnapshot* b, float t) {
+    LegPoseSnapshot out;
+    if (!a->valid) return *b;
+    if (!b->valid) return *a;
+    out.lHip   = Vector3Lerp(a->lHip,   b->lHip,   t);
+    out.rHip   = Vector3Lerp(a->rHip,   b->rHip,   t);
+    out.lKnee  = Vector3Lerp(a->lKnee,  b->lKnee,  t);
+    out.rKnee  = Vector3Lerp(a->rKnee,  b->rKnee,  t);
+    out.lAnkle = Vector3Lerp(a->lAnkle, b->lAnkle, t);
+    out.rAnkle = Vector3Lerp(a->rAnkle, b->rAnkle, t);
+    out.valid  = true;
+    return out;
+}
+
+static inline float Cloth__GetLegCollisionRadiusFromPose(const LegPoseSnapshot* pose) {
+    if (!pose || !pose->valid) return CLOTH_LEG_COLLISION_RADIUS;
+    float hipWidth = Vector3Distance(pose->lHip, pose->rHip);
+    if (hipWidth < 1e-5f) return CLOTH_LEG_COLLISION_RADIUS;
+    float radius = hipWidth * 0.55f;
+    float minR = CLOTH_LEG_COLLISION_RADIUS * 0.15f;
+    float maxR = CLOTH_LEG_COLLISION_RADIUS * 3.0f;
+    if (radius < minR) radius = minR;
+    if (radius > maxR) radius = maxR;
+    return radius;
+}
+
+/* Resuelve colisión contra una cápsula "barrida": en vez de una sola cápsula
+   estática (capA→capB), construye la envolvente de TODAS las cápsulas
+   intermedias entre la pose previa (prevA→prevB) y la pose actual
+   (curA→curB), muestreando varios instantes. Esto es lo que evita el
+   tunneling cuando la pierna recorre un ángulo grande entre dos frames de
+   animación consecutivos (carrera, ataques rápidos, fps bajo o variable):
+   en vez de comprobar solo el punto final del movimiento de la pierna,
+   se comprueba contra el camino completo que recorrió. */
+static inline bool Cloth__ResolveSweptCapsuleCollisionN(Vector3* point, Vector3* vel, Vector3* prev,
+                                                          Vector3 prevA, Vector3 prevB,
+                                                          Vector3 curA,  Vector3 curB,
+                                                          float radius, int sweepSamples)
+{
+    if (sweepSamples < 1) sweepSamples = 1;
+    bool any = false;
+    for (int s = 0; s <= sweepSamples; s++) {
+        float t = (float)s / (float)sweepSamples;
+        Vector3 capA = Vector3Lerp(prevA, curA, t);
+        Vector3 capB = Vector3Lerp(prevB, curB, t);
+        if (Cloth__ResolveCapsuleCollision(point, vel, prev, capA, capB, radius)) any = true;
+    }
+    /* Asegurar que el resultado final queda fuera de la cápsula EXACTA del
+       frame actual (último instante), que es la que importa visualmente
+       este frame. */
+    if (Cloth__ResolveCapsuleCollision(point, vel, prev, curA, curB, radius)) any = true;
+    return any;
+}
+
+static inline bool Cloth__ResolveSweptCapsuleCollision(Vector3* point, Vector3* vel, Vector3* prev,
+                                                         Vector3 prevA, Vector3 prevB,
+                                                         Vector3 curA,  Vector3 curB,
+                                                         float radius)
+{
+    return Cloth__ResolveSweptCapsuleCollisionN(point, vel, prev, prevA, prevB, curA, curB, radius, 4);
+}
+
+static inline void Cloth__ResolveLegCollisionsSwept(Vector3* point, Vector3* vel, Vector3* prev,
+                                                      const LegPoseSnapshot* prevPose,
+                                                      const LegPoseSnapshot* curPose)
+{
+    if (!curPose || !curPose->valid) return;
+    const LegPoseSnapshot* pp = (prevPose && prevPose->valid) ? prevPose : curPose;
+
+    float legRadius = Cloth__GetLegCollisionRadiusFromPose(curPose);
+
+    /* Muslo (Hip→Knee): segmento más largo y de giro más lento, el barrido
+       estándar (5 muestras) es suficiente. */
+    Cloth__ResolveSweptCapsuleCollision(point, vel, prev, pp->lHip,  pp->lKnee,  curPose->lHip,  curPose->lKnee,  legRadius);
+    Cloth__ResolveSweptCapsuleCollision(point, vel, prev, pp->rHip,  pp->rKnee,  curPose->rHip,  curPose->rKnee,  legRadius);
+
+    /* Pantorrilla (Knee→Ankle): es el tramo que más rápido cambia de ángulo
+       (flexión de rodilla al caminar/correr/patear) y el más cercano al
+       borde inferior del paño, que es justo donde se reporta el clipping.
+       Usar más muestras de barrido aquí (no en el muslo, para no gastar
+       coste de más donde no hace falta) reduce el hueco entre dos posiciones
+       de cápsula consecutivas, atrapando mejor el tránsito rápido del
+       tobillo/pie por esa zona. */
+    Cloth__ResolveSweptCapsuleCollisionN(point, vel, prev, pp->lKnee, pp->lAnkle, curPose->lKnee, curPose->lAnkle, legRadius * 0.85f, 8);
+    Cloth__ResolveSweptCapsuleCollisionN(point, vel, prev, pp->rKnee, pp->rAnkle, curPose->rKnee, curPose->rAnkle, legRadius * 0.85f, 8);
+}
+
+static inline float Cloth__GetLegCollisionRadius(const AnimationFrame* frame) {
+    Vector3 lHip = Ornaments_GetAnchorPosition(frame, "LHip");
+    Vector3 rHip = Ornaments_GetAnchorPosition(frame, "RHip");
+    float hipWidth = Vector3Distance(lHip, rHip);
+    if (hipWidth < 1e-5f) return CLOTH_LEG_COLLISION_RADIUS;
+
+    /* El muslo (visto desde fuera) suele rondar ~55-65% del ancho de cadera
+       en proporciones humanas típicas; usamos 0.55 para quedar dentro del
+       cuerpo real y no inflar la cápsula más allá de la pierna física. */
+    float radius = hipWidth * 0.55f;
+
+    /* Mantener dentro de un rango razonable respecto al valor de referencia
+       en metros, para no degenerar si el frame trae datos atípicos. */
+    float minR = CLOTH_LEG_COLLISION_RADIUS * 0.15f;
+    float maxR = CLOTH_LEG_COLLISION_RADIUS * 3.0f;
+    if (radius < minR) radius = minR;
+    if (radius > maxR) radius = maxR;
+    return radius;
+}
+
+static inline void Cloth__ResolveLegCollisions(Vector3* point, Vector3* vel, Vector3* prev, const AnimationFrame* frame)
+{
+    if (!frame) return;
+
+    Vector3 lHip   = Ornaments_GetAnchorPosition(frame, "LHip");
+    Vector3 rHip   = Ornaments_GetAnchorPosition(frame, "RHip");
+    Vector3 lKnee  = Ornaments_GetAnchorPosition(frame, "LKnee");
+    Vector3 rKnee  = Ornaments_GetAnchorPosition(frame, "RKnee");
+    Vector3 lAnkle = Ornaments_GetAnchorPosition(frame, "LAnkle");
+    Vector3 rAnkle = Ornaments_GetAnchorPosition(frame, "RAnkle");
+
+    float legRadius = Cloth__GetLegCollisionRadius(frame);
+
+    /* muslos */
+    Cloth__ResolveCapsuleCollision(point, vel, prev, lHip,  lKnee,  legRadius);
+    Cloth__ResolveCapsuleCollision(point, vel, prev, rHip,  rKnee,  legRadius);
+    /* pantorrillas, por si el paño cuelga lo suficiente como para llegar */
+    Cloth__ResolveCapsuleCollision(point, vel, prev, lKnee, lAnkle, legRadius * 0.85f);
+    Cloth__ResolveCapsuleCollision(point, vel, prev, rKnee, rAnkle, legRadius * 0.85f);
+}
+
+/* Variante de Cloth__ResolveLegCollisions para puntos "virtuales" que no
+   tienen velocidad ni posición previa propias (p.ej. el centro de una cara
+   de la malla, calculado como promedio de 4 vértices). Solo corrige la
+   posición y devuelve si hubo alguna corrección, para que el llamador
+   decida cómo repartir ese desplazamiento entre los vértices reales. */
+static inline bool Cloth__ResolveLegCollisions_TestOnly(Vector3* point, const AnimationFrame* frame)
+{
+    if (!frame || !point) return false;
+    Vector3 before = *point;
+
+    Vector3 lHip   = Ornaments_GetAnchorPosition(frame, "LHip");
+    Vector3 rHip   = Ornaments_GetAnchorPosition(frame, "RHip");
+    Vector3 lKnee  = Ornaments_GetAnchorPosition(frame, "LKnee");
+    Vector3 rKnee  = Ornaments_GetAnchorPosition(frame, "RKnee");
+    Vector3 lAnkle = Ornaments_GetAnchorPosition(frame, "LAnkle");
+    Vector3 rAnkle = Ornaments_GetAnchorPosition(frame, "RAnkle");
+
+    float legRadius = Cloth__GetLegCollisionRadius(frame);
+
+    Cloth__ResolveCapsuleCollision(point, NULL, NULL, lHip,  lKnee,  legRadius);
+    Cloth__ResolveCapsuleCollision(point, NULL, NULL, rHip,  rKnee,  legRadius);
+    Cloth__ResolveCapsuleCollision(point, NULL, NULL, lKnee, lAnkle, legRadius * 0.85f);
+    Cloth__ResolveCapsuleCollision(point, NULL, NULL, rKnee, rAnkle, legRadius * 0.85f);
+
+    return (point->x != before.x) || (point->y != before.y) || (point->z != before.z);
+}
+
+/* Los presets de física (stiffness, gravityScale) están calibrados para un
+   esqueleto en METROS reales (p.ej. pierna entera Hip→Ankle ≈ 0.85-0.95m).
+   Si la animación viene en otra escala — coordenadas normalizadas 0..1
+   (MediaPipe/OpenPose), donde la pierna entera mide ~0.3-0.4 unidades en
+   vez de ~0.9m — esos mismos valores de stiffness/gravityScale quedan
+   completamente desproporcionados: el término toRest*stiffness*dt puede
+   superar en magnitud al propio desplazamiento que corrige, y el paño
+   oscila/sobrecorrige en vez de converger suavemente al rest. Cuando eso
+   pasa, son justo las filas más alejadas del ancla (mayor brazo de palanca,
+   mayor amplitud de oscilación) las que más se descontrolan y pueden
+   "saltarse" la cápsula de colisión de pierna entre sub-pasos, dejando que
+   la pierna se vea atravesando el cloth aunque la colisión esté bien
+   calculada en términos de radio.
+
+   Esta función estima un factor de escala comparando la longitud real de
+   la pierna (Hip→Knee→Ankle) de este esqueleto contra una referencia de
+   ~0.9 (pierna adulta típica en metros), y se usa para reescalar
+   stiffness/gravityScale a esa misma referencia antes de cada paso de
+   física, sin que el usuario tenga que tocar el preset en el archivo de
+   configuración. */
+static inline float Cloth__GetBodyScaleFactor(const AnimationFrame* frame) {
+    Vector3 lHip   = Ornaments_GetAnchorPosition(frame, "LHip");
+    Vector3 lKnee  = Ornaments_GetAnchorPosition(frame, "LKnee");
+    Vector3 lAnkle = Ornaments_GetAnchorPosition(frame, "LAnkle");
+
+    float legLen = Vector3Distance(lHip, lKnee) + Vector3Distance(lKnee, lAnkle);
+    if (legLen < 1e-5f) return 1.0f;
+
+    const float REFERENCE_LEG_LENGTH_M = 0.9f; /* pierna adulta típica, Hip->Ankle, en metros */
+    float scale = legLen / REFERENCE_LEG_LENGTH_M;
+
+    /* limitar a un rango razonable para no degenerar con datos atípicos */
+    if (scale < 0.02f) scale = 0.02f;
+    if (scale > 5.0f)  scale = 5.0f;
+    return scale;
+}
+
+// ============================================================
 // ClothSystem — paneles de tela con física Verlet
 // ============================================================
 
@@ -3848,6 +4228,10 @@ static inline void Cloth_UpdatePhysics(ClothSystem* sys, const AnimationFrame* f
                 }
             }
         }
+
+        /* Colisión contra piernas: evita que el panel atraviese los muslos/pantorrillas */
+        Cloth__ResolveLegCollisions(&cp->botLeft,  &cp->velBotLeft,  &cp->prevBotLeft,  frame);
+        Cloth__ResolveLegCollisions(&cp->botRight, &cp->velBotRight, &cp->prevBotRight, frame);
     }
 }
 
@@ -3905,6 +4289,635 @@ static inline void Cloth_Draw(ClothSystem* sys, Camera camera, Vector3 character
     rlEnableDepthMask();
     rlEnableBackfaceCulling();
     #undef CLOTH_XFORM
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   WaistCloth – malla continua 7×7 polígonos (8×8 vértices)
+   Formato en config:
+     @WAISTCLOTH nombre ancla wTop wBot height offY offX offZ rot colorRGBA physics [curveDepth] [colorInsideRGBA]
+   curveDepth es opcional: profundidad del arco elíptico que envuelve la cintura
+   (0 = panel plano, valor típico 0.08–0.15 = envuelve hacia el glúteo). Si se omite,
+   se usa un valor por defecto de DEFAULT_WAIST_CURVE_DEPTH para no romper configs antiguas.
+   colorInsideRGBA es opcional y solo se puede dar si ya se dio curveDepth: color de la
+   cara que mira hacia el cuerpo (interior). Si se omite, usa el mismo color que la cara
+   exterior ('color').
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+#define DEFAULT_WAIST_CURVE_DEPTH   0.10f
+
+static inline WaistClothSystem* WaistCloth_Create(void) {
+    return (WaistClothSystem*)calloc(1, sizeof(WaistClothSystem));
+}
+
+static inline void WaistCloth_Free(WaistClothSystem* sys) {
+    free(sys);
+}
+
+static inline bool WaistCloth_LoadFromConfig(WaistClothSystem* sys, const char* configPath) {
+    if (!sys || !configPath) return false;
+    char* buf = LoadFileText(configPath);
+    if (!buf) return false;
+
+    const char* lineStart = buf;
+    for (const char* p = buf; *p && sys->clothCount < MAX_WAIST_CLOTHS; p++) {
+        if (*p != '\n' && *(p+1) != '\0') continue;
+        int len = (int)(p - lineStart);
+        if (*(p+1) == '\0' && *p != '\n') len++;
+        if (len > 13 && strncmp(lineStart, "@WAISTCLOTH ", 12) == 0) {
+            char line[512];
+            int copyLen = len < 511 ? len : 511;
+            memcpy(line, lineStart, copyLen);
+            line[copyLen] = '\0';
+
+            WaistCloth* wc = &sys->cloths[sys->clothCount];
+            memset(wc, 0, sizeof(WaistCloth));
+            char hexColor[16], physStr[16], hexColorInside[16];
+            float curveDepth = DEFAULT_WAIST_CURVE_DEPTH;
+            hexColorInside[0] = '\0';
+
+            int parsed = sscanf(line, "@WAISTCLOTH %63s %63s %f %f %f %f %f %f %f %15s %15s %f %15s",
+                       wc->name, wc->anchorBoneName,
+                       &wc->width, &wc->widthBottom, &wc->height,
+                       &wc->offsetY, &wc->offsetX, &wc->offsetZ, &wc->rotationDeg,
+                       hexColor, physStr, &curveDepth, hexColorInside);
+
+            if (parsed == 11 || parsed == 12 || parsed == 13)
+            {
+                wc->curveDepth = curveDepth;
+
+                unsigned long rgba = strtoul(hexColor, NULL, 16);
+                wc->color = (Color){
+                    (unsigned char)((rgba >> 24) & 0xFF),
+                    (unsigned char)((rgba >> 16) & 0xFF),
+                    (unsigned char)((rgba >>  8) & 0xFF),
+                    (unsigned char)( rgba        & 0xFF)
+                };
+
+                /* color interior: si no se especifica, igual al exterior */
+                if (parsed == 13 && hexColorInside[0] != '\0') {
+                    unsigned long rgbaIn = strtoul(hexColorInside, NULL, 16);
+                    wc->colorInside = (Color){
+                        (unsigned char)((rgbaIn >> 24) & 0xFF),
+                        (unsigned char)((rgbaIn >> 16) & 0xFF),
+                        (unsigned char)((rgbaIn >>  8) & 0xFF),
+                        (unsigned char)( rgbaIn        & 0xFF)
+                    };
+                } else {
+                    wc->colorInside = wc->color;
+                }
+
+                OrnamentPhysicsPreset pr =
+                    strcmp(physStr, "veryhard") == 0 ? PHYSICS_VERYHARD :
+                    strcmp(physStr, "hard")     == 0 ? PHYSICS_HARD     :
+                    strcmp(physStr, "stiff")    == 0 ? PHYSICS_STIFF    :
+                    strcmp(physStr, "medium")   == 0 ? PHYSICS_MEDIUM   :
+                    strcmp(physStr, "soft")     == 0 ? PHYSICS_SOFT     : PHYSICS_VERYSOFT;
+                wc->physicsPreset = pr;
+
+                BoneOrnament tmp; memset(&tmp, 0, sizeof(BoneOrnament));
+                Ornaments_ApplyPreset(&tmp, pr);
+                wc->stiffness    = tmp.stiffness;
+                wc->damping      = tmp.damping;
+                wc->gravityScale = tmp.gravityScale;
+                wc->visible      = true;
+                wc->valid        = true;
+                sys->clothCount++;
+            }
+        }
+        lineStart = p + 1;
+    }
+
+    UnloadFileText(buf);
+    sys->loaded = (sys->clothCount > 0);
+    return sys->loaded;
+}
+
+/* Calcula la posición REST de cada vértice de la malla.
+   Cada fila (top→bottom) es un arco elíptico en el plano horizontal:
+   los costados (col=0 y col=cols-1) quedan en el plano de offsetZ (pegados al cuerpo
+   a los lados de la cadera), y el centro (col=cols/2, normalmente la zona del glúteo)
+   se proyecta hacia 'fwd' una distancia extra de 'curveDepth', envolviendo la cintura
+   en vez de quedar como un panel plano. */
+static inline void WaistCloth__ComputeRestPositions(WaistCloth* wc,
+                                                     Vector3 anchor,
+                                                     Vector3 right,
+                                                     Vector3 fwd)
+{
+    int cols = WAIST_CLOTH_COLS; /* 8 */
+    int rows = WAIST_CLOTH_ROWS; /* 8 */
+
+    float baseY    = anchor.y + wc->offsetY;
+    float centerX  = anchor.x + right.x * wc->offsetX + fwd.x * wc->offsetZ;
+    float centerZ  = anchor.z + right.z * wc->offsetX + fwd.z * wc->offsetZ;
+
+    for (int row = 0; row < rows; row++) {
+        float t     = (float)row / (float)(rows - 1);   /* 0 = top, 1 = bottom */
+        float halfW = (wc->width * (1.0f - t) + wc->widthBottom * t) * 0.5f;
+        float y     = baseY - wc->height * t;
+
+        for (int col = 0; col < cols; col++) {
+            float s = (float)col / (float)(cols - 1);      /* 0 = left, 1 = right */
+
+            /* ángulo de -90° (costado izq.) a +90° (costado der.), pasando por 0° en el centro */
+            float theta  = (s - 0.5f) * 3.14159265358979323846f;  /* -PI/2 .. +PI/2 */
+            float xOff   = sinf(theta) * halfW;              /* lateral: máximo en costados */
+            float zCurve = (cosf(theta)) * wc->curveDepth;   /* profundidad: máxima en el centro (glúteo) */
+
+            int idx = row * cols + col;
+            wc->pos[idx] = (Vector3){
+                centerX + right.x * xOff + fwd.x * zCurve,
+                y,
+                centerZ + right.z * xOff + fwd.z * zCurve
+            };
+        }
+    }
+}
+
+static inline void WaistCloth_InitializePhysics(WaistClothSystem* sys, const AnimationFrame* frame) {
+    if (!sys || !frame) return;
+
+    LegPoseSnapshot curLegPose = Cloth__CaptureLegPose(frame);
+
+    for (int i = 0; i < sys->clothCount; i++) {
+        WaistCloth* wc = &sys->cloths[i];
+        if (!wc->valid) continue;
+
+        Vector3 anchor = Ornaments_GetAnchorPosition(frame, wc->anchorBoneName);
+        BoneOrientation ori = Ornaments_GetAnchorOrientation(frame, wc->anchorBoneName);
+
+        Vector3 right, fwd;
+        if (ori.valid) {
+            float rad = wc->rotationDeg * DEG2RAD;
+            right = SafeNormalize(Vector3Add(Vector3Scale(ori.right,   cosf(rad)),
+                                             Vector3Scale(ori.forward, sinf(rad))));
+            fwd   = SafeNormalize(Vector3Add(Vector3Scale(ori.forward,          cosf(rad)),
+                                             Vector3Scale(Vector3Negate(ori.right), sinf(rad))));
+        } else {
+            float rad = wc->rotationDeg * DEG2RAD;
+            right = (Vector3){ cosf(rad), 0.0f, -sinf(rad) };
+            fwd   = (Vector3){ sinf(rad), 0.0f,  cosf(rad) };
+        }
+
+        WaistCloth__ComputeRestPositions(wc, anchor, right, fwd);
+
+        wc->bodyScale = Cloth__GetBodyScaleFactor(frame);
+
+        /* inicializar velocidades y posiciones previas */
+        for (int v = 0; v < WC_V; v++) {
+            wc->vel[v]  = (Vector3){0, 0, 0};
+            wc->prev[v] = wc->pos[v];
+        }
+
+        /* Sembrar la cache de pose de piernas con la pose actual (no hay
+           "anterior" real todavía), para que el primer UpdatePhysics no
+           interprete un salto desde (0,0,0) como un movimiento de pierna
+           gigante a barrer. */
+        wc->prevLHip   = curLegPose.lHip;
+        wc->prevRHip   = curLegPose.rHip;
+        wc->prevLKnee  = curLegPose.lKnee;
+        wc->prevRKnee  = curLegPose.rKnee;
+        wc->prevLAnkle = curLegPose.lAnkle;
+        wc->prevRAnkle = curLegPose.rAnkle;
+        wc->hasPrevLegPose = curLegPose.valid;
+
+        wc->initialized = true;
+    }
+}
+
+static inline void WaistCloth_UpdatePhysics(WaistClothSystem* sys, const AnimationFrame* frame, float dt) {
+    if (!sys || !frame || dt <= 0.0f) return;
+    if (dt > 0.1f) dt = 0.1f;
+
+    int cols = WAIST_CLOTH_COLS;
+    int rows = WAIST_CLOTH_ROWS;
+
+    /* Sub-stepping de tiempo fijo: en vez de integrar todo 'dt' de golpe,
+       lo partimos en pasos pequeños y acotados. Esto es lo que de verdad
+       evita el clipping de la pierna durante movimientos rápidos (correr,
+       atacar) o con dt grande/variable: con un solo paso grande, la pierna
+       (vía LegPoseSnapshot interpolada) y el cloth podían "saltar" más
+       distancia de la que la resolución de colisión-por-iteración podía
+       corregir en un frame; con pasos pequeños y la misma cantidad de
+       iteraciones de colisión por paso, cada paso individual es lo bastante
+       chico para que la colisión barrida (swept capsule) lo atrape siempre. */
+    const float FIXED_SUBSTEP = 1.0f / 120.0f;
+    int substeps = (int)ceilf(dt / FIXED_SUBSTEP);
+    if (substeps < 1)  substeps = 1;
+    if (substeps > 12) substeps = 12; /* tope para no degenerar con hitches enormes */
+    float subDt = dt / (float)substeps;
+
+    LegPoseSnapshot curLegPose = Cloth__CaptureLegPose(frame);
+
+    for (int i = 0; i < sys->clothCount; i++) {
+        WaistCloth* wc = &sys->cloths[i];
+        if (!wc->valid || !wc->visible) continue;
+        if (!wc->initialized) { WaistCloth_InitializePhysics(sys, frame); }
+
+        wc->bodyScale = Cloth__GetBodyScaleFactor(frame);
+
+        Vector3 anchor = Ornaments_GetAnchorPosition(frame, wc->anchorBoneName);
+        BoneOrientation ori = Ornaments_GetAnchorOrientation(frame, wc->anchorBoneName);
+
+        Vector3 right, fwd;
+        if (ori.valid) {
+            float rad = wc->rotationDeg * DEG2RAD;
+            right = SafeNormalize(Vector3Add(Vector3Scale(ori.right,   cosf(rad)),
+                                             Vector3Scale(ori.forward, sinf(rad))));
+            fwd   = SafeNormalize(Vector3Add(Vector3Scale(ori.forward,          cosf(rad)),
+                                             Vector3Scale(Vector3Negate(ori.right), sinf(rad))));
+        } else {
+            float rad = wc->rotationDeg * DEG2RAD;
+            right = (Vector3){ cosf(rad), 0.0f, -sinf(rad) };
+            fwd   = (Vector3){ sinf(rad), 0.0f,  cosf(rad) };
+        }
+
+        /* Calcular posiciones rest actuales (misma fórmula de arco elíptico que en
+           WaistCloth__ComputeRestPositions, debe mantenerse sincronizada con ella) */
+        Vector3 rest[WC_V];
+        {
+            float baseY   = anchor.y + wc->offsetY;
+            float centerX = anchor.x + right.x * wc->offsetX + fwd.x * wc->offsetZ;
+            float centerZ = anchor.z + right.z * wc->offsetX + fwd.z * wc->offsetZ;
+            for (int row = 0; row < rows; row++) {
+                float t     = (float)row / (float)(rows - 1);
+                float halfW = (wc->width * (1.0f - t) + wc->widthBottom * t) * 0.5f;
+                float y     = baseY - wc->height * t;
+                for (int col = 0; col < cols; col++) {
+                    float s     = (float)col / (float)(cols - 1);
+                    float theta = (s - 0.5f) * 3.14159265358979323846f;
+                    float xOff   = sinf(theta) * halfW;
+                    float zCurve = cosf(theta) * wc->curveDepth;
+                    int idx = row * cols + col;
+                    rest[idx] = (Vector3){
+                        centerX + right.x * xOff + fwd.x * zCurve,
+                        y,
+                        centerZ + right.z * xOff + fwd.z * zCurve
+                    };
+                }
+            }
+        }
+
+        /* Fila 0 (top) = anclada rígidamente */
+        for (int col = 0; col < cols; col++) {
+            int idx = col; /* row 0 */
+            wc->pos[idx]  = rest[idx];
+            wc->vel[idx]  = (Vector3){0, 0, 0};
+            wc->prev[idx] = rest[idx];
+        }
+
+        LegPoseSnapshot prevLegPose;
+        if (wc->hasPrevLegPose) {
+            prevLegPose.lHip = wc->prevLHip;  prevLegPose.rHip = wc->prevRHip;
+            prevLegPose.lKnee = wc->prevLKnee; prevLegPose.rKnee = wc->prevRKnee;
+            prevLegPose.lAnkle = wc->prevLAnkle; prevLegPose.rAnkle = wc->prevRAnkle;
+            prevLegPose.valid = true;
+        } else {
+            prevLegPose = curLegPose;
+        }
+
+        /* swingMargin debe ser mayor que el radio de colisión de pierna REAL
+           de este frame (no una constante fija en metros), o en esqueletos
+           con escala distinta (p.ej. coordenadas normalizadas 0..1) el
+           constraint cilíndrico de abajo arrastraría el vértice de vuelta
+           dentro de la cápsula que la colisión de pierna acaba de resolver. */
+        float legRadiusForMargin = Cloth__GetLegCollisionRadiusFromPose(&curLegPose);
+        const float swingMargin = legRadiusForMargin + CLOTH_COLLISION_PUSH_MARGIN + 0.02f;
+
+        for (int step = 0; step < substeps; step++) {
+            /* Pose de pierna interpolada para ESTE sub-step concreto: el
+               extremo final del sub-step (tStepEnd) es el que se usa como
+               "posición actual" de la cápsula barrida dentro de este paso,
+               y el extremo inicial (tStepStart) como su "posición previa".
+               Así, aunque el frame de animación cambie de golpe entre dos
+               llamadas a UpdatePhysics, cada sub-step ve solo una fracción
+               pequeña y uniforme de ese cambio. */
+            float tStepStart = (float)step       / (float)substeps;
+            float tStepEnd   = (float)(step + 1) / (float)substeps;
+            LegPoseSnapshot subPrev = Cloth__LerpLegPose(&prevLegPose, &curLegPose, tStepStart);
+            LegPoseSnapshot subCur  = Cloth__LerpLegPose(&prevLegPose, &curLegPose, tStepEnd);
+
+            for (int row = 1; row < rows; row++) {
+                float t = (float)row / (float)(rows - 1);
+                for (int col = 0; col < cols; col++) {
+                    int idx = row * cols + col;
+
+                    /* Spring hacia la posición rest */
+                    Vector3 toRest = Vector3Subtract(rest[idx], wc->pos[idx]);
+                    wc->vel[idx] = Vector3Add(wc->vel[idx],
+                        Vector3Scale(toRest, wc->stiffness * subDt));
+
+                    /* Gravedad */
+                    wc->vel[idx] = Vector3Add(wc->vel[idx],
+                        (Vector3){0.0f, -9.8f * wc->gravityScale * subDt, 0.0f});
+
+                    /* Amortiguación */
+                    wc->vel[idx] = Vector3Scale(wc->vel[idx], wc->damping);
+
+                    /* Integrar posición */
+                    wc->prev[idx] = wc->pos[idx];
+                    wc->pos[idx]  = Vector3Add(wc->pos[idx],
+                        Vector3Scale(wc->vel[idx], subDt));
+
+                    /* Colisión barrida contra piernas ANTES del constraint
+                       cilíndrico: así el constraint de swing parte de una
+                       posición ya empujada fuera de la pierna y no la
+                       vuelve a meter tirando hacia el rest (que no sabe
+                       nada de la pierna). Usa la cápsula interpolada de
+                       este sub-step, no solo la del frame completo, para
+                       atrapar el tránsito intermedio de la pierna. */
+                    Cloth__ResolveLegCollisionsSwept(&wc->pos[idx], &wc->vel[idx], &wc->prev[idx], &subPrev, &subCur);
+
+                    /* Constraint cilíndrico por columna:
+                       no alejarse más que halfW(row) + swingMargin
+                       del rest correspondiente en XZ. swingMargin se mantiene
+                       mayor que el radio de colisión de pierna para que este
+                       constraint nunca "gane" y arrastre el vértice de vuelta
+                       dentro de la cápsula que acabamos de resolver arriba. */
+                    float halfW = (wc->width * (1.0f - t) + wc->widthBottom * t) * 0.5f;
+                    float maxR  = halfW / (float)(cols - 1) + swingMargin;
+                    Vector3 delta = { wc->pos[idx].x - rest[idx].x,
+                                      0.0f,
+                                      wc->pos[idx].z - rest[idx].z };
+                    float dist2 = delta.x*delta.x + delta.z*delta.z;
+                    if (dist2 > maxR*maxR && dist2 > 1e-6f) {
+                        float inv = maxR / sqrtf(dist2);
+                        wc->pos[idx].x = rest[idx].x + delta.x * inv;
+                        wc->pos[idx].z = rest[idx].z + delta.z * inv;
+                        Vector3 n = { delta.x / sqrtf(dist2), 0.0f, delta.z / sqrtf(dist2) };
+                        float vDot = wc->vel[idx].x*n.x + wc->vel[idx].z*n.z;
+                        if (vDot > 0.0f) {
+                            wc->vel[idx].x -= n.x * vDot;
+                            wc->vel[idx].z -= n.z * vDot;
+                        }
+                    }
+
+                    /* Re-resolver colisión una vez más tras el constraint cilíndrico,
+                       por si ese constraint (en personajes con halfW muy pequeño)
+                       alcanzó a reintroducir el vértice dentro de la cápsula. */
+                    Cloth__ResolveLegCollisionsSwept(&wc->pos[idx], &wc->vel[idx], &wc->prev[idx], &subPrev, &subCur);
+                }
+
+                /* Constraint de distancia horizontal entre vértices adyacentes en la fila.
+                   segLen se toma directamente de la distancia real en rest[] (arco elíptico),
+                   no de una cuerda recta, para que el constraint no "aplane" la curva. */
+                for (int col = 0; col < cols - 1; col++) {
+                    int a = row * cols + col;
+                    int b = row * cols + col + 1;
+                    float segLen = Vector3Distance(rest[a], rest[b]);
+                    Vector3 ab  = Vector3Subtract(wc->pos[b], wc->pos[a]);
+                    float   len = Vector3Length(ab);
+                    if (len < 1e-6f) continue;
+                    float diff  = (len - segLen) * 0.5f;
+                    Vector3 corr = Vector3Scale(Vector3Scale(ab, 1.0f / len), diff);
+                    /* vértices de fila 0 están fijos; para otras filas aplicar a ambos */
+                    wc->pos[a] = Vector3Add(wc->pos[a], corr);
+                    wc->pos[b] = Vector3Subtract(wc->pos[b], corr);
+                }
+
+                /* Constraint de distancia vertical entre fila actual y la superior */
+                for (int col = 0; col < cols; col++) {
+                    int above = (row - 1) * cols + col;
+                    int below = row       * cols + col;
+                    float restSegH = wc->height / (float)(rows - 1);
+                    Vector3 ab  = Vector3Subtract(wc->pos[below], wc->pos[above]);
+                    float   len = Vector3Length(ab);
+                    if (len < 1e-6f || len < restSegH * 0.5f) continue;
+                    float diff  = (len - restSegH);
+                    /* solo corregir el vértice inferior (el superior puede estar fijo) */
+                    if (row == 1) {
+                        /* fila superior fija: corregir solo la inferior */
+                        wc->pos[below] = Vector3Subtract(wc->pos[below],
+                            Vector3Scale(Vector3Scale(ab, 1.0f / len), diff));
+                    } else {
+                        Vector3 corr = Vector3Scale(Vector3Scale(ab, 1.0f / len), diff * 0.5f);
+                        wc->pos[below] = Vector3Subtract(wc->pos[below], corr);
+                    }
+                }
+
+                /* Las correcciones de distancia horizontal/vertical de arriba pueden
+                   haber desplazado vértices que ya habían sido sacados de la pierna
+                   de vuelta hacia dentro de la cápsula (porque esos constraints no
+                   conocen la geometría de la pierna). Resolvemos colisión barrida
+                   una vez más para esta fila antes de pasar a la siguiente. */
+                for (int col = 0; col < cols; col++) {
+                    int idx = row * cols + col;
+                    Cloth__ResolveLegCollisionsSwept(&wc->pos[idx], &wc->vel[idx], &wc->prev[idx], &subPrev, &subCur);
+                }
+            }
+
+            /* Colisión barrida contra piernas: aplicar a todos los vértices
+               simulados (fila 0 está fija al ancla y no la necesita). Se
+               hace como paso final de este sub-step, después de los
+               constraints internos del paño. Varias sub-iteraciones (en vez
+               de una sola) porque el spring del paño y la pierna moviéndose
+               rápido pueden "ganarle" a una sola corrección — repetirla
+               varias veces empuja el vértice fuera de la cápsula de forma
+               más firme y evita que la pierna se cuele antes de que la
+               corrección haga efecto. */
+            const int collisionIterations = 4;
+            for (int iter = 0; iter < collisionIterations; iter++) {
+                for (int row = 1; row < rows; row++) {
+                    for (int col = 0; col < cols; col++) {
+                        int idx = row * cols + col;
+                        Cloth__ResolveLegCollisionsSwept(&wc->pos[idx], &wc->vel[idx], &wc->prev[idx], &subPrev, &subCur);
+                    }
+                }
+            }
+
+            /* PRIORIDAD basada en DISTANCIA REAL al segmento rodilla→tobillo
+               (no en índice de fila): así escala automáticamente sin
+               importar cuántas filas/polígonos tenga el panel (si el
+               usuario sube la resolución vertical, este criterio sigue
+               dando prioridad correcta a los vértices que de verdad están
+               cerca del tobillo, en vez de a "la mitad inferior" en
+               abstracto). Los vértices más cercanos al eje rodilla-tobillo
+               son los que tienen más recorrido libre relativo (mayor brazo
+               de palanca desde el ancla) y los que la pierna alcanza
+               primero al flexionar la rodilla o levantar el pie, así que
+               son los más propensos a que la corrección de los constraints
+               horizontales/verticales (que no conocen la geometría de la
+               pierna) los empuje de vuelta dentro de la cápsula DESPUÉS de
+               que ya habían sido resueltos en el bucle general de arriba.
+               Se hace como último paso de todo el sub-step para que ninguna
+               corrección posterior pueda revertirlo. Cada pasada de rechazo
+               de pierna se intercala con un re-clamp del constraint
+               cilíndrico (mismo límite maxR ya calculado para esa fila)
+               para que el empujón de la pierna no deje el vértice "pop"-
+               eando visiblemente más allá del radio de swing normal. */
+            const int NEAR_ANKLE_MAX_PASSES = 7;
+            for (int row = 1; row < rows; row++) {
+                float t = (float)row / (float)(rows - 1);
+                float halfW = (wc->width * (1.0f - t) + wc->widthBottom * t) * 0.5f;
+                /* maxR "ancho" (margen de muslo) — válido solo para
+                   vértices lejos del tobillo. */
+                float maxRWide = halfW / (float)(cols - 1) + swingMargin;
+
+                for (int col = 0; col < cols; col++) {
+                    int idx = row * cols + col;
+
+                    /* Proximidad de ESTE vértice (en su posición actual) al
+                       segmento rodilla→tobillo más cercano (izq. o der.),
+                       normalizada por el radio de colisión de esa pierna:
+                       proximity=1 → está justo sobre el eje del hueso;
+                       proximity=0 → está a 2x el radio o más, lejos. */
+                    float legRadiusAnkle = Cloth__GetLegCollisionRadiusFromPose(&subCur) * 0.85f;
+                    float dL = Cloth__PointToSegmentDistance(wc->pos[idx], subCur.lKnee, subCur.lAnkle);
+                    float dR = Cloth__PointToSegmentDistance(wc->pos[idx], subCur.rKnee, subCur.rAnkle);
+                    float dNear = (dL < dR) ? dL : dR;
+                    float proximity = 1.0f - (dNear / (legRadiusAnkle * 2.0f));
+                    if (proximity < 0.0f) proximity = 0.0f;
+                    if (proximity > 1.0f) proximity = 1.0f;
+                    if (proximity <= 0.0f) continue; /* lejos de tobillo/pantorrilla: ya cubierto arriba */
+
+                    /* BUG ANTERIOR: el re-clamp usaba siempre maxRWide
+                       (basado en el radio de MUSLO, más ancho) incluso para
+                       vértices cerca del tobillo/pantorrilla. Como el
+                       rechazo de pierna del shin usa un radio más estrecho
+                       (legRadius*0.85), el re-clamp con margen de muslo
+                       dejaba sitio de sobra para que, tras retraer el
+                       vértice a maxRWide, este quedara MÁS CERCA del eje del
+                       hueso que el radio real de colisión del shin —
+                       literalmente reintroduciéndolo dentro de la cápsula
+                       que el rechazo anterior acababa de resolver, sin que
+                       quedara ninguna comprobación posterior que lo
+                       corrigiera. Aquí se usa un margen estrecho
+                       (basado en legRadiusAnkle, no en el de muslo) cuando
+                       el vértice está cerca del tobillo, interpolando hacia
+                       el margen ancho cuando está lejos, para no romper el
+                       swing normal del paño en el resto del panel. */
+                    float swingMarginNear = legRadiusAnkle + CLOTH_COLLISION_PUSH_MARGIN + 0.02f;
+                    float maxRNear = halfW / (float)(cols - 1) + swingMarginNear;
+                    float maxR = maxRWide + (maxRNear - maxRWide) * proximity;
+
+                    int extraPasses = 1 + (int)roundf(proximity * (float)(NEAR_ANKLE_MAX_PASSES - 1));
+                    for (int pass = 0; pass < extraPasses; pass++) {
+                        Cloth__ResolveLegCollisionsSwept(&wc->pos[idx], &wc->vel[idx], &wc->prev[idx], &subPrev, &subCur);
+
+                        /* Re-clamp cilíndrico: si el rechazo de pierna empujó
+                           el vértice más allá del radio de swing normal,
+                           lo retrae de vuelta a ese radio (sin volver a
+                           metarlo en la cápsula, porque maxR ya se calculó
+                           para quedar fuera de ella por margen — ahora con
+                           el margen correcto según la zona). */
+                        Vector3 delta = { wc->pos[idx].x - rest[idx].x,
+                                          0.0f,
+                                          wc->pos[idx].z - rest[idx].z };
+                        float dist2 = delta.x*delta.x + delta.z*delta.z;
+                        if (dist2 > maxR*maxR && dist2 > 1e-6f) {
+                            float inv = maxR / sqrtf(dist2);
+                            wc->pos[idx].x = rest[idx].x + delta.x * inv;
+                            wc->pos[idx].z = rest[idx].z + delta.z * inv;
+                            Vector3 n = { delta.x / sqrtf(dist2), 0.0f, delta.z / sqrtf(dist2) };
+                            float vDot = wc->vel[idx].x*n.x + wc->vel[idx].z*n.z;
+                            if (vDot > 0.0f) {
+                                wc->vel[idx].x -= n.x * vDot;
+                                wc->vel[idx].z -= n.z * vDot;
+                            }
+                        }
+
+                        /* Comprobación FINAL de esta pasada, SIEMPRE (antes
+                           solo se hacía dentro del 'if' del re-clamp): el
+                           re-clamp puede dejar al vértice dentro de la
+                           cápsula incluso sin entrar al 'if' de arriba si
+                           maxR < legRadiusAnkle en algún caso límite de
+                           geometría (paño muy estrecho). Volver a rechazar
+                           aquí, fuera del condicional, asegura que NINGUNA
+                           pasada termina con el vértice dentro del shin. */
+                        Cloth__ResolveLegCollisionsSwept(&wc->pos[idx], &wc->vel[idx], &wc->prev[idx], &subPrev, &subCur);
+                    }
+                }
+            }
+        }
+
+        /* Guardar la pose de pierna de este frame como "previa" para la
+           próxima llamada a UpdatePhysics, completando el ciclo de swept
+           collision frame a frame. */
+        wc->prevLHip   = curLegPose.lHip;
+        wc->prevRHip   = curLegPose.rHip;
+        wc->prevLKnee  = curLegPose.lKnee;
+        wc->prevRKnee  = curLegPose.rKnee;
+        wc->prevLAnkle = curLegPose.lAnkle;
+        wc->prevRAnkle = curLegPose.rAnkle;
+        wc->hasPrevLegPose = curLegPose.valid;
+    }
+}
+
+static inline void WaistCloth_Draw(WaistClothSystem* sys, Camera camera, Vector3 characterCenter,
+                                   bool behindOnly, Vector3 worldPos, Matrix worldRot, Vector3 worldPivot) {
+    if (!sys || !sys->loaded) return;
+
+    #define WC_XFORM(v) Vector3Add(Vector3Add(worldPos, worldPivot), Vector3Transform(Vector3Subtract(v, worldPivot), worldRot))
+
+    int cols = WAIST_CLOTH_COLS;
+    int rows = WAIST_CLOTH_ROWS;
+    float centerDist = Vector3Distance(camera.position, characterCenter);
+
+    rlDisableBackfaceCulling();
+    rlDisableDepthMask();
+
+    for (int i = 0; i < sys->clothCount; i++) {
+        WaistCloth* wc = &sys->cloths[i];
+        if (!wc->valid || !wc->visible || !wc->initialized) continue;
+
+        /* Calcular centro del mesh para depth test */
+        Vector3 meshCenter = {0, 0, 0};
+        for (int v = 0; v < WC_V; v++) {
+            meshCenter.x += wc->pos[v].x;
+            meshCenter.y += wc->pos[v].y;
+            meshCenter.z += wc->pos[v].z;
+        }
+        meshCenter.x /= (float)WC_V;
+        meshCenter.y /= (float)WC_V;
+        meshCenter.z /= (float)WC_V;
+        meshCenter = WC_XFORM(meshCenter);
+
+        float meshDist = Vector3Distance(camera.position, meshCenter);
+        bool  isBehind = (meshDist > centerDist);
+        if (behindOnly != isBehind) continue;
+
+        rlBegin(RL_TRIANGLES);
+
+        for (int row = 0; row < rows - 1; row++) {
+            for (int col = 0; col < cols - 1; col++) {
+                int tl = row       * cols + col;
+                int tr = row       * cols + col + 1;
+                int bl = (row + 1) * cols + col;
+                int br = (row + 1) * cols + col + 1;
+
+                Vector3 p0 = WC_XFORM(wc->pos[tl]);
+                Vector3 p1 = WC_XFORM(wc->pos[tr]);
+                Vector3 p2 = WC_XFORM(wc->pos[bl]);
+                Vector3 p3 = WC_XFORM(wc->pos[br]);
+
+                /* Cara "exterior" (wc->color): mismo winding que antes (tl→tr→bl) */
+                rlColor4ub(wc->color.r, wc->color.g, wc->color.b, wc->color.a);
+                /* Tri 1: tl→tr→bl */
+                rlVertex3f(p0.x, p0.y, p0.z);
+                rlVertex3f(p1.x, p1.y, p1.z);
+                rlVertex3f(p2.x, p2.y, p2.z);
+                /* Tri 2: tr→br→bl */
+                rlVertex3f(p1.x, p1.y, p1.z);
+                rlVertex3f(p3.x, p3.y, p3.z);
+                rlVertex3f(p2.x, p2.y, p2.z);
+
+                /* Cara "interior" (wc->colorInside): winding invertido (bl→tr→tl) */
+                rlColor4ub(wc->colorInside.r, wc->colorInside.g, wc->colorInside.b, wc->colorInside.a);
+                /* Back-face Tri 1 */
+                rlVertex3f(p2.x, p2.y, p2.z);
+                rlVertex3f(p1.x, p1.y, p1.z);
+                rlVertex3f(p0.x, p0.y, p0.z);
+                /* Back-face Tri 2 */
+                rlVertex3f(p2.x, p2.y, p2.z);
+                rlVertex3f(p3.x, p3.y, p3.z);
+                rlVertex3f(p1.x, p1.y, p1.z);
+            }
+        }
+        rlEnd();
+    }
+
+    rlEnableDepthMask();
+    rlEnableBackfaceCulling();
+    #undef WC_XFORM
 }
 
 static inline Vector3 SlashTrail__GetBonePos(const AnimationFrame* frame, const char* personId, const char* boneName) {
@@ -4606,6 +5619,10 @@ static inline AnimatedCharacter* CreateAnimatedCharacter(const char* textureConf
     if (textureConfigPath)
         Cloth_LoadFromConfig(character->clothPanels, textureConfigPath);
 
+    character->waistCloths = WaistCloth_Create();
+    if (textureConfigPath)
+        WaistCloth_LoadFromConfig(character->waistCloths, textureConfigPath);
+
     SlashTrail_InitSystem(&character->slashTrails);
     Model3D_InitSystem(&character->model3dAttachments);
 
@@ -4626,6 +5643,7 @@ static inline void DestroyAnimatedCharacter(AnimatedCharacter* character) {
     BonesFree(&character->animation);
     Ornaments_Free(character->ornaments);
     Cloth_Free(character->clothPanels);
+    WaistCloth_Free(character->waistCloths);
     free(character);
 }
 
@@ -4741,6 +5759,12 @@ static inline void UpdateAnimatedCharacter(AnimatedCharacter* character, float d
         if (!character->clothPanels->panels[0].initialized)
             Cloth_InitializePhysics(character->clothPanels, frameToUse);
         Cloth_UpdatePhysics(character->clothPanels, frameToUse, deltaTime);
+    }
+
+    if (character->waistCloths && character->waistCloths->loaded && frameToUse && frameToUse->valid) {
+        if (!character->waistCloths->cloths[0].initialized)
+            WaistCloth_InitializePhysics(character->waistCloths, frameToUse);
+        WaistCloth_UpdatePhysics(character->waistCloths, frameToUse, deltaTime);
     }
 
     if (!usingTransition && character->animController && character->animController->currentClipIndex >= 0) {
@@ -4978,6 +6002,12 @@ static inline void DrawAnimatedCharacterTransformed(AnimatedCharacter* character
         EndMode3D();
     }
 
+    if (character->waistCloths && character->waistCloths->loaded) {
+        BeginMode3D(camera);
+        WaistCloth_Draw(character->waistCloths, camera, transformedCenter, true,  character->worldPosition, MatrixRotateY(character->worldRotation), character->worldPivot);
+        EndMode3D();
+    }
+
     BonesRenderer_RenderFrame(character->renderer,
         bonesCopy  ? bonesCopy  : character->renderBones,  bc,
         headsCopy  ? headsCopy  : character->renderHeads,   hc,
@@ -4988,6 +6018,12 @@ static inline void DrawAnimatedCharacterTransformed(AnimatedCharacter* character
         BeginMode3D(camera);
         Cloth_Draw(character->clothPanels, camera, transformedCenter, false, character->worldPosition, MatrixRotateY(character->worldRotation), character->worldPivot);
         RedrawWristsOnTop(character->renderer, bonesCopy ? bonesCopy : character->renderBones, bc);
+        EndMode3D();
+    }
+
+    if (character->waistCloths && character->waistCloths->loaded) {
+        BeginMode3D(camera);
+        WaistCloth_Draw(character->waistCloths, camera, transformedCenter, false, character->worldPosition, MatrixRotateY(character->worldRotation), character->worldPivot);
         EndMode3D();
     }
 
@@ -5082,6 +6118,98 @@ static inline bool BonesInterpolateFrames(BonesAnimation* animation, int frameA,
     return true;
 }
 
+/* Los JSON de pose-estimation (MediaPipe/OpenPose/etc.) suelen traer
+   keyframes con número de frame disperso e irregular, p.ej.
+   frame_0000, frame_0005, frame_0012, frame_0016... en vez de uno por
+   cada frame consecutivo. BonesLoadFromString los guarda tal cual llegan
+   en frames[0], frames[1], frames[2]... perdiendo el hueco real entre
+   ellos: el reproductor (que avanza a clip->fps suponiendo paso de 1
+   frame por índice) y la física de cloth/waistcloth terminan tratando un
+   salto de pose grande (varios frames reales de diferencia) como si fuera
+   un paso pequeño y uniforme. Esto hace que la pierna recorra una
+   distancia angular grande de golpe entre dos "frames" consecutivos del
+   array, y la colisión contra el cloth no tiene margen para reaccionar a
+   tiempo: el pie puede verse cruzando la tela en ese tramo.
+
+   Esta función recorre el array ya cargado y, donde detecta un salto en
+   frameNumber mayor a 1 entre dos keyframes consecutivos originales,
+   inserta frames interpolados intermedios para que cada índice del array
+   represente un único frame real consecutivo. Así tanto la reproducción
+   como la física de cloth avanzan en pasos de pose pequeños y uniformes,
+   igual que con una animación que ya viniera densa. Debe llamarse una
+   sola vez justo después de cargar el JSON, antes de reproducir. */
+static inline bool BonesExpandSparseKeyframes(BonesAnimation* animation) {
+    if (!animation || !animation->frames || animation->frameCount < 2) return false;
+
+    /* ¿Hace falta expandir? Si ya viene denso (paso de 1 en frameNumber),
+       no tocar nada para no gastar memoria/tiempo innecesariamente. */
+    bool needsExpansion = false;
+    for (int i = 0; i < animation->frameCount - 1; i++) {
+        int gap = animation->frames[i + 1].frameNumber - animation->frames[i].frameNumber;
+        if (gap > 1) { needsExpansion = true; break; }
+        if (gap <= 0) return false; /* frameNumbers no crecientes: datos inesperados, no tocar */
+    }
+    if (!needsExpansion) return false;
+
+    int finalCount = animation->frames[animation->frameCount - 1].frameNumber -
+                     animation->frames[0].frameNumber + 1;
+    if (finalCount <= 0 || finalCount > animation->maxFrames) return false;
+
+    AnimationFrame* expanded = (AnimationFrame*)malloc(sizeof(AnimationFrame) * (size_t)finalCount);
+    if (!expanded) return false;
+
+    int writeIdx  = 0;
+    int baseFrame = animation->frames[0].frameNumber;
+
+    for (int i = 0; i < animation->frameCount - 1; i++) {
+        AnimationFrame* srcA = &animation->frames[i];
+        AnimationFrame* srcB = &animation->frames[i + 1];
+        int gap = srcB->frameNumber - srcA->frameNumber;
+
+        /* copiar keyframe original A */
+        expanded[writeIdx]             = *srcA;
+        expanded[writeIdx].frameNumber = writeIdx;
+        expanded[writeIdx].isOriginalKeyframe = true;
+        writeIdx++;
+
+        /* rellenar los frames intermedios reales que faltan entre A y B */
+        for (int g = 1; g < gap; g++) {
+            float t = (float)g / (float)gap;
+            AnimationFrame* dest = &expanded[writeIdx];
+            memset(dest, 0, sizeof(AnimationFrame));
+            dest->frameNumber        = writeIdx;
+            dest->valid              = true;
+            dest->isOriginalKeyframe = false;
+            dest->personCount        = srcA->personCount > srcB->personCount ? srcA->personCount : srcB->personCount;
+
+            for (int p = 0; p < dest->personCount; p++) {
+                if      (p < srcA->personCount && p < srcB->personCount) InterpolatePerson(&srcA->persons[p], &srcB->persons[p], &dest->persons[p], t);
+                else if (p < srcA->personCount)                          dest->persons[p] = srcA->persons[p];
+                else                                                     dest->persons[p] = srcB->persons[p];
+            }
+            writeIdx++;
+        }
+    }
+
+    /* último keyframe original */
+    expanded[writeIdx]                    = animation->frames[animation->frameCount - 1];
+    expanded[writeIdx].frameNumber        = writeIdx;
+    expanded[writeIdx].isOriginalKeyframe = true;
+    writeIdx++;
+
+    (void)baseFrame;
+
+    int copyCount = (writeIdx < animation->maxFrames) ? writeIdx : animation->maxFrames;
+    memcpy(animation->frames, expanded, sizeof(AnimationFrame) * (size_t)copyCount);
+    animation->frameCount = copyCount;
+    free(expanded);
+
+    if (animation->currentFrame >= animation->frameCount)
+        animation->currentFrame = animation->frameCount - 1;
+
+    return true;
+}
+
 static inline bool BonesInsertEmptyFrame(BonesAnimation* animation, int position) {
     if (!animation || position < 0 || position > animation->frameCount ||
         animation->frameCount >= animation->maxFrames) return false;
@@ -5148,6 +6276,12 @@ static inline void DrawAnimatedCharacter(AnimatedCharacter* character, Camera ca
         EndMode3D();
     }
 
+    if (character->waistCloths && character->waistCloths->loaded) {
+        BeginMode3D(camera);
+        WaistCloth_Draw(character->waistCloths, camera, character->autoCenter, true,  (Vector3){0,0,0}, MatrixIdentity(), (Vector3){0,0,0});
+        EndMode3D();
+    }
+
     BonesRenderer_RenderFrame(character->renderer,
         character->renderBones,  character->renderBonesCount,
         character->renderHeads,  character->renderHeadsCount,
@@ -5158,6 +6292,12 @@ static inline void DrawAnimatedCharacter(AnimatedCharacter* character, Camera ca
         BeginMode3D(camera);
         Cloth_Draw(character->clothPanels, camera, character->autoCenter, false, (Vector3){0,0,0}, MatrixIdentity(), (Vector3){0,0,0});
         RedrawWristsOnTop(character->renderer, character->renderBones, character->renderBonesCount);
+        EndMode3D();
+    }
+
+    if (character->waistCloths && character->waistCloths->loaded) {
+        BeginMode3D(camera);
+        WaistCloth_Draw(character->waistCloths, camera, character->autoCenter, false, (Vector3){0,0,0}, MatrixIdentity(), (Vector3){0,0,0});
         EndMode3D();
     }
 

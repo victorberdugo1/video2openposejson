@@ -1,8 +1,8 @@
 {
   "name": "walk",
-  "fps": 30,
+  "fps": 80,
   "start_frame": 0,
-  "end_frame": 90,
+  "end_frame": 72,
   "loop": true,
   "events": [
     {"time": 0.0, "type": "texture", "bone": "Head", "variant": "idle"},
