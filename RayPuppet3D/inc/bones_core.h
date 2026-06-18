@@ -448,6 +448,7 @@ typedef struct {
     float   offsetZ;        // desplazamiento en profundidad del panel (en unidades forward del ancla; + = adelante)
     float   rotationDeg;    // rotación del panel alrededor del eje Y del ancla (0=front,180=back,90=right...)
     Color   color;
+    Color   baseColor;      // color original de la config (@CLOTH), inmutable; 'color' puede sobreescribirse en runtime (tinte de jugador) y se restaura desde aquí
     OrnamentPhysicsPreset physicsPreset;
     float   stiffness;
     float   damping;
@@ -484,6 +485,8 @@ typedef struct {
     float                 curveDepth;     /* profundidad del arco elíptico (0 = plano, >0 = envuelve hacia atrás en el centro) */
     Color                 color;          /* color de la cara exterior (la que mira hacia afuera del cuerpo) */
     Color                 colorInside;    /* color de la cara interior (la que mira hacia el cuerpo). Si no se especifica en la config, es igual a 'color'. */
+    Color                 baseColor;       // color exterior original de la config, inmutable; 'color' puede sobreescribirse en runtime (tinte de jugador) y se restaura desde aquí
+    Color                 baseColorInside; // color interior original de la config, inmutable; análogo a baseColor
     OrnamentPhysicsPreset physicsPreset;
     float                 stiffness;
     float                 damping;
@@ -4020,6 +4023,7 @@ static inline bool Cloth_LoadFromConfig(ClothSystem* sys, const char* configPath
                     (unsigned char)((rgba >>  8) & 0xFF),
                     (unsigned char)( rgba        & 0xFF)
                 };
+                cp->baseColor = cp->color;
 
                 OrnamentPhysicsPreset pr =
                     strcmp(physStr, "veryhard") == 0 ? PHYSICS_VERYHARD :
@@ -4365,6 +4369,8 @@ static inline bool WaistCloth_LoadFromConfig(WaistClothSystem* sys, const char* 
                 } else {
                     wc->colorInside = wc->color;
                 }
+                wc->baseColor       = wc->color;
+                wc->baseColorInside = wc->colorInside;
 
                 OrnamentPhysicsPreset pr =
                     strcmp(physStr, "veryhard") == 0 ? PHYSICS_VERYHARD :

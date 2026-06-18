@@ -3,7 +3,7 @@
 # Path a la hiltura
 # Visible: 1=si, 0=no
 # Size: tamaño del billboard (0.1-1.0)
-1
+
 Nose NULL 0 0.25
 Head data/textures/hil/head.png 1 0.131
 LEye NULL 0 0.20
@@ -34,5 +34,5 @@ RAnkle data/textures/hil/foot.png 1 0.14
 # @TailTip TailMid 0.0,-0.12,0.0 data/textures/hil/TailTip.png 1 0.12 @TailMid verysoft
 
 #type	    nombre ancla wTop	wBot	height	offY	offX	offZ	rot	color	 physics ScurveDepth	color2
-@WAISTCLOTH Loin   Hip	 0.11	0.35	0.38	0.038	0.00	0.00	0.0	5d3487FF medium  0.05		fff7dfFF
-@WAISTCLOTH Loin2   Hip	 0.12	0.3	0.055	0.048	0.00	0.01	0.0	ffd93dFF medium  0.05		fed04bFF
+@WAISTCLOTH Loin   Hip	 0.11	0.35	0.38	0.038	0.00	0.0	0.0	5d3487FF hard  0.05		fff7dfFF
+@WAISTCLOTH Loin2   Hip	 0.12	0.3	0.055	0.048	0.00	0.005	0.0	ffd93dFF medium  0.05		fed04bFF
