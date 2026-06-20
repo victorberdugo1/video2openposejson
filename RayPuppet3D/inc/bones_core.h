@@ -22,7 +22,7 @@
 #define MAX_FRAMES                  10000
 #define MAX_PERSONS                 10
 #define MAX_TEXTURES                64
-#define MAX_RENDER_ITEMS            512
+#define MAX_RENDER_ITEMS            1280
 #define MAX_ORNAMENTS               32
 #define MAX_CLOTH_PANELS            32
 #define MAX_WAIST_CLOTHS            8
@@ -234,6 +234,92 @@ typedef struct {
     float depthBias;
     bool  hasZFighting;
 } RenderItem;
+
+/* Forward declare: necesaria aquí porque DrawableQuad_FromTri4 (abajo) la usa
+   antes de su definición real (cerca de SafeNormalize, más adelante en el header). */
+static inline float CameraDepthOf(Camera camera, Vector3 point);
+
+/* ── DrawableQuad: unidad mínima de cloth ya transformada a world-space,
+   usada para intercalar tela con bones en el MISMO sort de profundidad
+   (Camino A). Reemplaza el viejo sándwich de 2 pasadas "behindOnly", que
+   solo podía decidir delante/detrás para un panel ENTERO contra UN punto
+   del personaje — y por eso fallaba con paneles grandes (WaistCloth en
+   Neck cubriendo el torso) o en pitches donde el cuerpo se ve "comprimido"
+   en profundidad. Cada celda de malla / panel se parte en quads, cada quad
+   tiene su propia profundidad de cámara (centro del quad), así que se
+   intercala correctamente contra bones individuales sin importar tamaño
+   de panel ni ángulo. */
+typedef struct {
+    Vector3 v0, v1, v2, v3;   /* world-space, winding tl→tr→bl→br */
+    Color   colorFront;       /* cara que mira hacia afuera */
+    Color   colorBack;        /* cara interior (si no aplica, igual a colorFront) */
+    bool    hasBackFace;      /* true para WaistCloth (doble cara con color propio) */
+    bool    facingCamera;     /* true si la normal (v1-v0)x(v2-v0) mira hacia la cámara.
+                                  Solo relevante si hasBackFace==true: decide cuál de las
+                                  2 caras se dibuja (ver nota en DrawableQuad_Draw). */
+    float   depth;            /* CameraDepthOf del centro del quad */
+} DrawableQuad;
+
+#define MAX_DRAWABLE_QUADS 4096
+
+static inline void DrawableQuad_FromTri4(DrawableQuad* q, Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3,
+                                          Color front, Color back, bool hasBack, Camera camera) {
+    q->v0 = v0; q->v1 = v1; q->v2 = v2; q->v3 = v3;
+    q->colorFront  = front;
+    q->colorBack   = hasBack ? back : front;
+    q->hasBackFace = hasBack;
+    Vector3 center = (Vector3){
+        (v0.x+v1.x+v2.x+v3.x)*0.25f,
+        (v0.y+v1.y+v2.y+v3.y)*0.25f,
+        (v0.z+v1.z+v2.z+v3.z)*0.25f
+    };
+    q->depth = CameraDepthOf(camera, center);
+
+    /* Normal del triángulo tl→tr→bl (winding v0→v1→v2), comparada contra la
+       dirección hacia la cámara desde el centro del quad. Esto decide qué cara
+       es la "exterior visible" en este frame — necesario porque, sin depth-write
+       (rlDisableDepthMask, requerido por el sort por celda contra bones/torsos),
+       dibujar SIEMPRE las 2 caras una sobre otra hace que la última pintada
+       (back) tape permanentemente a la primera (front) en pantalla, sin importar
+       el ángulo: el viewer nunca veía 'colorFront', solo 'colorBack'. */
+    Vector3 edge1  = Vector3Subtract(v1, v0);
+    Vector3 edge2  = Vector3Subtract(v2, v0);
+    Vector3 normal = Vector3CrossProduct(edge1, edge2);
+    Vector3 toCam  = Vector3Subtract(camera.position, center);
+    q->facingCamera = Vector3DotProduct(normal, toCam) >= 0.0f;
+}
+
+static inline void DrawableQuad_Draw(const DrawableQuad* q) {
+    /* Si no hay cara trasera distinta (cloth de un solo color), comportamiento
+       original: ambas caras visibles con el mismo color, sin costo extra. */
+    bool drawFront = !q->hasBackFace || q->facingCamera;
+
+    rlBegin(RL_TRIANGLES);
+        if (drawFront) {
+            rlColor4ub(q->colorFront.r, q->colorFront.g, q->colorFront.b, q->colorFront.a);
+            rlVertex3f(q->v0.x, q->v0.y, q->v0.z);
+            rlVertex3f(q->v1.x, q->v1.y, q->v1.z);
+            rlVertex3f(q->v2.x, q->v2.y, q->v2.z);
+
+            rlVertex3f(q->v1.x, q->v1.y, q->v1.z);
+            rlVertex3f(q->v3.x, q->v3.y, q->v3.z);
+            rlVertex3f(q->v2.x, q->v2.y, q->v2.z);
+        }
+
+        if (!drawFront) {
+            /* hasBackFace==true y la normal mira lejos de cámara: solo la cara
+               interior (colorBack) es la que debería verse en este quad. */
+            rlColor4ub(q->colorBack.r, q->colorBack.g, q->colorBack.b, q->colorBack.a);
+            rlVertex3f(q->v2.x, q->v2.y, q->v2.z);
+            rlVertex3f(q->v1.x, q->v1.y, q->v1.z);
+            rlVertex3f(q->v0.x, q->v0.y, q->v0.z);
+
+            rlVertex3f(q->v2.x, q->v2.y, q->v2.z);
+            rlVertex3f(q->v3.x, q->v3.y, q->v3.z);
+            rlVertex3f(q->v1.x, q->v1.y, q->v1.z);
+        }
+    rlEnd();
+}
 
 typedef struct {
     Texture2D textures[MAX_TEXTURES];
@@ -697,6 +783,7 @@ static inline BonesError BonesLoadFromJSON(BonesAnimation* animation, const char
 static inline BonesError BonesLoadFromString(BonesAnimation* animation, const char* jsonString);
 
 static inline Vector3 SafeNormalize(Vector3 v);
+static inline float CameraDepthOf(Camera camera, Vector3 point);
 static inline bool IsWristBone(const char* boneName);
 static inline bool IsAsymmetricBone(BoneConfig* boneConfigs, int boneConfigCount, const char* boneName);
 static inline CachedBones CacheBones(const Person* person);
@@ -751,6 +838,8 @@ static inline void Cloth_Free(ClothSystem* sys);
 static inline bool Cloth_LoadFromConfig(ClothSystem* sys, const char* configPath);
 static inline void Cloth_InitializePhysics(ClothSystem* sys, const AnimationFrame* frame);
 static inline void Cloth_UpdatePhysics(ClothSystem* sys, const AnimationFrame* frame, float dt);
+static inline void Cloth_Collect(ClothSystem* sys, Camera camera, Vector3 worldPos, Matrix worldRot,
+                                  Vector3 worldPivot, DrawableQuad* quads, int* quadCount, int quadCapacity);
 static inline void Cloth_Draw(ClothSystem* sys, Camera camera, Vector3 characterCenter, bool behindOnly, Vector3 worldPos, Matrix worldRot, Vector3 worldPivot);
 static inline Vector3 RotatePointAroundPivot(Vector3 point, Vector3 pivot, Vector3 worldPos, Matrix rotY);
 
@@ -759,6 +848,8 @@ static inline void WaistCloth_Free(WaistClothSystem* sys);
 static inline bool WaistCloth_LoadFromConfig(WaistClothSystem* sys, const char* configPath);
 static inline void WaistCloth_InitializePhysics(WaistClothSystem* sys, const AnimationFrame* frame);
 static inline void WaistCloth_UpdatePhysics(WaistClothSystem* sys, const AnimationFrame* frame, float dt);
+static inline void WaistCloth_Collect(WaistClothSystem* sys, Camera camera, Vector3 worldPos, Matrix worldRot,
+                                       Vector3 worldPivot, DrawableQuad* quads, int* quadCount, int quadCapacity);
 static inline void WaistCloth_Draw(WaistClothSystem* sys, Camera camera, Vector3 characterCenter, bool behindOnly, Vector3 worldPos, Matrix worldRot, Vector3 worldPivot);
 
 static inline void SlashTrail_InitSystem(SlashTrailSystem* sys);
@@ -789,7 +880,8 @@ static inline void BonesRenderer_RenderFrame(BonesRenderer* renderer,
                                               BoneRenderData* bones, int boneCount,
                                               HeadRenderData* heads, int headCount,
                                               TorsoRenderData* torsos, int torsoCount,
-                                              Vector3 autoCenter, bool autoCenterCalculated);
+                                              Vector3 autoCenter, bool autoCenterCalculated,
+                                              DrawableQuad* quads, int quadCount);
 
 static inline bool ResizeRenderBonesArray(BoneRenderData** renderBones, int* renderBonesCapacity, int newCapacity);
 static inline void CollectBonesForRendering(const BonesAnimation* animation, Camera camera, BoneRenderData** renderBones,
@@ -1750,6 +1842,19 @@ static void DrawQuadTextured3D_UVs(Texture2D tex, Vector3 v0, Vector3 v1, Vector
 static inline Vector3 SafeNormalize(Vector3 v) {
     float len = Vector3Length(v);
     return (len < 1e-6f) ? (Vector3){0, 0, 1} : Vector3Scale(v, 1.0f / len);
+}
+
+/* Profundidad de cámara real (proyección sobre el eje forward), en vez de
+   distancia euclídea al punto. Vector3Distance() es monotónica con la
+   profundidad solo cuando la cámara mira casi horizontal; en pitches
+   pronunciados (mirando hacia arriba/abajo) un punto "alto" cerca del eje
+   óptico puede tener distancia euclídea menor que un punto "bajo" que en
+   realidad está más cerca del plano de cámara, invirtiendo el orden de
+   pintado del painter's algorithm (bones/cloth no escriben z-buffer).
+   Esta función devuelve esa proyección, coherente en todos los ángulos. */
+static inline float CameraDepthOf(Camera camera, Vector3 point) {
+    Vector3 camForward = SafeNormalize(Vector3Subtract(camera.target, camera.position));
+    return Vector3DotProduct(Vector3Subtract(point, camera.position), camForward);
 }
 
 static inline bool IsWristBone(const char* boneName) {
@@ -3273,26 +3378,70 @@ static void RenderBoneInternal(BonesRenderer* renderer, const BoneRenderData* bo
 // El sistema de profundidad de bones/cloth es "painter's algorithm": ni los
 // billboards ni los paneles de tela escriben en el depth buffer, así que el
 // orden visual depende solo del orden de dibujado. El cloth se dibuja en dos
-// pasadas (detrás/delante del centro del personaje) usando solo la distancia
-// del centro del panel — una heurística que puede fallar vista desde abajo,
-// dejando manos (LWrist/RWrist) tapadas por un panel "delantero".
+// pasadas (detrás/delante del centro del personaje) usando la profundidad de
+// cámara (CameraDepthOf, proyección sobre el eje forward) en vez de distancia
+// euclídea — la euclídea deja de ser monótona con la profundidad real en
+// pitches pronunciados (cámara mirando muy hacia arriba/abajo), invirtiendo
+// el orden delante/detrás justo en esos ángulos. Aun con la métrica corregida,
+// un panel grande puede cruzar el plano de profundidad de un bone puntual (su
+// centro queda de un lado, parte de su geometría del otro) porque el split es
+// binario por centro de masa, no por geometría completa.
 // Para garantizar que las manos sean siempre visibles, se redibujan encima
 // de ambas pasadas de cloth, sin tocar el resto del pipeline de profundidad.
-static inline void RedrawWristsOnTop(BonesRenderer* renderer, BoneRenderData* bones, int boneCount) {
+static inline void RedrawWristsOnTop(BonesRenderer* renderer, BoneRenderData* bones, int boneCount,
+                                      Vector3 personCenter, bool personCenterValid) {
     if (!renderer || !bones || boneCount <= 0) return;
 
-    bool any = false;
-    for (int i = 0; i < boneCount; i++) {
-        if (bones[i].valid && bones[i].visible && IsWristBone(bones[i].boneName)) { any = true; break; }
+    /* Profundidad de referencia: el centro del personaje (torso/autoCenter).
+       Una muñeca solo se "fuerza" al frente en esta pasada si está realmente
+       más cerca de la cámara que ese centro — si no, se deja que la pasada
+       normal (BonesRenderer_RenderFrame, donde la muñeca ya compite por sort
+       contra torso/piernas/cabeza/cloth) decida su z-order, en vez de
+       redibujarla incondicionalmente encima de TODO el frame.
+       Sin este filtro, esta segunda pasada es la última cosa dibujada y por
+       tanto siempre "gana" en pantalla contra cualquier otra geometría,
+       independientemente de si la mano está delante o detrás del cuerpo —
+       eso es lo que causaba que la mano apareciera flotando sobre el modelo
+       en cualquier ángulo donde debería quedar oculta detrás del torso. */
+    float centerDepth = personCenterValid ? CameraDepthOf(renderer->camera, personCenter) : -1e9f;
+
+    int   wristIdx[8];
+    float wristDepth[8];
+    int   wristCount = 0;
+    for (int i = 0; i < boneCount && wristCount < 8; i++) {
+        if (!bones[i].valid || !bones[i].visible || !IsWristBone(bones[i].boneName)) continue;
+        float d = CameraDepthOf(renderer->camera, bones[i].position);
+        /* CameraDepthOf crece con la distancia a cámara (ver SortRenderItems:
+           se dibuja ascendente, lejos -> cerca). "Delante del centro" significa
+           más cerca de la cámara, es decir depth MENOR que el del centro. */
+        if (personCenterValid && d >= centerDepth) continue;
+        wristIdx[wristCount]   = i;
+        wristDepth[wristCount] = d;
+        wristCount++;
     }
-    if (!any) return;
+    if (wristCount == 0) return;
+
+    /* Insertion sort ascendente por profundidad entre las muñecas que sí se
+       redibujan, para que la más cercana a cámara quede pintada al final y
+       por tanto encima si ambas se solapan en pantalla. */
+    for (int i = 1; i < wristCount; i++) {
+        int   idxTmp   = wristIdx[i];
+        float depthTmp = wristDepth[i];
+        int j = i - 1;
+        while (j >= 0 && wristDepth[j] > depthTmp) {
+            wristIdx[j+1]   = wristIdx[j];
+            wristDepth[j+1] = wristDepth[j];
+            j--;
+        }
+        wristIdx[j+1]   = idxTmp;
+        wristDepth[j+1] = depthTmp;
+    }
 
     BeginBlendMode(BLEND_ALPHA_PREMULTIPLY);
     rlEnableDepthTest();
     rlDisableDepthMask();
-    for (int i = 0; i < boneCount; i++) {
-        BoneRenderData* b = &bones[i];
-        if (!b->valid || !b->visible || !IsWristBone(b->boneName)) continue;
+    for (int k = 0; k < wristCount; k++) {
+        BoneRenderData* b = &bones[wristIdx[k]];
         RenderBoneInternal(renderer, b, b->position, NULL, bones, boneCount);
     }
     EndBlendMode();
@@ -3303,13 +3452,14 @@ static inline void BonesRenderer_RenderFrame(BonesRenderer* renderer,
         BoneRenderData* bones, int boneCount,
         HeadRenderData* heads, int headCount,
         TorsoRenderData* torsos, int torsoCount,
-        Vector3 autoCenter, bool autoCenterCalculated)
+        Vector3 autoCenter, bool autoCenterCalculated,
+        DrawableQuad* quads, int quadCount)
 {
     if (!renderer) return;
     BeginMode3D(renderer->camera);
     (void)autoCenter; (void)autoCenterCalculated;
 
-    int totalItems = boneCount + headCount + torsoCount;
+    int totalItems = boneCount + headCount + torsoCount + quadCount;
     if (totalItems > 0) {
         static RenderItem renderItems[MAX_RENDER_ITEMS];
         int itemCount = 0;
@@ -3317,15 +3467,24 @@ static inline void BonesRenderer_RenderFrame(BonesRenderer* renderer,
 
         for (int i = 0; i < torsoCount && itemCount < MAX_RENDER_ITEMS; i++) {
             if (!torsos[i].valid || !torsos[i].visible) continue;
-            renderItems[itemCount++] = (RenderItem){0, i, Vector3Distance(camPos, torsos[i].position), TORSO_BIAS + INDEX_BIAS*i, false};
+            renderItems[itemCount++] = (RenderItem){0, i, CameraDepthOf(renderer->camera, torsos[i].position), TORSO_BIAS + INDEX_BIAS*i, false};
         }
         for (int i = 0; i < boneCount && itemCount < MAX_RENDER_ITEMS; i++) {
             if (!bones[i].valid || !bones[i].visible) continue;
-            renderItems[itemCount++] = (RenderItem){1, i, Vector3Distance(camPos, bones[i].position), BONE_BIAS + INDEX_BIAS*i, false};
+            renderItems[itemCount++] = (RenderItem){1, i, CameraDepthOf(renderer->camera, bones[i].position), BONE_BIAS + INDEX_BIAS*i, false};
         }
         for (int i = 0; i < headCount && itemCount < MAX_RENDER_ITEMS; i++) {
             if (!heads[i].valid || !heads[i].visible) continue;
-            renderItems[itemCount++] = (RenderItem){2, i, Vector3Distance(camPos, heads[i].position), HEAD_BIAS + INDEX_BIAS*i, false};
+            renderItems[itemCount++] = (RenderItem){2, i, CameraDepthOf(renderer->camera, heads[i].position), HEAD_BIAS + INDEX_BIAS*i, false};
+        }
+        /* type=3: celdas de cloth/waistcloth ya transformadas a world-space y con
+           profundidad precalculada (DrawableQuad_FromTri4). Se intercalan en el
+           mismo sort que bones/torsos/heads — esto es lo que reemplaza el viejo
+           sándwich de 2 pasadas behindOnly, y permite que un panel grande (p.ej.
+           WaistCloth anclado en Neck cubriendo el torso) quede correctamente
+           dibujado celda por celda en vez de todo-antes/todo-después. */
+        for (int i = 0; i < quadCount && itemCount < MAX_RENDER_ITEMS; i++) {
+            renderItems[itemCount++] = (RenderItem){3, i, quads[i].depth, 0.0f, false};
         }
 
         DetectZFighting(renderItems, itemCount);
@@ -3334,6 +3493,7 @@ static inline void BonesRenderer_RenderFrame(BonesRenderer* renderer,
         BeginBlendMode(BLEND_ALPHA_PREMULTIPLY);
         rlEnableDepthTest();
         rlDisableDepthMask();
+        rlDisableBackfaceCulling();
 
         for (int i = 0; i < itemCount; i++) {
             RenderItem* item = &renderItems[i];
@@ -3351,6 +3511,11 @@ static inline void BonesRenderer_RenderFrame(BonesRenderer* renderer,
                         RenderBoneInternal(renderer, bone, renderPos, NULL, bones, boneCount);
                     }
                 }
+            }
+
+            if (item->type == 3) {
+                DrawableQuad_Draw(&quads[item->index]);
+                continue;
             }
 
             Vector3 itemPos;
@@ -3392,6 +3557,7 @@ static inline void BonesRenderer_RenderFrame(BonesRenderer* renderer,
 
         EndBlendMode();
         rlEnableDepthMask();
+        rlEnableBackfaceCulling();
     }
     EndMode3D();
 }
@@ -4239,13 +4405,47 @@ static inline void Cloth_UpdatePhysics(ClothSystem* sys, const AnimationFrame* f
     }
 }
 
+/* Cloth_Collect: convierte cada ClothPanel visible en un DrawableQuad ya
+   transformado a world-space, con su profundidad de cámara precalculada,
+   y lo agrega al buffer `quads` (sin dibujar nada todavía). Esto reemplaza
+   el viejo sándwich de 2 pasadas behindOnly/centerDepth: en vez de decidir
+   "todo el panel va antes o después de TODO el personaje" contra un único
+   punto de referencia, cada panel se intercala individualmente en el mismo
+   sort de profundidad que bones/torsos/heads (ver BonesRenderer_RenderFrame),
+   así que el orden es correcto sin importar tamaño de panel ni pitch de cámara. */
+static inline void Cloth_Collect(ClothSystem* sys, Camera camera, Vector3 worldPos, Matrix worldRot,
+                                  Vector3 worldPivot, DrawableQuad* quads, int* quadCount, int quadCapacity) {
+    if (!sys || !sys->loaded || !quads || !quadCount) return;
+    #define CLOTH_XFORM(v) Vector3Add(Vector3Add(worldPos, worldPivot), Vector3Transform(Vector3Subtract(v, worldPivot), worldRot))
+
+    for (int i = 0; i < sys->panelCount; i++) {
+        ClothPanel* cp = &sys->panels[i];
+        if (!cp->valid || !cp->visible || !cp->initialized) continue;
+        if (*quadCount >= quadCapacity) break;
+
+        Vector3 tl = CLOTH_XFORM(cp->topLeft);
+        Vector3 tr = CLOTH_XFORM(cp->topRight);
+        Vector3 bl = CLOTH_XFORM(cp->botLeft);
+        Vector3 br = CLOTH_XFORM(cp->botRight);
+
+        /* ClothPanel original dibuja ambas caras con el mismo color (sin distinción
+           exterior/interior), así que hasBack=false replica ese comportamiento. */
+        DrawableQuad_FromTri4(&quads[*quadCount], tl, tr, bl, br, cp->color, cp->color, false, camera);
+        (*quadCount)++;
+    }
+    #undef CLOTH_XFORM
+}
+
+/* Legacy: mantiene el sándwich de 2 pasadas para quien siga llamando a
+   Cloth_Draw directamente (compatibilidad). El pipeline integrado (Camino A)
+   usa Cloth_Collect + BonesRenderer_RenderFrame en su lugar — ver DrawAnimatedCharacterTransformed. */
 static inline void Cloth_Draw(ClothSystem* sys, Camera camera, Vector3 characterCenter, bool behindOnly, Vector3 worldPos, Matrix worldRot, Vector3 worldPivot) {
     if (!sys || !sys->loaded) return;
 
     // Transforma un vértice local al espacio mundo (igual que RotatePointAroundPivot).
     #define CLOTH_XFORM(v) Vector3Add(Vector3Add(worldPos, worldPivot), Vector3Transform(Vector3Subtract(v, worldPivot), worldRot))
 
-    float centerDist = Vector3Distance(camera.position, characterCenter);
+    float centerDepth = CameraDepthOf(camera, characterCenter);
 
     rlDisableBackfaceCulling();
     rlDisableDepthMask();
@@ -4264,9 +4464,9 @@ static inline void Cloth_Draw(ClothSystem* sys, Camera camera, Vector3 character
             (tl.y + tr.y + bl.y + br.y) * 0.25f,
             (tl.z + tr.z + bl.z + br.z) * 0.25f
         };
-        float panelDist = Vector3Distance(camera.position, panelCenter);
+        float panelDepth = CameraDepthOf(camera, panelCenter);
 
-        bool isBehind = (panelDist > centerDist);
+        bool isBehind = (panelDepth > centerDepth);
         if (behindOnly != isBehind) continue;
 
         rlBegin(RL_TRIANGLES);
@@ -4848,6 +5048,54 @@ static inline void WaistCloth_UpdatePhysics(WaistClothSystem* sys, const Animati
     }
 }
 
+/* WaistCloth_Collect: convierte CADA CELDA de la malla (no el panel
+   entero) en un DrawableQuad independiente con su propia profundidad de
+   cámara. Esto es el corazón del fix: el WaistCloth_Draw original promediaba
+   los 96 vértices del panel en un solo meshCenter y decidía "todo el panel
+   va antes o después" una sola vez — eso falla en cuanto el panel es grande
+   respecto al cuerpo (p.ej. anclado en Neck cubriendo todo el torso) o el
+   pitch de cámara comprime la profundidad del personaje, porque ninguna
+   posición de corte por panel-completo puede ser correcta para TODAS sus
+   celdas a la vez. Con una celda = un quad, cada una se intercala individual-
+   mente en el sort de profundidad junto a bones/torsos/heads. */
+static inline void WaistCloth_Collect(WaistClothSystem* sys, Camera camera, Vector3 worldPos, Matrix worldRot,
+                                       Vector3 worldPivot, DrawableQuad* quads, int* quadCount, int quadCapacity) {
+    if (!sys || !sys->loaded || !quads || !quadCount) return;
+    #define WC_XFORM(v) Vector3Add(Vector3Add(worldPos, worldPivot), Vector3Transform(Vector3Subtract(v, worldPivot), worldRot))
+
+    int cols = WAIST_CLOTH_COLS;
+    int rows = WAIST_CLOTH_ROWS;
+
+    for (int i = 0; i < sys->clothCount; i++) {
+        WaistCloth* wc = &sys->cloths[i];
+        if (!wc->valid || !wc->visible || !wc->initialized) continue;
+
+        for (int row = 0; row < rows - 1; row++) {
+            for (int col = 0; col < cols - 1; col++) {
+                if (*quadCount >= quadCapacity) return;
+
+                int tl = row       * cols + col;
+                int tr = row       * cols + col + 1;
+                int bl = (row + 1) * cols + col;
+                int br = (row + 1) * cols + col + 1;
+
+                Vector3 p0 = WC_XFORM(wc->pos[tl]);
+                Vector3 p1 = WC_XFORM(wc->pos[tr]);
+                Vector3 p2 = WC_XFORM(wc->pos[bl]);
+                Vector3 p3 = WC_XFORM(wc->pos[br]);
+
+                DrawableQuad_FromTri4(&quads[*quadCount], p0, p1, p2, p3, wc->color, wc->colorInside, true, camera);
+                (*quadCount)++;
+            }
+        }
+    }
+    #undef WC_XFORM
+}
+
+/* Legacy: mantiene el sándwich de 2 pasadas (decisión por panel-completo, no
+   por celda) para quien siga llamando a WaistCloth_Draw directamente. El
+   pipeline integrado (Camino A) usa WaistCloth_Collect + BonesRenderer_RenderFrame
+   en su lugar — ver DrawAnimatedCharacterTransformed. */
 static inline void WaistCloth_Draw(WaistClothSystem* sys, Camera camera, Vector3 characterCenter,
                                    bool behindOnly, Vector3 worldPos, Matrix worldRot, Vector3 worldPivot) {
     if (!sys || !sys->loaded) return;
@@ -4856,7 +5104,7 @@ static inline void WaistCloth_Draw(WaistClothSystem* sys, Camera camera, Vector3
 
     int cols = WAIST_CLOTH_COLS;
     int rows = WAIST_CLOTH_ROWS;
-    float centerDist = Vector3Distance(camera.position, characterCenter);
+    float centerDepth = CameraDepthOf(camera, characterCenter);
 
     rlDisableBackfaceCulling();
     rlDisableDepthMask();
@@ -4877,8 +5125,8 @@ static inline void WaistCloth_Draw(WaistClothSystem* sys, Camera camera, Vector3
         meshCenter.z /= (float)WC_V;
         meshCenter = WC_XFORM(meshCenter);
 
-        float meshDist = Vector3Distance(camera.position, meshCenter);
-        bool  isBehind = (meshDist > centerDist);
+        float meshDepth = CameraDepthOf(camera, meshCenter);
+        bool  isBehind = (meshDepth > centerDepth);
         if (behindOnly != isBehind) continue;
 
         rlBegin(RL_TRIANGLES);
@@ -6002,36 +6250,35 @@ static inline void DrawAnimatedCharacterTransformed(AnimatedCharacter* character
     DrawModel3DWithDepthOrder(&character->model3dAttachments, rf, pid,
         character->worldPosition, character->worldPivot, rot, true, camera, transformedCenter, true);
 
-    if (character->clothPanels && character->clothPanels->loaded) {
-        BeginMode3D(camera);
-        Cloth_Draw(character->clothPanels, camera, transformedCenter, true,  character->worldPosition, MatrixRotateY(character->worldRotation), character->worldPivot);
-        EndMode3D();
-    }
-
-    if (character->waistCloths && character->waistCloths->loaded) {
-        BeginMode3D(camera);
-        WaistCloth_Draw(character->waistCloths, camera, transformedCenter, true,  character->worldPosition, MatrixRotateY(character->worldRotation), character->worldPivot);
-        EndMode3D();
-    }
+    /* Camino A: en vez del viejo sándwich de 2 pasadas (cloth-detrás, bones,
+       cloth-delante) decidido por un solo punto de referencia por panel/malla,
+       cada celda de cloth se recolecta como un DrawableQuad con su propia
+       profundidad de cámara y se intercala en el MISMO sort que bones/torsos/
+       heads dentro de BonesRenderer_RenderFrame. Esto es lo que corrige el
+       caso de paneles grandes (WaistCloth anclado en Neck cubriendo el torso)
+       o pitches de cámara extremos, donde un único punto de corte por panel
+       no puede ser correcto para toda su geometría a la vez. */
+    static DrawableQuad clothQuads[MAX_DRAWABLE_QUADS];
+    int clothQuadCount = 0;
+    Matrix clothRot = MatrixRotateY(character->worldRotation);
+    if (character->clothPanels && character->clothPanels->loaded)
+        Cloth_Collect(character->clothPanels, camera, character->worldPosition, clothRot,
+                      character->worldPivot, clothQuads, &clothQuadCount, MAX_DRAWABLE_QUADS);
+    if (character->waistCloths && character->waistCloths->loaded)
+        WaistCloth_Collect(character->waistCloths, camera, character->worldPosition, clothRot,
+                           character->worldPivot, clothQuads, &clothQuadCount, MAX_DRAWABLE_QUADS);
 
     BonesRenderer_RenderFrame(character->renderer,
         bonesCopy  ? bonesCopy  : character->renderBones,  bc,
         headsCopy  ? headsCopy  : character->renderHeads,   hc,
         torsosCopy ? torsosCopy : character->renderTorsos, tc,
-        transformedCenter, character->autoCenterCalculated);
+        transformedCenter, character->autoCenterCalculated,
+        clothQuads, clothQuadCount);
 
-    if (character->clothPanels && character->clothPanels->loaded) {
-        BeginMode3D(camera);
-        Cloth_Draw(character->clothPanels, camera, transformedCenter, false, character->worldPosition, MatrixRotateY(character->worldRotation), character->worldPivot);
-        RedrawWristsOnTop(character->renderer, bonesCopy ? bonesCopy : character->renderBones, bc);
-        EndMode3D();
-    }
-
-    if (character->waistCloths && character->waistCloths->loaded) {
-        BeginMode3D(camera);
-        WaistCloth_Draw(character->waistCloths, camera, transformedCenter, false, character->worldPosition, MatrixRotateY(character->worldRotation), character->worldPivot);
-        EndMode3D();
-    }
+    BeginMode3D(camera);
+    RedrawWristsOnTop(character->renderer, bonesCopy ? bonesCopy : character->renderBones, bc,
+                       transformedCenter, character->autoCenterCalculated);
+    EndMode3D();
 
     DrawModel3DWithDepthOrder(&character->model3dAttachments, rf, pid,
         character->worldPosition, character->worldPivot, rot, true, camera, transformedCenter, false);
@@ -6276,36 +6523,26 @@ static inline void DrawAnimatedCharacter(AnimatedCharacter* character, Camera ca
         rlEnableDepthTest(); EndMode3D();
     }
 
-    if (character->clothPanels && character->clothPanels->loaded) {
-        BeginMode3D(camera);
-        Cloth_Draw(character->clothPanels, camera, character->autoCenter, true,  (Vector3){0,0,0}, MatrixIdentity(), (Vector3){0,0,0});
-        EndMode3D();
-    }
-
-    if (character->waistCloths && character->waistCloths->loaded) {
-        BeginMode3D(camera);
-        WaistCloth_Draw(character->waistCloths, camera, character->autoCenter, true,  (Vector3){0,0,0}, MatrixIdentity(), (Vector3){0,0,0});
-        EndMode3D();
-    }
+    static DrawableQuad clothQuads2[MAX_DRAWABLE_QUADS];
+    int clothQuadCount2 = 0;
+    if (character->clothPanels && character->clothPanels->loaded)
+        Cloth_Collect(character->clothPanels, camera, (Vector3){0,0,0}, MatrixIdentity(),
+                      (Vector3){0,0,0}, clothQuads2, &clothQuadCount2, MAX_DRAWABLE_QUADS);
+    if (character->waistCloths && character->waistCloths->loaded)
+        WaistCloth_Collect(character->waistCloths, camera, (Vector3){0,0,0}, MatrixIdentity(),
+                           (Vector3){0,0,0}, clothQuads2, &clothQuadCount2, MAX_DRAWABLE_QUADS);
 
     BonesRenderer_RenderFrame(character->renderer,
         character->renderBones,  character->renderBonesCount,
         character->renderHeads,  character->renderHeadsCount,
         character->renderTorsos, character->renderTorsosCount,
-        character->autoCenter, character->autoCenterCalculated);
+        character->autoCenter, character->autoCenterCalculated,
+        clothQuads2, clothQuadCount2);
 
-    if (character->clothPanels && character->clothPanels->loaded) {
-        BeginMode3D(camera);
-        Cloth_Draw(character->clothPanels, camera, character->autoCenter, false, (Vector3){0,0,0}, MatrixIdentity(), (Vector3){0,0,0});
-        RedrawWristsOnTop(character->renderer, character->renderBones, character->renderBonesCount);
-        EndMode3D();
-    }
-
-    if (character->waistCloths && character->waistCloths->loaded) {
-        BeginMode3D(camera);
-        WaistCloth_Draw(character->waistCloths, camera, character->autoCenter, false, (Vector3){0,0,0}, MatrixIdentity(), (Vector3){0,0,0});
-        EndMode3D();
-    }
+    BeginMode3D(camera);
+    RedrawWristsOnTop(character->renderer, character->renderBones, character->renderBonesCount,
+                       character->autoCenter, character->autoCenterCalculated);
+    EndMode3D();
 
     if (hasVisibleModel && modelDist <= charDist) {
         BeginMode3D(camera); rlDisableDepthTest();
