@@ -940,37 +940,6 @@ static bool SwitchCharacterProfile(AppState* app, int profileIndex) {
 	return true;
 }
 
-static void LoadAnimationForCurrentProfile(AppState* app, const char* animName) {
-	if (g_characterManager.currentProfileIndex < 0 ||
-			g_characterManager.currentProfileIndex >= g_characterManager.profileCount) {
-		return;
-	}
-	CharacterProfile* profile = &g_characterManager.profiles[g_characterManager.currentProfileIndex];
-
-	char animPath[512];
-	char metaPath[512];
-	snprintf(animPath, sizeof(animPath), "%s%s.json", profile->animationsPath, animName);
-	snprintf(metaPath, sizeof(metaPath), "%s%s.anim", profile->animationsPath, animName);
-
-	bool wasPlaying = app->editor.isPlaying;
-
-	if (LoadAnimation(app->character, animPath, metaPath)) {
-		strcpy(app->currentAnimation, animName);
-		InitUndoHistory(&app->editor.undoHistory);
-
-		app->editor.isPlaying = wasPlaying;
-		SetCharacterAutoPlay(app->character, wasPlaying);
-
-		if (app->character->animation.frameCount > 0) {
-			SetCharacterFrame(app->character, 0);
-		}
-
-		TraceLog(LOG_INFO, "Loaded animation: %s (playing: %d)", animName, wasPlaying);
-	} else {
-		TraceLog(LOG_WARNING, "Could not load animation: %s", animName);
-	}
-}
-
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
@@ -2753,6 +2722,26 @@ static void App_HandleInput(AppState* app) {
 		SwitchCharacterProfile(app, 3);
 		return;
 	}
+	if (IsKeyPressed(KEY_FIVE) && g_characterManager.profileCount > 4) {
+		SwitchCharacterProfile(app, 4);
+		return;
+	}
+	if (IsKeyPressed(KEY_SIX) && g_characterManager.profileCount > 5) {
+		SwitchCharacterProfile(app, 5);
+		return;
+	}
+	if (IsKeyPressed(KEY_SEVEN) && g_characterManager.profileCount > 6) {
+		SwitchCharacterProfile(app, 6);
+		return;
+	}
+	if (IsKeyPressed(KEY_EIGHT) && g_characterManager.profileCount > 7) {
+		SwitchCharacterProfile(app, 7);
+		return;
+	}
+	if (IsKeyPressed(KEY_NINE) && g_characterManager.profileCount > 8) {
+		SwitchCharacterProfile(app, 8);
+		return;
+	}
 
 	if (IsKeyPressed(KEY_SPACE)) {
 		// Detectar si la animación terminó automáticamente (sin loop)
@@ -2855,18 +2844,8 @@ static void App_HandleInput(AppState* app) {
 		}
 	}
 
-	if (IsKeyPressed(KEY_FIVE)) {
-		LoadAnimationForCurrentProfile(app, "idle");
-	}
-	if (IsKeyPressed(KEY_SIX)) {
-		LoadAnimationForCurrentProfile(app, "talk");
-	}
-	if (IsKeyPressed(KEY_SEVEN)) {
-		LoadAnimationForCurrentProfile(app, "walk");
-	}
-	if (IsKeyPressed(KEY_EIGHT)) {
-		LoadAnimationForCurrentProfile(app, "jump");
-	}
+	// Note: KEY_FIVE through KEY_NINE are now used for character switching (see above)
+	// Use the 'N' key to cycle through animations (next) and 'B' key for previous
 
 	if (IsKeyPressed(KEY_N)) {
 		LoadNextAnimation(app);
