@@ -1,0 +1,27 @@
+# Configuración simple de texturas por bone
+# Formato: BoneName TextureIndex Visible Size
+# Path a la textura
+# Visible: 1=si, 0=no
+# Size: tamaño del billboard (0.1-1.0)
+
+Nose NULL 0 0.25
+Head data/textures/qui/head.png 1 0.201
+LEye NULL 0 0.20
+REye NULL 0 0.20
+LEar NULLg 0 0.15
+REar NULLg 0 0.15
+Neck data/textures/qui/neck.png 1 0.07
+LShoulder data/textures/qui/arm.png 1 0.13
+RShoulder data/textures/qui/arm.png 1 0.13
+Chest data/textures/qui/chest.png 1 0.22
+LElbow data/textures/qui/forearm.png 1 0.13
+RElbow data/textures/qui/forearm.png 1 0.13
+LWrist data/textures/qui/hand.png 1 0.07
+RWrist data/textures/qui/hand.png 1 0.07
+Hip data/textures/qui/hip.png 1 0.2
+LHip data/textures/qui/leg.png 1 0.15
+RHip data/textures/qui/leg.png 1 0.15
+LKnee data/textures/qui/shin.png 1 0.13
+RKnee data/textures/qui/shin.png 1 0.13
+LAnkle data/textures/qui/foot.png 1 0.13
+RAnkle data/textures/qui/foot.png 1 0.13

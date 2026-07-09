@@ -6,3 +6,4 @@ Eldwin data/textures/eld/bone_textures.txt data/textures/eld/texture_sets.txt da
 Zeta data/textures/zeta/bone_textures.txt data/textures/zeta/texture_sets.txt data/animations/zeta/
 Lizard data/textures/liz00/bone_textures.txt data/textures/liz00/texture_sets.txt data/animations/liz00/
 Gabriel data/textures/gab/bone_textures.txt data/textures/gab/texture_sets.txt data/animations/gab/
+Quimbur data/textures/qui/bone_textures.txt data/textures/qui/texture_sets.txt data/animations/qui/

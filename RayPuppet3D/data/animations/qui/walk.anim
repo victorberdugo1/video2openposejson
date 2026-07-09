@@ -1,0 +1,18 @@
+{
+  "name": "walk",
+  "fps": 30,
+  "start_frame": 0,
+  "end_frame": 90,
+  "loop": true,
+  "events": [
+    {"time": 0.0, "type": "texture", "bone": "Head", "variant": "idle"},
+    {"time": 0.5, "type": "texture", "bone": "Head", "variant": "idle"},
+    {"time": 0.6, "type": "texture", "bone": "Head", "variant": "idle"},
+    {"time": 0.7, "type": "texture", "bone": "Head", "variant": "idle"},
+    {"time": 0.8, "type": "texture", "bone": "Head", "variant": "idle"},
+    {"time": 0.9, "type": "texture", "bone": "Head", "variant": "idle"},
+    {"time": 1.0, "type": "texture", "bone": "Head", "variant": "idle"},
+    {"time": 1.1, "type": "texture", "bone": "Head", "variant": "idle"},
+    {"time": 1.2, "type": "texture", "bone": "Head", "variant": "idle"}
+  ]
+}

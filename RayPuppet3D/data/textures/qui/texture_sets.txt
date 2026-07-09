@@ -1,0 +1,7 @@
+# Bone Variant TexturePath
+# Expresiones de cabeza
+Head idle data/textures/qui/head.png
+
+# Puedes añadir variantes de otras partes
+# LWrist idle hil/HandR.png
+# LWrist fist hil/HandR_Fist.png
