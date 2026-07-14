@@ -11,6 +11,7 @@
 #include <string.h>
 #include <math.h>
 #include <time.h>
+#include <ctype.h>
 
 #define ATLAS_COLS                  4
 #define ATLAS_ROWS                  4
@@ -28,6 +29,8 @@
 #define MAX_WAIST_CLOTHS            8
 #define WAIST_CLOTH_COLS            8   /* 7 polígonos → 8 vértices */
 #define WAIST_CLOTH_ROWS            12  /* más filas = más resolución vertical cerca de rodilla/tobillo, donde más rápido se mueve la pierna */
+#define MAX_HAIRPIECES              16
+#define MAX_HAIR_POLYGON_VERTS      256
 
 #define TORSO_BIAS                  0.001f
 #define BONE_BIAS                   0.0f
@@ -251,16 +254,74 @@ static inline float CameraDepthOf(Camera camera, Vector3 point);
    de panel ni ángulo. */
 typedef struct {
     Vector3 v0, v1, v2, v3;   /* world-space, winding tl→tr→bl→br */
-    Color   colorFront;       /* cara que mira hacia afuera */
+    Color   colorFront;       /* cara que mira hacia afuera (o tint si hasTexture) */
     Color   colorBack;        /* cara interior (si no aplica, igual a colorFront) */
     bool    hasBackFace;      /* true para WaistCloth (doble cara con color propio) */
     bool    facingCamera;     /* true si la normal (v1-v0)x(v2-v0) mira hacia la cámara.
                                   Solo relevante si hasBackFace==true: decide cuál de las
                                   2 caras se dibuja (ver nota en DrawableQuad_Draw). */
     float   depth;            /* CameraDepthOf del centro del quad */
+    bool      hasTexture;     /* true para Hair; false (default) = quad de color plano,
+                                  comportamiento original de Cloth/WaistCloth sin tocar. */
+    Texture2D texture;        /* solo válida si hasTexture */
+    Vector2   uv0, uv1, uv2, uv3; /* UVs correspondientes a v0..v3 */
 } DrawableQuad;
 
 #define MAX_DRAWABLE_QUADS 4096
+
+typedef struct {
+    float gravity;
+    float damping;
+    float stiffness;
+    float mass;
+    float airResistance;
+} HairPhysicsConfig;
+
+typedef struct {
+    char          name[MAX_BONE_NAME_LENGTH];
+    char          anchorBoneName[MAX_BONE_NAME_LENGTH];
+    Vector3       anchorOffset;
+    Vector3       direction;
+    Vector3       baseVertices[MAX_HAIR_POLYGON_VERTS];
+    Vector3       vertices[MAX_HAIR_POLYGON_VERTS];
+    Vector3       renderVertices[MAX_HAIR_POLYGON_VERTS]; /* posiciones para dibujar (billboard), no participan en la física */
+    Vector3       normals[MAX_HAIR_POLYGON_VERTS];
+    Vector2       uv[MAX_HAIR_POLYGON_VERTS];
+    int           vertexCount;
+    int           quadCount;
+    int           cols;
+    int           rows;
+    Vector3       velocities[MAX_HAIR_POLYGON_VERTS];
+    Vector3       oldPositions[MAX_HAIR_POLYGON_VERTS];
+    bool          pinned[MAX_HAIR_POLYGON_VERTS];
+    float         length;
+    float         widthFactor;
+    float         gravity;
+    float         damping;
+    float         stiffness;
+    float         mass;
+    float         airResistance;
+    OrnamentPhysicsPreset physicsPreset;
+    int           textureIndex;
+    char          texturePath[MAX_FILE_PATH_LENGTH];
+    Texture2D     texture;
+    bool          textureLoaded;
+    Color         tint;
+    bool          enabled;
+    bool          visible;
+    int           boundBoneIndex;
+    Vector3       lastAnchorPos;
+    bool          initialized;
+} HairPiece;
+
+typedef struct {
+    HairPiece     pieces[MAX_HAIRPIECES];
+    int           count;
+    bool          loaded;
+    float         deltaTime;
+    float         subStepDelta;
+    int           substeps;
+} HairSystem;
 
 static inline void DrawableQuad_FromTri4(DrawableQuad* q, Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3,
                                           Color front, Color back, bool hasBack, Camera camera) {
@@ -268,6 +329,7 @@ static inline void DrawableQuad_FromTri4(DrawableQuad* q, Vector3 v0, Vector3 v1
     q->colorFront  = front;
     q->colorBack   = hasBack ? back : front;
     q->hasBackFace = hasBack;
+    q->hasTexture  = false;
     Vector3 center = (Vector3){
         (v0.x+v1.x+v2.x+v3.x)*0.25f,
         (v0.y+v1.y+v2.y+v3.y)*0.25f,
@@ -290,30 +352,33 @@ static inline void DrawableQuad_FromTri4(DrawableQuad* q, Vector3 v0, Vector3 v1
 }
 
 static inline void DrawableQuad_Draw(const DrawableQuad* q) {
-    /* Si no hay cara trasera distinta (cloth de un solo color), comportamiento
-       original: ambas caras visibles con el mismo color, sin costo extra. */
     bool drawFront = !q->hasBackFace || q->facingCamera;
-
+    rlSetTexture(q->hasTexture ? q->texture.id : 0);
     rlBegin(RL_TRIANGLES);
         if (drawFront) {
-            rlColor4ub(q->colorFront.r, q->colorFront.g, q->colorFront.b, q->colorFront.a);
+            if (q->hasTexture) {
+                rlColor4ub(255, 255, 255, 255);
+            } else {
+                rlColor4ub(q->colorFront.r, q->colorFront.g, q->colorFront.b, q->colorFront.a);
+            }
+            if (q->hasTexture) rlTexCoord2f(q->uv0.x, q->uv0.y);
             rlVertex3f(q->v0.x, q->v0.y, q->v0.z);
+            if (q->hasTexture) rlTexCoord2f(q->uv1.x, q->uv1.y);
             rlVertex3f(q->v1.x, q->v1.y, q->v1.z);
+            if (q->hasTexture) rlTexCoord2f(q->uv2.x, q->uv2.y);
             rlVertex3f(q->v2.x, q->v2.y, q->v2.z);
-
+            if (q->hasTexture) rlTexCoord2f(q->uv1.x, q->uv1.y);
             rlVertex3f(q->v1.x, q->v1.y, q->v1.z);
+            if (q->hasTexture) rlTexCoord2f(q->uv3.x, q->uv3.y);
             rlVertex3f(q->v3.x, q->v3.y, q->v3.z);
+            if (q->hasTexture) rlTexCoord2f(q->uv2.x, q->uv2.y);
             rlVertex3f(q->v2.x, q->v2.y, q->v2.z);
         }
-
         if (!drawFront) {
-            /* hasBackFace==true y la normal mira lejos de cámara: solo la cara
-               interior (colorBack) es la que debería verse en este quad. */
             rlColor4ub(q->colorBack.r, q->colorBack.g, q->colorBack.b, q->colorBack.a);
             rlVertex3f(q->v2.x, q->v2.y, q->v2.z);
             rlVertex3f(q->v1.x, q->v1.y, q->v1.z);
             rlVertex3f(q->v0.x, q->v0.y, q->v0.z);
-
             rlVertex3f(q->v2.x, q->v2.y, q->v2.z);
             rlVertex3f(q->v3.x, q->v3.y, q->v3.z);
             rlVertex3f(q->v1.x, q->v1.y, q->v1.z);
@@ -636,6 +701,7 @@ typedef struct AnimatedCharacter {
     OrnamentSystem*         ornaments;
     ClothSystem*            clothPanels;
     WaistClothSystem*       waistCloths;
+    HairSystem*             hairSystem;
     SlashTrailSystem        slashTrails;
     Model3DAttachmentSystem model3dAttachments;
     Vector3                 worldPosition;
@@ -851,6 +917,16 @@ static inline void WaistCloth_UpdatePhysics(WaistClothSystem* sys, const Animati
 static inline void WaistCloth_Collect(WaistClothSystem* sys, Camera camera, Vector3 worldPos, Matrix worldRot,
                                        Vector3 worldPivot, DrawableQuad* quads, int* quadCount, int quadCapacity);
 static inline void WaistCloth_Draw(WaistClothSystem* sys, Camera camera, Vector3 characterCenter, bool behindOnly, Vector3 worldPos, Matrix worldRot, Vector3 worldPivot);
+
+static inline HairSystem* HairSystem_Create(void);
+static inline HairSystem* HairSystem_LoadFromFile(const char* filePath);
+static inline void HairSystem_Update(HairSystem* sys, const Person* person, float dt);
+static inline void HairSystem_Collect(HairSystem* sys, Camera camera,
+                                      DrawableQuad* outQuads, int* outQuadCount, int maxQuads);
+static inline void HairSystem_Draw(HairSystem* sys, Camera camera);
+static inline void HairSystem_Destroy(HairSystem* sys);
+static inline void HairSystem_DebugPrint(HairSystem* sys);
+static inline void HairSystem_LoadTextures(HairSystem* sys, BonesRenderer* renderer);
 
 static inline void SlashTrail_InitSystem(SlashTrailSystem* sys);
 static inline void SlashTrail_FreeSystem(SlashTrailSystem* sys);
@@ -3484,7 +3560,7 @@ static inline void BonesRenderer_RenderFrame(BonesRenderer* renderer,
            WaistCloth anclado en Neck cubriendo el torso) quede correctamente
            dibujado celda por celda en vez de todo-antes/todo-después. */
         for (int i = 0; i < quadCount && itemCount < MAX_RENDER_ITEMS; i++) {
-            renderItems[itemCount++] = (RenderItem){3, i, quads[i].depth, 0.0f, false};
+            renderItems[itemCount++] = (RenderItem){3, i, quads[i].depth, INDEX_BIAS*i, false};
         }
 
         DetectZFighting(renderItems, itemCount);
@@ -5877,6 +5953,14 @@ static inline AnimatedCharacter* CreateAnimatedCharacter(const char* textureConf
     if (textureConfigPath)
         WaistCloth_LoadFromConfig(character->waistCloths, textureConfigPath);
 
+    character->hairSystem = NULL;
+    if (textureConfigPath) {
+        character->hairSystem = HairSystem_LoadFromFile(textureConfigPath);
+        if (character->hairSystem && character->hairSystem->loaded) {
+            HairSystem_LoadTextures(character->hairSystem, character->renderer);
+        }
+    }
+
     SlashTrail_InitSystem(&character->slashTrails);
     Model3D_InitSystem(&character->model3dAttachments);
 
@@ -5898,7 +5982,573 @@ static inline void DestroyAnimatedCharacter(AnimatedCharacter* character) {
     Ornaments_Free(character->ornaments);
     Cloth_Free(character->clothPanels);
     WaistCloth_Free(character->waistCloths);
+    if (character->hairSystem) HairSystem_Destroy(character->hairSystem);
     free(character);
+}
+
+static HairPhysicsConfig HairPhysicsPresets[] = {
+    { 0.3f,  0.98f, 0.8f,  0.06f, 0.01f },
+    { 0.8f,  0.96f, 0.7f,  0.05f, 0.02f },
+    { 1.2f,  0.94f, 0.6f,  0.04f, 0.03f },
+    { 1.8f,  0.91f, 0.45f, 0.03f, 0.04f },
+    { 3.0f,  0.87f, 0.25f, 0.02f, 0.06f },
+    { 5.0f,  0.80f, 0.10f, 0.01f, 0.08f },
+};
+
+static inline HairSystem* HairSystem_Create(void) {
+    HairSystem* sys = (HairSystem*)malloc(sizeof(HairSystem));
+    if (!sys) return NULL;
+    memset(sys, 0, sizeof(HairSystem));
+    sys->substeps = 4;
+    sys->deltaTime = 1.0f / 60.0f;
+    sys->subStepDelta = sys->deltaTime / (float)sys->substeps;
+    sys->loaded = false;
+    return sys;
+}
+
+static inline void HairPiece_GenerateGeometry(HairPiece* hair) {
+    if (!hair) return;
+    int cols = hair->cols;
+    int rows = hair->rows;
+    if (cols < 2 || cols > 32) cols = 4;
+    if (rows < 2 || rows > 32) rows = 5;
+    hair->vertexCount = cols * rows;
+    hair->quadCount = (cols - 1) * (rows - 1);
+    if (hair->quadCount > 64) {
+        hair->quadCount = 64;
+        hair->vertexCount = (hair->quadCount / (cols - 1) + 1) * cols;
+    }
+
+    Vector3 dir = hair->direction;
+    if (Vector3Length(dir) < 0.01f) dir = (Vector3){0, -1, 0};
+    dir = Vector3Normalize(dir);
+
+    // Calcular perpendiculares estables
+    Vector3 perp1 = (fabs(dir.y) < 0.99f) ? 
+                    Vector3Normalize(Vector3CrossProduct(dir, (Vector3){0, 1, 0})) :
+                    Vector3Normalize(Vector3CrossProduct(dir, (Vector3){1, 0, 0}));
+    Vector3 perp2 = Vector3Normalize(Vector3CrossProduct(dir, perp1));
+
+    // ================================================================
+    // CAMBIO IMPORTANTE: el ancho total es AHORA hair->widthFactor
+    // (ya NO se multiplica por hair->length)
+    // ================================================================
+    float totalWidth = hair->widthFactor; // <--- LÍNEA CLAVE
+
+    for (int r = 0; r < rows; r++) {
+        float progress = (rows > 1) ? (float)r / (float)(rows - 1) : 0.0f;
+        float distFromAnchor = progress * hair->length;
+        Vector3 rowOffset = Vector3Scale(dir, distFromAnchor);
+
+        for (int c = 0; c < cols; c++) {
+            float u = (cols > 1) ? (float)c / (float)(cols - 1) : 0.5f;
+            // El ancho en cada fila es totalWidth (constante)
+            float w = (u - 0.5f) * totalWidth; 
+
+            int idx = r * cols + c;
+            if (idx >= MAX_HAIR_POLYGON_VERTS) break;
+
+            hair->baseVertices[idx] = Vector3Add(
+                Vector3Add(hair->anchorOffset, rowOffset),
+                Vector3Scale(perp2, w)
+            );
+            hair->vertices[idx] = hair->baseVertices[idx];
+            hair->oldPositions[idx] = hair->baseVertices[idx];
+            hair->velocities[idx] = (Vector3){0, 0, 0};
+            hair->uv[idx] = (Vector2){u, progress};
+            hair->pinned[idx] = (r == 0);
+            hair->normals[idx] = Vector3Negate(dir);
+        }
+    }
+}
+static inline void HairPiece_ApplyForces(HairPiece* hair, float dt) {
+    if (!hair || !hair->enabled) return;
+    Vector3 gravityVec = (Vector3){0, -hair->gravity, 0};
+    for (int i = 0; i < hair->vertexCount; i++) {
+        if (hair->pinned[i]) continue;
+        Vector3 vel = Vector3Scale(
+            Vector3Subtract(hair->vertices[i], hair->oldPositions[i]),
+            1.0f / (dt + 0.0001f)
+        );
+        vel = Vector3Scale(vel, hair->damping);
+        Vector3 accel = gravityVec;
+        Vector3 newPos = Vector3Add(hair->vertices[i], Vector3Scale(vel, dt));
+        newPos = Vector3Add(newPos, Vector3Scale(accel, dt * dt * 0.5f));
+        hair->oldPositions[i] = hair->vertices[i];
+        hair->vertices[i] = newPos;
+    }
+}
+
+
+static inline void HairPiece_ConstrainEdges(HairPiece* hair, int iterations) {
+    if (!hair || !hair->enabled) return;
+    int cols = hair->cols;
+    for (int iter = 0; iter < iterations; iter++) {
+        for (int r = 0; r < hair->rows; r++) {
+            for (int c = 0; c < cols - 1; c++) {
+                int i0 = r * cols + c;
+                int i1 = r * cols + c + 1;
+                Vector3 delta = Vector3Subtract(hair->vertices[i1], hair->vertices[i0]);
+                float len = Vector3Length(delta);
+                float restLen = Vector3Distance(hair->baseVertices[i0], hair->baseVertices[i1]);
+                if (len > 0.0001f) {
+                    float diff = (len - restLen) / len;
+                    Vector3 correction = Vector3Scale(delta, diff * 0.5f * hair->stiffness);
+                    if (!hair->pinned[i0]) hair->vertices[i0] = Vector3Add(hair->vertices[i0], correction);
+                    if (!hair->pinned[i1]) hair->vertices[i1] = Vector3Subtract(hair->vertices[i1], correction);
+                }
+            }
+        }
+        for (int c = 0; c < cols; c++) {
+            for (int r = 0; r < hair->rows - 1; r++) {
+                int i0 = r * cols + c;
+                int i1 = (r + 1) * cols + c;
+                Vector3 delta = Vector3Subtract(hair->vertices[i1], hair->vertices[i0]);
+                float len = Vector3Length(delta);
+                float restLen = Vector3Distance(hair->baseVertices[i0], hair->baseVertices[i1]);
+                if (len > 0.0001f) {
+                    float diff = (len - restLen) / len;
+                    Vector3 correction = Vector3Scale(delta, diff * 0.5f * hair->stiffness * 1.2f);
+                    if (!hair->pinned[i0]) hair->vertices[i0] = Vector3Add(hair->vertices[i0], correction);
+                    if (!hair->pinned[i1]) hair->vertices[i1] = Vector3Subtract(hair->vertices[i1], correction);
+                }
+            }
+        }
+    }
+}
+
+
+static inline void HairPiece_Init(HairPiece* hair) {
+    if (!hair || hair->initialized) return;
+    HairPiece_GenerateGeometry(hair);
+    HairPhysicsConfig cfg = HairPhysicsPresets[hair->physicsPreset];
+    hair->gravity = cfg.gravity;
+    hair->damping = cfg.damping;
+    hair->stiffness = cfg.stiffness;
+    hair->mass = cfg.mass;
+    hair->airResistance = cfg.airResistance;
+    if (!hair->textureLoaded && hair->texturePath[0] && strcmp(hair->texturePath, "NULL") != 0) {
+        hair->texture = LoadTexture(hair->texturePath);
+        hair->textureLoaded = (hair->texture.id != 0);
+    }
+    for (int s = 0; s < 5; s++) {
+        HairPiece_ApplyForces(hair, 0.016f);
+        HairPiece_ConstrainEdges(hair, 3);
+    }
+    hair->initialized = true;
+}
+
+
+
+
+static inline void HairPiece_UpdateAnchors(HairPiece* hair, const Person* person) {
+    if (!hair || !hair->enabled || !person) return;
+    Vector3 anchorPos;
+    bool found = false;
+
+    if (strcmp(hair->anchorBoneName, "Head") == 0) {
+        /* "Head" no es un bone trackeado real: su posición se sintetiza a
+           partir de Nose/Eyes/Ears (ver CalculateHeadPosition), igual que
+           hace el resto del pipeline para dibujar la textura de la cabeza.
+           Por eso no se puede buscar por nombre en person->bones. */
+        anchorPos = CalculateHeadPosition(person);
+        found = (anchorPos.x != 0 || anchorPos.y != 0 || anchorPos.z != 0);
+    } else {
+        for (int i = 0; i < person->boneCount; i++) {
+            if (strcmp(person->bones[i].name, hair->anchorBoneName) == 0) {
+                anchorPos = person->bones[i].position.position;
+                found = true;
+                break;
+            }
+        }
+    }
+    if (!found) return;
+
+    hair->lastAnchorPos = anchorPos;
+    Vector3 globalAnchor = Vector3Add(hair->lastAnchorPos, hair->anchorOffset);
+    int cols = hair->cols;
+    for (int c = 0; c < cols; c++) {
+        int idx = 0 * cols + c;
+        if (idx < hair->vertexCount && hair->pinned[idx]) {
+            Vector3 target = Vector3Add(globalAnchor, 
+                                       Vector3Scale(Vector3Subtract(hair->baseVertices[idx], hair->anchorOffset), 1.0f));
+            hair->vertices[idx] = Vector3Lerp(hair->vertices[idx], target, 0.3f);
+            hair->oldPositions[idx] = hair->vertices[idx];
+        }
+    }
+}
+
+
+
+static inline void HairSystem_Update(HairSystem* sys, const Person* person, float dt) {
+    if (!sys || !sys->loaded) return;
+    sys->deltaTime = dt;
+    sys->subStepDelta = dt / (float)sys->substeps;
+    for (int h = 0; h < sys->count; h++) {
+        HairPiece* hair = &sys->pieces[h];
+        if (!hair->enabled || !hair->visible) continue;
+        if (!hair->initialized) HairPiece_Init(hair);
+        HairPiece_UpdateAnchors(hair, person);
+        for (int sub = 0; sub < sys->substeps; sub++) {
+            HairPiece_ApplyForces(hair, sys->subStepDelta);
+            HairPiece_ConstrainEdges(hair, 3);
+        }
+    }
+}
+
+static inline void HairSystem_Collect(HairSystem* sys, Camera camera, 
+                                      DrawableQuad* outQuads, int* outQuadCount, 
+                                      int maxQuads) {
+    if (!sys || !sys->loaded || !outQuads) return;
+    
+    for (int h = 0; h < sys->count; h++) {
+        HairPiece* hair = &sys->pieces[h];
+        if (!hair->enabled || !hair->visible) continue;
+        if (!hair->textureLoaded) continue;
+        
+        int cols = hair->cols;
+        int rows = hair->rows;
+        
+        for (int r = 0; r < rows - 1; r++) {
+            for (int c = 0; c < cols - 1; c++) {
+                if (*outQuadCount >= maxQuads) return;
+                
+                int i0 = r * cols + c;
+                int i1 = r * cols + c + 1;
+                int i2 = (r + 1) * cols + c + 1;
+                int i3 = (r + 1) * cols + c;
+                
+                DrawableQuad* q = &outQuads[*outQuadCount];
+                
+                q->v0 = hair->vertices[i0];
+                q->v1 = hair->vertices[i1];
+                q->v2 = hair->vertices[i2];
+                q->v3 = hair->vertices[i3];
+                
+                q->uv0 = hair->uv[i0];
+                q->uv1 = hair->uv[i1];
+                q->uv2 = hair->uv[i2];
+                q->uv3 = hair->uv[i3];
+                
+                q->hasTexture = true;
+                q->texture = hair->texture;
+                q->colorFront = WHITE;
+                q->colorBack = WHITE;
+                q->hasBackFace = true;
+                
+                Vector3 center = Vector3Scale(Vector3Add(Vector3Add(q->v0, q->v1), Vector3Add(q->v2, q->v3)), 0.25f);
+                q->depth = CameraDepthOf(camera, center);
+                
+                Vector3 edge1 = Vector3Subtract(q->v1, q->v0);
+                Vector3 edge2 = Vector3Subtract(q->v3, q->v0);
+                Vector3 normal = Vector3CrossProduct(edge1, edge2);
+                Vector3 toCam = Vector3Subtract(camera.position, center);
+                q->facingCamera = Vector3DotProduct(normal, toCam) >= 0.0f;
+                
+                (*outQuadCount)++;
+            }
+        }
+    }
+}
+
+static inline void HairSystem_Draw(HairSystem* sys, Camera camera) {
+    if (!sys || !sys->loaded) return;
+
+    /* Vector "derecha" de la cámara: eje de ancho del billboard.
+       Mismo criterio que usa raylib internamente para DrawBillboard. */
+    Vector3 viewDir = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+    Vector3 camRight = Vector3Normalize(Vector3CrossProduct(camera.up, viewDir));
+
+    rlDisableBackfaceCulling();
+    BeginMode3D(camera);
+    for (int h = 0; h < sys->count; h++) {
+        HairPiece* hair = &sys->pieces[h];
+        if (!hair->enabled || !hair->visible) continue;
+        int cols = hair->cols;
+        rlColor4ub(255, 255, 255, 255);
+        if (hair->textureLoaded) rlSetTexture(hair->texture.id);
+
+        for (int r = 0; r < hair->rows; r++) {
+            /* Centro y ancho reales de la fila, tal como los dejó la física
+               (mantiene el balanceo/curvatura del mechón). */
+            Vector3 rowStart = hair->vertices[r * cols];
+            Vector3 rowEnd   = hair->vertices[r * cols + (cols - 1)];
+            Vector3 rowCenter = Vector3Scale(Vector3Add(rowStart, rowEnd), 0.5f);
+            float rowWidth = Vector3Distance(rowStart, rowEnd);
+
+            for (int c = 0; c < cols; c++) {
+                float u = (cols > 1) ? (float)c / (float)(cols - 1) : 0.5f;
+                int idx = r * cols + c;
+                hair->renderVertices[idx] = Vector3Add(rowCenter, Vector3Scale(camRight, (u - 0.5f) * rowWidth));
+            }
+        }
+
+        for (int r = 0; r < hair->rows - 1; r++) {
+            for (int c = 0; c < cols - 1; c++) {
+                int i0 = r * cols + c;
+                int i1 = r * cols + c + 1;
+                int i2 = (r + 1) * cols + c + 1;
+                int i3 = (r + 1) * cols + c;
+                rlBegin(RL_QUADS);
+                if (hair->textureLoaded) rlTexCoord2f(hair->uv[i0].x, hair->uv[i0].y);
+                rlVertex3f(hair->renderVertices[i0].x, hair->renderVertices[i0].y, hair->renderVertices[i0].z);
+                if (hair->textureLoaded) rlTexCoord2f(hair->uv[i1].x, hair->uv[i1].y);
+                rlVertex3f(hair->renderVertices[i1].x, hair->renderVertices[i1].y, hair->renderVertices[i1].z);
+                if (hair->textureLoaded) rlTexCoord2f(hair->uv[i2].x, hair->uv[i2].y);
+                rlVertex3f(hair->renderVertices[i2].x, hair->renderVertices[i2].y, hair->renderVertices[i2].z);
+                if (hair->textureLoaded) rlTexCoord2f(hair->uv[i3].x, hair->uv[i3].y);
+                rlVertex3f(hair->renderVertices[i3].x, hair->renderVertices[i3].y, hair->renderVertices[i3].z);
+                rlEnd();
+            }
+        }
+        if (hair->textureLoaded) rlSetTexture(0);
+    }
+    EndMode3D();
+    rlEnableBackfaceCulling();
+}
+
+static inline void HairSystem_Destroy(HairSystem* sys) {
+    if (!sys) return;
+    for (int h = 0; h < sys->count; h++) {
+        if (sys->pieces[h].textureLoaded) UnloadTexture(sys->pieces[h].texture);
+    }
+    sys->loaded = false;
+    sys->count = 0;
+    free(sys);
+}
+
+static inline void TrimWhitespace(char* str) {
+    if (!str) return;
+    int len = strlen(str);
+    while (len > 0 && isspace((unsigned char)str[len - 1])) str[--len] = '\0';
+    while (*str && isspace((unsigned char)*str)) str++;
+}
+
+static inline int CountTokens(const char* line) {
+    if (!line) return 0;
+    int count = 0;
+    int inToken = 0;
+    for (int i = 0; line[i]; i++) {
+        if (!isspace((unsigned char)line[i])) {
+            if (!inToken) { count++; inToken = 1; }
+        } else {
+            inToken = 0;
+        }
+    }
+    return count;
+}
+
+static inline char* GetToken(const char* line, int tokenIndex, char* out, size_t outSize) {
+    if (!line || !out) return NULL;
+    int count = 0;
+    int inToken = 0;
+    int tokenStart = 0;
+    for (int i = 0; line[i]; i++) {
+        if (!isspace((unsigned char)line[i])) {
+            if (!inToken) {
+                tokenStart = i;
+                inToken = 1;
+            }
+        } else {
+            if (inToken) {
+                if (count == tokenIndex) {
+                    int len = i - tokenStart;
+                    if (len >= (int)outSize) len = outSize - 1;
+                    strncpy(out, line + tokenStart, len);
+                    out[len] = '\0';
+                    return out;
+                }
+                count++;
+                inToken = 0;
+            }
+        }
+    }
+    if (inToken && count == tokenIndex) {
+        int len = strlen(line) - tokenStart;
+        if (len >= (int)outSize) len = outSize - 1;
+        strncpy(out, line + tokenStart, len);
+        out[len] = '\0';
+        return out;
+    }
+    return NULL;
+}
+
+static inline bool ParseVector3(const char* str, Vector3* out) {
+    if (!str || !out) return false;
+    char copy[256];
+    strncpy(copy, str, sizeof(copy) - 1);
+    copy[sizeof(copy) - 1] = '\0';
+    char* p = copy;
+    char* sep = strchr(p, ',');
+    if (!sep) sep = strchr(p, ' ');
+    if (sep) {
+        *sep = '\0';
+        out->x = (float)atof(p);
+        p = sep + 1;
+        sep = strchr(p, ',');
+        if (!sep) sep = strchr(p, ' ');
+        if (sep) {
+            *sep = '\0';
+            out->y = (float)atof(p);
+            out->z = (float)atof(sep + 1);
+            return true;
+        }
+    }
+    return false;
+}
+
+static inline OrnamentPhysicsPreset ParsePhysicsPreset(const char* str) {
+    if (!str) return PHYSICS_MEDIUM;
+    if (strcasecmp(str, "veryhard") == 0) return PHYSICS_VERYHARD;
+    if (strcasecmp(str, "hard") == 0) return PHYSICS_HARD;
+    if (strcasecmp(str, "stiff") == 0) return PHYSICS_STIFF;
+    if (strcasecmp(str, "medium") == 0) return PHYSICS_MEDIUM;
+    if (strcasecmp(str, "soft") == 0) return PHYSICS_SOFT;
+    if (strcasecmp(str, "verysoft") == 0) return PHYSICS_VERYSOFT;
+    return PHYSICS_MEDIUM;
+}
+
+static inline Color ParseColorHex(const char* hex) {
+    if (!hex) return (Color){200, 200, 200, 255};
+    unsigned int r, g, b, a;
+    a = 255;
+    if (strlen(hex) == 8) {
+        sscanf(hex, "%2x%2x%2x%2x", &r, &g, &b, &a);
+    } else if (strlen(hex) == 6) {
+        sscanf(hex, "%2x%2x%2x", &r, &g, &b);
+    } else {
+        return (Color){200, 200, 200, 255};
+    }
+    return (Color){(unsigned char)r, (unsigned char)g, (unsigned char)b, (unsigned char)a};
+}
+
+static inline bool ParseHairpieceLine(const char* line, HairPiece* out) {
+    if (!line || !out) return false;
+    char buffer[512];
+    int tokenCount = CountTokens(line);
+    if (tokenCount < 10) return false;
+
+    // Token 1: name
+    GetToken(line, 1, buffer, sizeof(buffer));
+    strncpy(out->name, buffer, MAX_BONE_NAME_LENGTH - 1);
+    out->name[MAX_BONE_NAME_LENGTH - 1] = '\0';
+
+    // Token 2: anchorBone
+    GetToken(line, 2, out->anchorBoneName, MAX_BONE_NAME_LENGTH);
+
+    // Token 3: anchorOffset
+    GetToken(line, 3, buffer, sizeof(buffer));
+    if (!ParseVector3(buffer, &out->anchorOffset)) out->anchorOffset = (Vector3){0, 0, 0};
+
+    // Token 4: direction
+    GetToken(line, 4, buffer, sizeof(buffer));
+    if (!ParseVector3(buffer, &out->direction)) out->direction = (Vector3){0, -1, 0};
+    out->direction = Vector3Normalize(out->direction);
+
+    // Token 5: texture
+    GetToken(line, 5, out->texturePath, MAX_FILE_PATH_LENGTH);
+
+    // Token 6: cols
+    GetToken(line, 6, buffer, sizeof(buffer));
+    out->cols = atoi(buffer);
+    if (out->cols < 2) out->cols = 3;
+    if (out->cols > 32) out->cols = 32;
+
+    // Token 7: rows
+    GetToken(line, 7, buffer, sizeof(buffer));
+    out->rows = atoi(buffer);
+    if (out->rows < 2) out->rows = 4;
+    if (out->rows > 32) out->rows = 32;
+
+    // ============================================================
+    // Token 8: widthFactor — SIN NINGÚN LÍMITE SUPERIOR, solo mínimo
+    // ============================================================
+    GetToken(line, 8, buffer, sizeof(buffer));
+    out->widthFactor = (float)atof(buffer);
+    if (out->widthFactor < 0.01f) out->widthFactor = 0.01f;   // mínimo para evitar cero
+
+    // Token 9: length
+    GetToken(line, 9, buffer, sizeof(buffer));
+    out->length = (float)atof(buffer);
+    if (out->length < 0.01f) out->length = 0.1f;
+
+    // Token 10: physics
+    GetToken(line, 10, buffer, sizeof(buffer));
+    out->physicsPreset = ParsePhysicsPreset(buffer);
+
+    // Token 11: tint (opcional)
+    if (tokenCount > 11) {
+        GetToken(line, 11, buffer, sizeof(buffer));
+        out->tint = ParseColorHex(buffer);
+    } else {
+        out->tint = (Color){255, 255, 255, 255};
+    }
+
+    // ============================================================
+    // IMPRIME EN CONSOLA LOS VALORES REALES QUE HA LEÍDO
+    // ============================================================
+    printf("[HAIR] Nombre=%s, widthFactor=%.2f, length=%.2f, ancho visible=%.2f\n",
+           out->name, out->widthFactor, out->length, out->widthFactor * out->length);
+
+    out->enabled = true;
+    out->visible = true;
+    out->textureIndex = -1;
+    out->initialized = false;
+    return true;
+}
+static inline HairSystem* HairSystem_LoadFromFile(const char* filePath) {
+    if (!filePath) return NULL;
+    FILE* f = fopen(filePath, "r");
+    if (!f) return NULL;
+    HairSystem* sys = HairSystem_Create();
+    if (!sys) {
+        fclose(f);
+        return NULL;
+    }
+    char line[512];
+    while (fgets(line, sizeof(line), f) && sys->count < MAX_HAIRPIECES) {
+        TrimWhitespace(line);
+        if (!line[0] || line[0] == '#') continue;
+        if (strncmp(line, "@HAIRPIECE", 10) == 0) {
+            HairPiece* hair = &sys->pieces[sys->count];
+            memset(hair, 0, sizeof(HairPiece));
+            if (ParseHairpieceLine(line, hair)) {
+                sys->count++;
+            }
+        }
+    }
+    fclose(f);
+    if (sys->count > 0) {
+        sys->loaded = true;
+        return sys;
+    } else {
+        free(sys);
+        return NULL;
+    }
+}
+
+static inline void HairSystem_LoadTextures(HairSystem* sys, BonesRenderer* renderer) {
+    if (!sys || !sys->loaded || !renderer) return;
+    
+    for (int h = 0; h < sys->count; h++) {
+        HairPiece* hair = &sys->pieces[h];
+        if (!hair->texturePath[0]) continue;
+        
+        int texIndex = BonesRenderer_LoadTexture(renderer, hair->texturePath);
+        if (texIndex >= 0 && texIndex < renderer->textureCount) {
+            hair->texture = renderer->textures[texIndex];
+            hair->textureLoaded = true;
+        }
+    }
+}
+
+static inline void HairSystem_DebugPrint(HairSystem* sys) {
+    if (!sys) return;
+    printf("[HAIR] System loaded: %d hairpieces\n", sys->count);
+    for (int h = 0; h < sys->count; h++) {
+        HairPiece* hair = &sys->pieces[h];
+        printf("  [%d] '%s' @ %s\n", h, hair->name, hair->anchorBoneName);
+    }
 }
 
 static inline void UpdateAnimatedCharacter(AnimatedCharacter* character, float deltaTime) {
@@ -6019,6 +6669,10 @@ static inline void UpdateAnimatedCharacter(AnimatedCharacter* character, float d
         if (!character->waistCloths->cloths[0].initialized)
             WaistCloth_InitializePhysics(character->waistCloths, frameToUse);
         WaistCloth_UpdatePhysics(character->waistCloths, frameToUse, deltaTime);
+    }
+
+    if (character->hairSystem && character->hairSystem->loaded && frameToUse && frameToUse->valid) {
+        HairSystem_Update(character->hairSystem, &frameToUse->persons[0], deltaTime);
     }
 
     if (!usingTransition && character->animController && character->animController->currentClipIndex >= 0) {
@@ -6523,6 +7177,9 @@ static inline void DrawAnimatedCharacter(AnimatedCharacter* character, Camera ca
         rlEnableDepthTest(); EndMode3D();
     }
 
+    if (character->hairSystem && character->hairSystem->loaded)
+        HairSystem_Draw(character->hairSystem, camera);
+
     static DrawableQuad clothQuads2[MAX_DRAWABLE_QUADS];
     int clothQuadCount2 = 0;
     if (character->clothPanels && character->clothPanels->loaded)
@@ -6531,6 +7188,8 @@ static inline void DrawAnimatedCharacter(AnimatedCharacter* character, Camera ca
     if (character->waistCloths && character->waistCloths->loaded)
         WaistCloth_Collect(character->waistCloths, camera, (Vector3){0,0,0}, MatrixIdentity(),
                            (Vector3){0,0,0}, clothQuads2, &clothQuadCount2, MAX_DRAWABLE_QUADS);
+
+    rlEnableColorBlend();
 
     BonesRenderer_RenderFrame(character->renderer,
         character->renderBones,  character->renderBonesCount,
