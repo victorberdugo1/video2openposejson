@@ -10,7 +10,7 @@ LEye NULL 0 0.20
 REye NULL 0 0.20
 LEar NULLg 0 0.15
 REar NULLg 0 0.15
-Neck data/textures/gab/neck.png 1 0.055
+Neck data/textures/gab/neck.png 1 0.06
 LShoulder data/textures/gab/arm.png 1 0.13
 RShoulder data/textures/gab/arm.png 1 0.13
 Chest data/textures/gab/chest.png 1 0.22
@@ -27,11 +27,11 @@ LAnkle data/textures/gab/foot.png 1 0.13
 RAnkle data/textures/gab/foot.png 1 0.13
 
 #type	    nombre ancla wTop	wBot	height	offY	offX	offZ	rot	color	 physics ScurveDepth	color2
-@WAISTCLOTH Loin   Neck	 0.11	0.35	0.58	0.008	0.00	0.0	0.0	0f259cFF hard  0.05		dcd4d1FF
-@WAISTCLOTH Loin2  Neck	 0.12	0.3	0.055	0.018	0.00	0.005	0.0	0f1120FF medium  0.05		2c529dFF
+@WAISTCLOTH Loin   Neck	 0.1	0.35	0.58	0.03	0.00	0.01	0.0	0f259cFF hard  0.035		dcd4d1FF
+#@WAISTCLOTH Loin2  Neck	 0.11	0.3	0.055	0.018	0.00	0.005	0.0	0f1120FF medium  0.05		2c529dFF
 
 #type      name ancla anchorOffset   direction textura                   cols rows width length physics
-@HAIRPIECE Hair Nose  0.0,0.02,-0.13 0.0,0.0,1.0  data/textures/gab/hair.png  2    8   0.08   0.25   soft
+@HAIRPIECE Hair Head  0.0,-0.03,-0.06 0.0,0.0,1.0  data/textures/gab/hair.png  2   16   0.09   0.25   soft
 
 #@HAIRPIECE BraidLeft LShoulder 0.08,-0.02,0.0 0,-0.9,0.2 data/textures/gab/hair.png 3 6 0.25 soft
 

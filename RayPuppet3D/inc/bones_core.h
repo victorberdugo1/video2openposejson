@@ -311,6 +311,7 @@ typedef struct {
     bool          visible;
     int           boundBoneIndex;
     Vector3       lastAnchorPos;
+    BoneOrientation anchorOrientation;  /* Para mapeo de atlas 4x4 igual que bones */
     bool          initialized;
 } HairPiece;
 
@@ -920,7 +921,7 @@ static inline void WaistCloth_Draw(WaistClothSystem* sys, Camera camera, Vector3
 
 static inline HairSystem* HairSystem_Create(void);
 static inline HairSystem* HairSystem_LoadFromFile(const char* filePath);
-static inline void HairSystem_Update(HairSystem* sys, const Person* person, float dt);
+static inline void HairSystem_Update(HairSystem* sys, const Person* person, const AnimationFrame* frame, float dt);
 static inline void HairSystem_Collect(HairSystem* sys, Camera camera,
                                       DrawableQuad* outQuads, int* outQuadCount, int maxQuads);
 static inline void HairSystem_Draw(HairSystem* sys, Camera camera);
@@ -3242,6 +3243,61 @@ static inline void CalculateHeadRenderData(const HeadRenderData* headData, Camer
     }
 }
 
+static inline void CalculateHairRenderData(Vector3 position, BoneOrientation* orientation, Camera camera,
+                                           int* outChosenIndex, float* outRotation, bool* outMirrored) {
+    if (!orientation || !orientation->valid) {
+        CalculateHandBoneRenderData(position, camera, outChosenIndex, outRotation, outMirrored, "Hair");
+        return;
+    }
+    static const int indices[3][8] = {
+        { 0, 4, 5, 6, 7, 6, 5, 4},
+        { 2,12,13,14,15,14,13,12},
+        { 1, 8, 9,10,11,10, 9, 8}
+    };
+
+    Vector3 camDir = Vector3Subtract(camera.position, position);
+    Vector3 local  = {
+        -Vector3DotProduct(camDir, orientation->right),
+         Vector3DotProduct(camDir, orientation->up),
+         Vector3DotProduct(camDir, orientation->forward)
+    };
+
+    float localYaw   = atan2f(local.x, local.z);
+    if (localYaw < 0.0f) localYaw += 2.0f * PI;
+    float localYawDeg = localYaw * RAD2DEG;
+    float horizDist   = sqrtf(local.x*local.x + local.z*local.z);
+    float pitchDeg    = atan2f(local.y, horizDist) * RAD2DEG;
+
+    int sector;
+    if (pitchDeg >= 65.0f || pitchDeg <= -65.0f) {
+        Vector3 hDiff = {camera.position.x - position.x, 0.0f, camera.position.z - position.z};
+        float   hDist = Vector3Length(hDiff);
+        if (hDist > 0.05f) {
+            float wYaw = atan2f(hDiff.x, hDiff.z);
+            if (wYaw < 0.0f) wYaw += 2.0f * PI;
+            float normWYaw = wYaw * RAD2DEG + 22.5f;
+            if (normWYaw >= 360.0f) normWYaw -= 360.0f;
+            sector = (int)(normWYaw / 45.0f) % 8;
+        } else sector = 0;
+    } else {
+        float normYaw = localYawDeg + 22.5f;
+        if (normYaw >= 360.0f) normYaw -= 360.0f;
+        sector = (int)(normYaw / 45.0f);
+    }
+
+    if (pitchDeg >= 50.0f)   { *outChosenIndex = 3;  *outRotation = sector*45.0f+180.0f; *outMirrored = false; }
+    else if (pitchDeg <= -70.0f) {
+        *outChosenIndex = 15;
+        *outRotation = fmodf((8-sector)*45.0f+180.0f, 360.0f);
+        *outMirrored = true;
+    } else {
+        int row = (pitchDeg >= 22.5f) ? 2 : (pitchDeg >= -22.5f) ? 0 : 1;
+        *outChosenIndex = indices[row][sector];
+        *outRotation    = 0.0f;
+        *outMirrored    = !(sector >= 5 && sector <= 7);
+    }
+}
+
 static inline void DrawHeadBillboard(Texture2D texture, Camera camera, const HeadRenderData* headData, int physCols, int physRows) {
     if (!headData || !headData->valid || !headData->visible) return;
     int ci; float rot; bool mir;
@@ -4010,6 +4066,8 @@ static inline bool Cloth__ResolveCapsuleCollision(Vector3* point, Vector3* vel, 
    construir la cápsula barrida correcta para ese instante intermedio. */
 typedef struct {
     Vector3 lHip, rHip, lKnee, rKnee, lAnkle, rAnkle;
+    Vector3 lShoulder, rShoulder, lElbow, rElbow, lWrist, rWrist;
+    Vector3 neck, chest;
     bool    valid;
 } LegPoseSnapshot;
 
@@ -4023,6 +4081,14 @@ static inline LegPoseSnapshot Cloth__CaptureLegPose(const AnimationFrame* frame)
     s.rKnee  = Ornaments_GetAnchorPosition(frame, "RKnee");
     s.lAnkle = Ornaments_GetAnchorPosition(frame, "LAnkle");
     s.rAnkle = Ornaments_GetAnchorPosition(frame, "RAnkle");
+    s.lShoulder = Ornaments_GetAnchorPosition(frame, "LShoulder");
+    s.rShoulder = Ornaments_GetAnchorPosition(frame, "RShoulder");
+    s.lElbow = Ornaments_GetAnchorPosition(frame, "LElbow");
+    s.rElbow = Ornaments_GetAnchorPosition(frame, "RElbow");
+    s.lWrist = Ornaments_GetAnchorPosition(frame, "LWrist");
+    s.rWrist = Ornaments_GetAnchorPosition(frame, "RWrist");
+    s.neck   = Ornaments_GetAnchorPosition(frame, "Neck");
+    s.chest  = Ornaments_GetAnchorPosition(frame, "Chest");  /* bone virtual calculado */
     s.valid  = true;
     return s;
 }
@@ -4037,6 +4103,14 @@ static inline LegPoseSnapshot Cloth__LerpLegPose(const LegPoseSnapshot* a, const
     out.rKnee  = Vector3Lerp(a->rKnee,  b->rKnee,  t);
     out.lAnkle = Vector3Lerp(a->lAnkle, b->lAnkle, t);
     out.rAnkle = Vector3Lerp(a->rAnkle, b->rAnkle, t);
+    out.lShoulder = Vector3Lerp(a->lShoulder, b->lShoulder, t);
+    out.rShoulder = Vector3Lerp(a->rShoulder, b->rShoulder, t);
+    out.lElbow = Vector3Lerp(a->lElbow, b->lElbow, t);
+    out.rElbow = Vector3Lerp(a->rElbow, b->rElbow, t);
+    out.lWrist = Vector3Lerp(a->lWrist, b->lWrist, t);
+    out.rWrist = Vector3Lerp(a->rWrist, b->rWrist, t);
+    out.neck   = Vector3Lerp(a->neck,   b->neck,   t);
+    out.chest  = Vector3Lerp(a->chest,  b->chest,  t);
     out.valid  = true;
     return out;
 }
@@ -4089,7 +4163,8 @@ static inline bool Cloth__ResolveSweptCapsuleCollision(Vector3* point, Vector3* 
     return Cloth__ResolveSweptCapsuleCollisionN(point, vel, prev, prevA, prevB, curA, curB, radius, 4);
 }
 
-static inline void Cloth__ResolveLegCollisionsSwept(Vector3* point, Vector3* vel, Vector3* prev,
+
+static inline void Cloth__ResolveBodyCollisionsSwept(Vector3* point, Vector3* vel, Vector3* prev,
                                                       const LegPoseSnapshot* prevPose,
                                                       const LegPoseSnapshot* curPose)
 {
@@ -4098,18 +4173,9 @@ static inline void Cloth__ResolveLegCollisionsSwept(Vector3* point, Vector3* vel
 
     float legRadius = Cloth__GetLegCollisionRadiusFromPose(curPose);
 
-    /* Muslo (Hip→Knee): segmento más largo y de giro más lento, el barrido
-       estándar (5 muestras) es suficiente. */
+    /* === PIERNAS SOLAMENTE === */
     Cloth__ResolveSweptCapsuleCollision(point, vel, prev, pp->lHip,  pp->lKnee,  curPose->lHip,  curPose->lKnee,  legRadius);
     Cloth__ResolveSweptCapsuleCollision(point, vel, prev, pp->rHip,  pp->rKnee,  curPose->rHip,  curPose->rKnee,  legRadius);
-
-    /* Pantorrilla (Knee→Ankle): es el tramo que más rápido cambia de ángulo
-       (flexión de rodilla al caminar/correr/patear) y el más cercano al
-       borde inferior del paño, que es justo donde se reporta el clipping.
-       Usar más muestras de barrido aquí (no en el muslo, para no gastar
-       coste de más donde no hace falta) reduce el hueco entre dos posiciones
-       de cápsula consecutivas, atrapando mejor el tránsito rápido del
-       tobillo/pie por esa zona. */
     Cloth__ResolveSweptCapsuleCollisionN(point, vel, prev, pp->lKnee, pp->lAnkle, curPose->lKnee, curPose->lAnkle, legRadius * 0.85f, 8);
     Cloth__ResolveSweptCapsuleCollisionN(point, vel, prev, pp->rKnee, pp->rAnkle, curPose->rKnee, curPose->rAnkle, legRadius * 0.85f, 8);
 }
@@ -4134,10 +4200,19 @@ static inline float Cloth__GetLegCollisionRadius(const AnimationFrame* frame) {
     return radius;
 }
 
-static inline void Cloth__ResolveLegCollisions(Vector3* point, Vector3* vel, Vector3* prev, const AnimationFrame* frame)
+/* ============================================================================
+   Colisión contra CUERPO COMPLETO (piernas, brazos, torso)
+   Usada por cloth, waistcloth, y hair - función centralizada única
+   ============================================================================ */
+static inline void Cloth__ResolveBodyCollisions(Vector3* point, Vector3* vel, Vector3* prev, const AnimationFrame* frame)
 {
     if (!frame) return;
 
+    float legRadius = Cloth__GetLegCollisionRadius(frame);
+    float armRadius = legRadius * 0.6f;
+    float torsoRadius = legRadius * 0.8f;
+
+    /* === PIERNAS === */
     Vector3 lHip   = Ornaments_GetAnchorPosition(frame, "LHip");
     Vector3 rHip   = Ornaments_GetAnchorPosition(frame, "RHip");
     Vector3 lKnee  = Ornaments_GetAnchorPosition(frame, "LKnee");
@@ -4145,43 +4220,41 @@ static inline void Cloth__ResolveLegCollisions(Vector3* point, Vector3* vel, Vec
     Vector3 lAnkle = Ornaments_GetAnchorPosition(frame, "LAnkle");
     Vector3 rAnkle = Ornaments_GetAnchorPosition(frame, "RAnkle");
 
-    float legRadius = Cloth__GetLegCollisionRadius(frame);
-
-    /* muslos */
     Cloth__ResolveCapsuleCollision(point, vel, prev, lHip,  lKnee,  legRadius);
     Cloth__ResolveCapsuleCollision(point, vel, prev, rHip,  rKnee,  legRadius);
-    /* pantorrillas, por si el paño cuelga lo suficiente como para llegar */
     Cloth__ResolveCapsuleCollision(point, vel, prev, lKnee, lAnkle, legRadius * 0.85f);
     Cloth__ResolveCapsuleCollision(point, vel, prev, rKnee, rAnkle, legRadius * 0.85f);
+
+    /* === BRAZOS === */
+    Vector3 lShoulder = Ornaments_GetAnchorPosition(frame, "LShoulder");
+    Vector3 rShoulder = Ornaments_GetAnchorPosition(frame, "RShoulder");
+    Vector3 lElbow    = Ornaments_GetAnchorPosition(frame, "LElbow");
+    Vector3 rElbow    = Ornaments_GetAnchorPosition(frame, "RElbow");
+    Vector3 lWrist    = Ornaments_GetAnchorPosition(frame, "LWrist");
+    Vector3 rWrist    = Ornaments_GetAnchorPosition(frame, "RWrist");
+
+    Cloth__ResolveCapsuleCollision(point, vel, prev, lShoulder, lElbow, armRadius);
+    Cloth__ResolveCapsuleCollision(point, vel, prev, rShoulder, rElbow, armRadius);
+    Cloth__ResolveCapsuleCollision(point, vel, prev, lElbow, lWrist, armRadius * 0.8f);
+    Cloth__ResolveCapsuleCollision(point, vel, prev, rElbow, rWrist, armRadius * 0.8f);
+
+    /* === TORSO === */
+    Vector3 neck  = Ornaments_GetAnchorPosition(frame, "Neck");
+    Vector3 chest = Ornaments_GetAnchorPosition(frame, "Chest");  /* bone virtual */
+
+    Cloth__ResolveCapsuleCollision(point, vel, prev, neck, chest, torsoRadius);
+    Cloth__ResolveCapsuleCollision(point, vel, prev, chest, lHip, torsoRadius);
+    Cloth__ResolveCapsuleCollision(point, vel, prev, chest, rHip, torsoRadius);
 }
 
+/* ============================================================================
+   Colisión contra TODO el cuerpo (piernas, brazos, torso) - solo para hair
+   ============================================================================ */
 /* Variante de Cloth__ResolveLegCollisions para puntos "virtuales" que no
    tienen velocidad ni posición previa propias (p.ej. el centro de una cara
    de la malla, calculado como promedio de 4 vértices). Solo corrige la
    posición y devuelve si hubo alguna corrección, para que el llamador
    decida cómo repartir ese desplazamiento entre los vértices reales. */
-static inline bool Cloth__ResolveLegCollisions_TestOnly(Vector3* point, const AnimationFrame* frame)
-{
-    if (!frame || !point) return false;
-    Vector3 before = *point;
-
-    Vector3 lHip   = Ornaments_GetAnchorPosition(frame, "LHip");
-    Vector3 rHip   = Ornaments_GetAnchorPosition(frame, "RHip");
-    Vector3 lKnee  = Ornaments_GetAnchorPosition(frame, "LKnee");
-    Vector3 rKnee  = Ornaments_GetAnchorPosition(frame, "RKnee");
-    Vector3 lAnkle = Ornaments_GetAnchorPosition(frame, "LAnkle");
-    Vector3 rAnkle = Ornaments_GetAnchorPosition(frame, "RAnkle");
-
-    float legRadius = Cloth__GetLegCollisionRadius(frame);
-
-    Cloth__ResolveCapsuleCollision(point, NULL, NULL, lHip,  lKnee,  legRadius);
-    Cloth__ResolveCapsuleCollision(point, NULL, NULL, rHip,  rKnee,  legRadius);
-    Cloth__ResolveCapsuleCollision(point, NULL, NULL, lKnee, lAnkle, legRadius * 0.85f);
-    Cloth__ResolveCapsuleCollision(point, NULL, NULL, rKnee, rAnkle, legRadius * 0.85f);
-
-    return (point->x != before.x) || (point->y != before.y) || (point->z != before.z);
-}
-
 /* Los presets de física (stiffness, gravityScale) están calibrados para un
    esqueleto en METROS reales (p.ej. pierna entera Hip→Ankle ≈ 0.85-0.95m).
    Si la animación viene en otra escala — coordenadas normalizadas 0..1
@@ -4475,9 +4548,9 @@ static inline void Cloth_UpdatePhysics(ClothSystem* sys, const AnimationFrame* f
             }
         }
 
-        /* Colisión contra piernas: evita que el panel atraviese los muslos/pantorrillas */
-        Cloth__ResolveLegCollisions(&cp->botLeft,  &cp->velBotLeft,  &cp->prevBotLeft,  frame);
-        Cloth__ResolveLegCollisions(&cp->botRight, &cp->velBotRight, &cp->prevBotRight, frame);
+        /* Colisión contra cuerpo completo: piernas, brazos, torso */
+        Cloth__ResolveBodyCollisions(&cp->botLeft,  &cp->velBotLeft,  &cp->prevBotLeft,  frame);
+        Cloth__ResolveBodyCollisions(&cp->botRight, &cp->velBotRight, &cp->prevBotRight, frame);
     }
 }
 
@@ -4907,7 +4980,7 @@ static inline void WaistCloth_UpdatePhysics(WaistClothSystem* sys, const Animati
                        nada de la pierna). Usa la cápsula interpolada de
                        este sub-step, no solo la del frame completo, para
                        atrapar el tránsito intermedio de la pierna. */
-                    Cloth__ResolveLegCollisionsSwept(&wc->pos[idx], &wc->vel[idx], &wc->prev[idx], &subPrev, &subCur);
+                    Cloth__ResolveBodyCollisionsSwept(&wc->pos[idx], &wc->vel[idx], &wc->prev[idx], &subPrev, &subCur);
 
                     /* Constraint cilíndrico por columna:
                        no alejarse más que halfW(row) + swingMargin
@@ -4936,7 +5009,7 @@ static inline void WaistCloth_UpdatePhysics(WaistClothSystem* sys, const Animati
                     /* Re-resolver colisión una vez más tras el constraint cilíndrico,
                        por si ese constraint (en personajes con halfW muy pequeño)
                        alcanzó a reintroducir el vértice dentro de la cápsula. */
-                    Cloth__ResolveLegCollisionsSwept(&wc->pos[idx], &wc->vel[idx], &wc->prev[idx], &subPrev, &subCur);
+                    Cloth__ResolveBodyCollisionsSwept(&wc->pos[idx], &wc->vel[idx], &wc->prev[idx], &subPrev, &subCur);
                 }
 
                 /* Constraint de distancia horizontal entre vértices adyacentes en la fila.
@@ -4983,7 +5056,7 @@ static inline void WaistCloth_UpdatePhysics(WaistClothSystem* sys, const Animati
                    una vez más para esta fila antes de pasar a la siguiente. */
                 for (int col = 0; col < cols; col++) {
                     int idx = row * cols + col;
-                    Cloth__ResolveLegCollisionsSwept(&wc->pos[idx], &wc->vel[idx], &wc->prev[idx], &subPrev, &subCur);
+                    Cloth__ResolveBodyCollisionsSwept(&wc->pos[idx], &wc->vel[idx], &wc->prev[idx], &subPrev, &subCur);
                 }
             }
 
@@ -5001,7 +5074,7 @@ static inline void WaistCloth_UpdatePhysics(WaistClothSystem* sys, const Animati
                 for (int row = 1; row < rows; row++) {
                     for (int col = 0; col < cols; col++) {
                         int idx = row * cols + col;
-                        Cloth__ResolveLegCollisionsSwept(&wc->pos[idx], &wc->vel[idx], &wc->prev[idx], &subPrev, &subCur);
+                        Cloth__ResolveBodyCollisionsSwept(&wc->pos[idx], &wc->vel[idx], &wc->prev[idx], &subPrev, &subCur);
                     }
                 }
             }
@@ -5073,7 +5146,7 @@ static inline void WaistCloth_UpdatePhysics(WaistClothSystem* sys, const Animati
 
                     int extraPasses = 1 + (int)roundf(proximity * (float)(NEAR_ANKLE_MAX_PASSES - 1));
                     for (int pass = 0; pass < extraPasses; pass++) {
-                        Cloth__ResolveLegCollisionsSwept(&wc->pos[idx], &wc->vel[idx], &wc->prev[idx], &subPrev, &subCur);
+                        Cloth__ResolveBodyCollisionsSwept(&wc->pos[idx], &wc->vel[idx], &wc->prev[idx], &subPrev, &subCur);
 
                         /* Re-clamp cilíndrico: si el rechazo de pierna empujó
                            el vértice más allá del radio de swing normal,
@@ -5105,7 +5178,7 @@ static inline void WaistCloth_UpdatePhysics(WaistClothSystem* sys, const Animati
                            geometría (paño muy estrecho). Volver a rechazar
                            aquí, fuera del condicional, asegura que NINGUNA
                            pasada termina con el vértice dentro del shin. */
-                        Cloth__ResolveLegCollisionsSwept(&wc->pos[idx], &wc->vel[idx], &wc->prev[idx], &subPrev, &subCur);
+                        Cloth__ResolveBodyCollisionsSwept(&wc->pos[idx], &wc->vel[idx], &wc->prev[idx], &subPrev, &subCur);
                     }
                 }
             }
@@ -6153,11 +6226,25 @@ static inline void HairPiece_UpdateAnchors(HairPiece* hair, const Person* person
            Por eso no se puede buscar por nombre en person->bones. */
         anchorPos = CalculateHeadPosition(person);
         found = (anchorPos.x != 0 || anchorPos.y != 0 || anchorPos.z != 0);
+        /* Si el anchor es Head, calcula su orientación igual que para la cabeza */
+        if (found) {
+            HeadOrientation headOrient = CalculateHeadOrientation(person);
+            hair->anchorOrientation.position = anchorPos;
+            hair->anchorOrientation.forward = headOrient.forward;
+            hair->anchorOrientation.up = headOrient.up;
+            hair->anchorOrientation.right = headOrient.right;
+            hair->anchorOrientation.yaw = headOrient.yaw;
+            hair->anchorOrientation.pitch = headOrient.pitch;
+            hair->anchorOrientation.roll = headOrient.roll;
+            hair->anchorOrientation.valid = headOrient.valid;
+        }
     } else {
         for (int i = 0; i < person->boneCount; i++) {
             if (strcmp(person->bones[i].name, hair->anchorBoneName) == 0) {
                 anchorPos = person->bones[i].position.position;
                 found = true;
+                /* Si el anchor es un bone regular, calcula su orientación */
+                hair->anchorOrientation = CalculateBoneOrientation(hair->anchorBoneName, person, anchorPos);
                 break;
             }
         }
@@ -6180,7 +6267,7 @@ static inline void HairPiece_UpdateAnchors(HairPiece* hair, const Person* person
 
 
 
-static inline void HairSystem_Update(HairSystem* sys, const Person* person, float dt) {
+static inline void HairSystem_Update(HairSystem* sys, const Person* person, const AnimationFrame* frame, float dt) {
     if (!sys || !sys->loaded) return;
     sys->deltaTime = dt;
     sys->subStepDelta = dt / (float)sys->substeps;
@@ -6192,6 +6279,15 @@ static inline void HairSystem_Update(HairSystem* sys, const Person* person, floa
         for (int sub = 0; sub < sys->substeps; sub++) {
             HairPiece_ApplyForces(hair, sys->subStepDelta);
             HairPiece_ConstrainEdges(hair, 3);
+            
+            /* Colisión contra cuerpo completo */
+            if (frame && frame->valid) {
+                for (int v = 0; v < hair->vertexCount; v++) {
+                    if (!hair->pinned[v]) {
+                        Cloth__ResolveBodyCollisions(&hair->vertices[v], NULL, NULL, frame);
+                    }
+                }
+            }
         }
     }
 }
@@ -6251,61 +6347,111 @@ static inline void HairSystem_Collect(HairSystem* sys, Camera camera,
     }
 }
 
-static inline void HairSystem_Draw(HairSystem* sys, Camera camera) {
+static inline void HairSystem_Draw(HairSystem* sys, Camera camera)
+{
     if (!sys || !sys->loaded) return;
 
-    /* Vector "derecha" de la cámara: eje de ancho del billboard.
-       Mismo criterio que usa raylib internamente para DrawBillboard. */
-    Vector3 viewDir = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
-    Vector3 camRight = Vector3Normalize(Vector3CrossProduct(camera.up, viewDir));
+    Vector3 camFwd = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+    Vector3 camRight = Vector3Normalize(Vector3CrossProduct(camFwd, camera.up));
 
     rlDisableBackfaceCulling();
     BeginMode3D(camera);
-    for (int h = 0; h < sys->count; h++) {
-        HairPiece* hair = &sys->pieces[h];
-        if (!hair->enabled || !hair->visible) continue;
-        int cols = hair->cols;
-        rlColor4ub(255, 255, 255, 255);
-        if (hair->textureLoaded) rlSetTexture(hair->texture.id);
 
-        for (int r = 0; r < hair->rows; r++) {
-            /* Centro y ancho reales de la fila, tal como los dejó la física
-               (mantiene el balanceo/curvatura del mechón). */
+    for (int h = 0; h < sys->count; h++)
+    {
+        HairPiece* hair = &sys->pieces[h];
+        if (!hair->enabled || !hair->visible || !hair->textureLoaded)
+            continue;
+
+        int cols = hair->cols;
+
+        /* Calcular el índice de celda del atlas 4x4 según la orientación del anchor */
+        int ci; float rotDeg; bool mirrored;
+        CalculateHairRenderData(hair->anchorOrientation.position, &hair->anchorOrientation, camera, &ci, &rotDeg, &mirrored);
+        
+        /* Obtener el rectángulo de la celda en el atlas SIEMPRE 4x4 */
+        bool finalMirrored;
+        Rectangle src = SrcFromLogical(hair->texture, ci % ATLAS_COLS, ci / ATLAS_COLS, 
+                                       ATLAS_COLS, ATLAS_ROWS, mirrored, &finalMirrored);
+        float u0 = src.x / hair->texture.width;
+        float v0 = src.y / hair->texture.height;
+        float u1 = (src.x + src.width) / hair->texture.width;
+        float v1 = (src.y + src.height) / hair->texture.height;
+
+        /* Aplicar espejado horizontal IGUAL que en DrawBonetileCustom */
+        if (finalMirrored) {
+            float tmp = u0;
+            u0 = u1;
+            u1 = tmp;
+        }
+
+        rlColor4ub(255, 255, 255, 255);
+        rlSetTexture(hair->texture.id);
+
+        // Billboard vertices
+        for (int r = 0; r < hair->rows; r++)
+        {
             Vector3 rowStart = hair->vertices[r * cols];
-            Vector3 rowEnd   = hair->vertices[r * cols + (cols - 1)];
+            Vector3 rowEnd   = hair->vertices[r * cols + cols - 1];
             Vector3 rowCenter = Vector3Scale(Vector3Add(rowStart, rowEnd), 0.5f);
             float rowWidth = Vector3Distance(rowStart, rowEnd);
 
-            for (int c = 0; c < cols; c++) {
+            for (int c = 0; c < cols; c++)
+            {
                 float u = (cols > 1) ? (float)c / (float)(cols - 1) : 0.5f;
                 int idx = r * cols + c;
-                hair->renderVertices[idx] = Vector3Add(rowCenter, Vector3Scale(camRight, (u - 0.5f) * rowWidth));
+                hair->renderVertices[idx] = Vector3Add(
+                    rowCenter,
+                    Vector3Scale(camRight, (u - 0.5f) * rowWidth)
+                );
             }
         }
 
-        for (int r = 0; r < hair->rows - 1; r++) {
-            for (int c = 0; c < cols - 1; c++) {
+        // Draw quads con UVs mapeados a la celda del atlas
+        for (int r = 0; r < hair->rows - 1; r++)
+        {
+            for (int c = 0; c < cols - 1; c++)
+            {
                 int i0 = r * cols + c;
                 int i1 = r * cols + c + 1;
                 int i2 = (r + 1) * cols + c + 1;
                 int i3 = (r + 1) * cols + c;
+
+                Vector2 uv0 = hair->uv[i0];
+                Vector2 uv1 = hair->uv[i1];
+                Vector2 uv2 = hair->uv[i2];
+                Vector2 uv3 = hair->uv[i3];
+
+                /* Remapear UVs locales (0..1) al espacio de la celda */
+                uv0.x = u0 + uv0.x * (u1 - u0);
+                uv0.y = v0 + uv0.y * (v1 - v0);
+                uv1.x = u0 + uv1.x * (u1 - u0);
+                uv1.y = v0 + uv1.y * (v1 - v0);
+                uv2.x = u0 + uv2.x * (u1 - u0);
+                uv2.y = v0 + uv2.y * (v1 - v0);
+                uv3.x = u0 + uv3.x * (u1 - u0);
+                uv3.y = v0 + uv3.y * (v1 - v0);
+
                 rlBegin(RL_QUADS);
-                if (hair->textureLoaded) rlTexCoord2f(hair->uv[i0].x, hair->uv[i0].y);
+                rlTexCoord2f(uv0.x, uv0.y);
                 rlVertex3f(hair->renderVertices[i0].x, hair->renderVertices[i0].y, hair->renderVertices[i0].z);
-                if (hair->textureLoaded) rlTexCoord2f(hair->uv[i1].x, hair->uv[i1].y);
+                rlTexCoord2f(uv1.x, uv1.y);
                 rlVertex3f(hair->renderVertices[i1].x, hair->renderVertices[i1].y, hair->renderVertices[i1].z);
-                if (hair->textureLoaded) rlTexCoord2f(hair->uv[i2].x, hair->uv[i2].y);
+                rlTexCoord2f(uv2.x, uv2.y);
                 rlVertex3f(hair->renderVertices[i2].x, hair->renderVertices[i2].y, hair->renderVertices[i2].z);
-                if (hair->textureLoaded) rlTexCoord2f(hair->uv[i3].x, hair->uv[i3].y);
+                rlTexCoord2f(uv3.x, uv3.y);
                 rlVertex3f(hair->renderVertices[i3].x, hair->renderVertices[i3].y, hair->renderVertices[i3].z);
                 rlEnd();
             }
         }
-        if (hair->textureLoaded) rlSetTexture(0);
+
+        rlSetTexture(0);
     }
+
     EndMode3D();
     rlEnableBackfaceCulling();
 }
+
 
 static inline void HairSystem_Destroy(HairSystem* sys) {
     if (!sys) return;
@@ -6672,7 +6818,7 @@ static inline void UpdateAnimatedCharacter(AnimatedCharacter* character, float d
     }
 
     if (character->hairSystem && character->hairSystem->loaded && frameToUse && frameToUse->valid) {
-        HairSystem_Update(character->hairSystem, &frameToUse->persons[0], deltaTime);
+        HairSystem_Update(character->hairSystem, &frameToUse->persons[0], frameToUse, deltaTime);
     }
 
     if (!usingTransition && character->animController && character->animController->currentClipIndex >= 0) {
