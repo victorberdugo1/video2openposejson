@@ -6353,103 +6353,134 @@ static inline void HairSystem_Draw(HairSystem* sys, Camera camera)
 
     Vector3 camFwd = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
     Vector3 camRight = Vector3Normalize(Vector3CrossProduct(camFwd, camera.up));
+rlDisableBackfaceCulling();
 
-    rlDisableBackfaceCulling();
-    BeginMode3D(camera);
+// Comparar con el Z-buffer
+rlEnableDepthTest();
 
-    for (int h = 0; h < sys->count; h++)
+// No escribir en el Z-buffer (para geometría transparente)
+rlDisableDepthMask();
+
+BeginMode3D(camera);
+
+for (int h = 0; h < sys->count; h++)
+{
+    HairPiece* hair = &sys->pieces[h];
+    if (!hair->enabled || !hair->visible || !hair->textureLoaded)
+        continue;
+
+    int cols = hair->cols;
+
+    /* Calcular el índice de celda del atlas 4x4 según la orientación del anchor */
+    int ci;
+    float rotDeg;
+    bool mirrored;
+    CalculateHairRenderData(hair->anchorOrientation.position,
+                            &hair->anchorOrientation,
+                            camera,
+                            &ci,
+                            &rotDeg,
+                            &mirrored);
+
+    /* Obtener el rectángulo de la celda en el atlas SIEMPRE 4x4 */
+    bool finalMirrored;
+    Rectangle src = SrcFromLogical(hair->texture,
+                                   ci % ATLAS_COLS,
+                                   ci / ATLAS_COLS,
+                                   ATLAS_COLS,
+                                   ATLAS_ROWS,
+                                   mirrored,
+                                   &finalMirrored);
+
+    float u0 = src.x / hair->texture.width;
+    float v0 = src.y / hair->texture.height;
+    float u1 = (src.x + src.width) / hair->texture.width;
+    float v1 = (src.y + src.height) / hair->texture.height;
+
+    /* Aplicar espejado horizontal IGUAL que en DrawBonetileCustom */
+    if (finalMirrored)
     {
-        HairPiece* hair = &sys->pieces[h];
-        if (!hair->enabled || !hair->visible || !hair->textureLoaded)
-            continue;
-
-        int cols = hair->cols;
-
-        /* Calcular el índice de celda del atlas 4x4 según la orientación del anchor */
-        int ci; float rotDeg; bool mirrored;
-        CalculateHairRenderData(hair->anchorOrientation.position, &hair->anchorOrientation, camera, &ci, &rotDeg, &mirrored);
-        
-        /* Obtener el rectángulo de la celda en el atlas SIEMPRE 4x4 */
-        bool finalMirrored;
-        Rectangle src = SrcFromLogical(hair->texture, ci % ATLAS_COLS, ci / ATLAS_COLS, 
-                                       ATLAS_COLS, ATLAS_ROWS, mirrored, &finalMirrored);
-        float u0 = src.x / hair->texture.width;
-        float v0 = src.y / hair->texture.height;
-        float u1 = (src.x + src.width) / hair->texture.width;
-        float v1 = (src.y + src.height) / hair->texture.height;
-
-        /* Aplicar espejado horizontal IGUAL que en DrawBonetileCustom */
-        if (finalMirrored) {
-            float tmp = u0;
-            u0 = u1;
-            u1 = tmp;
-        }
-
-        rlColor4ub(255, 255, 255, 255);
-        rlSetTexture(hair->texture.id);
-
-        // Billboard vertices
-        for (int r = 0; r < hair->rows; r++)
-        {
-            Vector3 rowStart = hair->vertices[r * cols];
-            Vector3 rowEnd   = hair->vertices[r * cols + cols - 1];
-            Vector3 rowCenter = Vector3Scale(Vector3Add(rowStart, rowEnd), 0.5f);
-            float rowWidth = Vector3Distance(rowStart, rowEnd);
-
-            for (int c = 0; c < cols; c++)
-            {
-                float u = (cols > 1) ? (float)c / (float)(cols - 1) : 0.5f;
-                int idx = r * cols + c;
-                hair->renderVertices[idx] = Vector3Add(
-                    rowCenter,
-                    Vector3Scale(camRight, (u - 0.5f) * rowWidth)
-                );
-            }
-        }
-
-        // Draw quads con UVs mapeados a la celda del atlas
-        for (int r = 0; r < hair->rows - 1; r++)
-        {
-            for (int c = 0; c < cols - 1; c++)
-            {
-                int i0 = r * cols + c;
-                int i1 = r * cols + c + 1;
-                int i2 = (r + 1) * cols + c + 1;
-                int i3 = (r + 1) * cols + c;
-
-                Vector2 uv0 = hair->uv[i0];
-                Vector2 uv1 = hair->uv[i1];
-                Vector2 uv2 = hair->uv[i2];
-                Vector2 uv3 = hair->uv[i3];
-
-                /* Remapear UVs locales (0..1) al espacio de la celda */
-                uv0.x = u0 + uv0.x * (u1 - u0);
-                uv0.y = v0 + uv0.y * (v1 - v0);
-                uv1.x = u0 + uv1.x * (u1 - u0);
-                uv1.y = v0 + uv1.y * (v1 - v0);
-                uv2.x = u0 + uv2.x * (u1 - u0);
-                uv2.y = v0 + uv2.y * (v1 - v0);
-                uv3.x = u0 + uv3.x * (u1 - u0);
-                uv3.y = v0 + uv3.y * (v1 - v0);
-
-                rlBegin(RL_QUADS);
-                rlTexCoord2f(uv0.x, uv0.y);
-                rlVertex3f(hair->renderVertices[i0].x, hair->renderVertices[i0].y, hair->renderVertices[i0].z);
-                rlTexCoord2f(uv1.x, uv1.y);
-                rlVertex3f(hair->renderVertices[i1].x, hair->renderVertices[i1].y, hair->renderVertices[i1].z);
-                rlTexCoord2f(uv2.x, uv2.y);
-                rlVertex3f(hair->renderVertices[i2].x, hair->renderVertices[i2].y, hair->renderVertices[i2].z);
-                rlTexCoord2f(uv3.x, uv3.y);
-                rlVertex3f(hair->renderVertices[i3].x, hair->renderVertices[i3].y, hair->renderVertices[i3].z);
-                rlEnd();
-            }
-        }
-
-        rlSetTexture(0);
+        float tmp = u0;
+        u0 = u1;
+        u1 = tmp;
     }
 
-    EndMode3D();
-    rlEnableBackfaceCulling();
+    rlColor4ub(255, 255, 255, 255);
+    rlSetTexture(hair->texture.id);
+
+    // Billboard vertices
+    for (int r = 0; r < hair->rows; r++)
+    {
+        Vector3 rowStart = hair->vertices[r * cols];
+        Vector3 rowEnd   = hair->vertices[r * cols + cols - 1];
+        Vector3 rowCenter = Vector3Scale(Vector3Add(rowStart, rowEnd), 0.5f);
+        float rowWidth = Vector3Distance(rowStart, rowEnd);
+
+        for (int c = 0; c < cols; c++)
+        {
+            float u = (cols > 1) ? (float)c / (float)(cols - 1) : 0.5f;
+            int idx = r * cols + c;
+
+            hair->renderVertices[idx] = Vector3Add(
+                rowCenter,
+                Vector3Scale(camRight, (u - 0.5f) * rowWidth));
+        }
+    }
+
+    // Draw quads con UVs mapeados a la celda del atlas
+    for (int r = 0; r < hair->rows - 1; r++)
+    {
+        for (int c = 0; c < cols - 1; c++)
+        {
+            int i0 = r * cols + c;
+            int i1 = r * cols + c + 1;
+            int i2 = (r + 1) * cols + c + 1;
+            int i3 = (r + 1) * cols + c;
+
+            Vector2 uv0 = hair->uv[i0];
+            Vector2 uv1 = hair->uv[i1];
+            Vector2 uv2 = hair->uv[i2];
+            Vector2 uv3 = hair->uv[i3];
+
+            /* Remapear UVs locales (0..1) al espacio de la celda */
+            uv0.x = u0 + uv0.x * (u1 - u0);
+            uv0.y = v0 + uv0.y * (v1 - v0);
+
+            uv1.x = u0 + uv1.x * (u1 - u0);
+            uv1.y = v0 + uv1.y * (v1 - v0);
+
+            uv2.x = u0 + uv2.x * (u1 - u0);
+            uv2.y = v0 + uv2.y * (v1 - v0);
+
+            uv3.x = u0 + uv3.x * (u1 - u0);
+            uv3.y = v0 + uv3.y * (v1 - v0);
+
+            rlBegin(RL_QUADS);
+
+            rlTexCoord2f(uv0.x, uv0.y);
+            rlVertex3f(hair->renderVertices[i0].x, hair->renderVertices[i0].y, hair->renderVertices[i0].z);
+
+            rlTexCoord2f(uv1.x, uv1.y);
+            rlVertex3f(hair->renderVertices[i1].x, hair->renderVertices[i1].y, hair->renderVertices[i1].z);
+
+            rlTexCoord2f(uv2.x, uv2.y);
+            rlVertex3f(hair->renderVertices[i2].x, hair->renderVertices[i2].y, hair->renderVertices[i2].z);
+
+            rlTexCoord2f(uv3.x, uv3.y);
+            rlVertex3f(hair->renderVertices[i3].x, hair->renderVertices[i3].y, hair->renderVertices[i3].z);
+
+            rlEnd();
+        }
+    }
+
+    rlSetTexture(0);
+}
+
+EndMode3D();
+
+// Restaurar estado
+rlEnableDepthMask();
+rlEnableBackfaceCulling();
 }
 
 
