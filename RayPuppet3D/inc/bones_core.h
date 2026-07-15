@@ -6358,8 +6358,8 @@ rlDisableBackfaceCulling();
 // Comparar con el Z-buffer
 rlEnableDepthTest();
 
-// No escribir en el Z-buffer (para geometría transparente)
-rlDisableDepthMask();
+// Escribir en el Z-buffer para que el hair respete el depth correctamente
+rlEnableDepthMask();
 
 BeginMode3D(camera);
 
