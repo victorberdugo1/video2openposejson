@@ -6347,6 +6347,79 @@ static inline void HairSystem_Collect(HairSystem* sys, Camera camera,
     }
 }
 
+/* Shader de "alpha cutout": descarta (discard) el fragmento si su alfa está por
+   debajo de HAIR_ALPHA_CUTOFF, ANTES de que el depth test/write lo vea siquiera.
+   Así los píxeles realmente transparentes del PNG del hair no escriben profundidad
+   (no tapan nada detrás), pero los píxeles con pelo real sí lo hacen con total
+   normalidad, exactamente igual que el resto de bones/torsos. Esto permite dejar
+   rlEnableDepthTest()/rlEnableDepthMask() intactos (respetando el z-buffer como
+   siempre) sin sufrir el clipping de la zona transparente. */
+#define HAIR_ALPHA_CUTOFF 0.5f
+
+static inline Shader HairSystem_GetAlphaCutoutShader(void)
+{
+    static Shader shader = { 0 };
+    static bool   loaded = false;
+    if (!loaded) {
+#if defined(GRAPHICS_API_OPENGL_ES2)
+        const char* vs =
+            "#version 100                                     \n"
+            "attribute vec3 vertexPosition;                   \n"
+            "attribute vec2 vertexTexCoord;                   \n"
+            "attribute vec4 vertexColor;                      \n"
+            "uniform mat4 mvp;                                \n"
+            "varying vec2 fragTexCoord;                       \n"
+            "varying vec4 fragColor;                          \n"
+            "void main(){                                     \n"
+            "    fragTexCoord = vertexTexCoord;                \n"
+            "    fragColor    = vertexColor;                   \n"
+            "    gl_Position  = mvp*vec4(vertexPosition,1.0);  \n"
+            "}";
+        const char* fs =
+            "#version 100                                     \n"
+            "precision mediump float;                         \n"
+            "varying vec2 fragTexCoord;                        \n"
+            "varying vec4 fragColor;                           \n"
+            "uniform sampler2D texture0;                       \n"
+            "uniform vec4 colDiffuse;                          \n"
+            "void main(){                                      \n"
+            "    vec4 texelColor = texture2D(texture0, fragTexCoord); \n"
+            "    if (texelColor.a < 0.5) discard;               \n"
+            "    gl_FragColor = texelColor*colDiffuse*fragColor;\n"
+            "}";
+#else
+        const char* vs =
+            "#version 330                                     \n"
+            "in vec3 vertexPosition;                           \n"
+            "in vec2 vertexTexCoord;                           \n"
+            "in vec4 vertexColor;                              \n"
+            "uniform mat4 mvp;                                 \n"
+            "out vec2 fragTexCoord;                             \n"
+            "out vec4 fragColor;                                \n"
+            "void main(){                                       \n"
+            "    fragTexCoord = vertexTexCoord;                 \n"
+            "    fragColor    = vertexColor;                    \n"
+            "    gl_Position  = mvp*vec4(vertexPosition,1.0);   \n"
+            "}";
+        const char* fs =
+            "#version 330                                      \n"
+            "in vec2 fragTexCoord;                              \n"
+            "in vec4 fragColor;                                 \n"
+            "uniform sampler2D texture0;                        \n"
+            "uniform vec4 colDiffuse;                           \n"
+            "out vec4 finalColor;                               \n"
+            "void main(){                                       \n"
+            "    vec4 texelColor = texture(texture0, fragTexCoord); \n"
+            "    if (texelColor.a < 0.5) discard;                \n"
+            "    finalColor = texelColor*colDiffuse*fragColor;  \n"
+            "}";
+#endif
+        shader = LoadShaderFromMemory(vs, fs);
+        loaded = true;
+    }
+    return shader;
+}
+
 static inline void HairSystem_Draw(HairSystem* sys, Camera camera)
 {
     if (!sys || !sys->loaded) return;
@@ -6355,11 +6428,13 @@ static inline void HairSystem_Draw(HairSystem* sys, Camera camera)
     Vector3 camRight = Vector3Normalize(Vector3CrossProduct(camFwd, camera.up));
 rlDisableBackfaceCulling();
 
-// Comparar con el Z-buffer
+// Comparar Y escribir en el Z-buffer con total normalidad, igual que el resto de
+// bones (esto es justo lo que respetaba el z-buffer en tu versión original).
 rlEnableDepthTest();
-
-// Escribir en el Z-buffer para que el hair respete el depth correctamente
 rlEnableDepthMask();
+
+BeginBlendMode(BLEND_ALPHA);
+BeginShaderMode(HairSystem_GetAlphaCutoutShader());
 
 BeginMode3D(camera);
 
@@ -6477,6 +6552,9 @@ for (int h = 0; h < sys->count; h++)
 }
 
 EndMode3D();
+
+EndShaderMode();
+EndBlendMode();
 
 // Restaurar estado
 rlEnableDepthMask();
