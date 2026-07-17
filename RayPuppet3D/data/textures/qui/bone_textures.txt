@@ -5,23 +5,25 @@
 # Size: tamaño del billboard (0.1-1.0)
 
 Nose NULL 0 0.25
-Head data/textures/qui/head.png 1 0.201
+Head data/textures/qui/head.png 1 0.14
 LEye NULL 0 0.20
 REye NULL 0 0.20
 LEar NULLg 0 0.15
 REar NULLg 0 0.15
-Neck data/textures/qui/neck.png 1 0.07
-LShoulder data/textures/qui/arm.png 1 0.13
-RShoulder data/textures/qui/arm.png 1 0.13
-Chest data/textures/qui/chest.png 1 0.22
-LElbow data/textures/qui/forearm.png 1 0.13
-RElbow data/textures/qui/forearm.png 1 0.13
-LWrist data/textures/qui/hand.png 1 0.07
-RWrist data/textures/qui/hand.png 1 0.07
-Hip data/textures/qui/hip.png 1 0.2
-LHip data/textures/qui/leg.png 1 0.15
-RHip data/textures/qui/leg.png 1 0.15
-LKnee data/textures/qui/shin.png 1 0.13
-RKnee data/textures/qui/shin.png 1 0.13
-LAnkle data/textures/qui/foot.png 1 0.13
-RAnkle data/textures/qui/foot.png 1 0.13
+Neck data/textures/qui/neck.png 1 0.08
+LShoulder data/textures/qui/arm.png 1 0.16
+RShoulder data/textures/qui/arm.png 1 0.16
+Chest data/textures/qui/chest.png 1 0.23
+LElbow data/textures/qui/forearm.png 1 0.16
+RElbow data/textures/qui/forearm.png 1 0.16
+LWrist data/textures/qui/hand.png 1 0.06
+RWrist data/textures/qui/hand.png 1 0.06
+Hip data/textures/qui/hip.png 1 0.17
+LHip data/textures/qui/leg.png 1 0.18
+RHip data/textures/qui/leg.png 1 0.18
+LKnee data/textures/qui/shin.png 1 0.18
+RKnee data/textures/qui/shin.png 1 0.18
+LAnkle data/textures/qui/foot.png 1 0.15
+RAnkle data/textures/qui/foot.png 1 0.15
+
+@HAIRPIECE Hair Head  0.0,-0.015,-0.05S 0.0,0.0,1.0  data/textures/qui/hair.png 4   10   0.16   0.25   soft
