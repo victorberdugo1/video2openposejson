@@ -5758,6 +5758,23 @@ static inline void HairPiece_ConstrainEdges(HairPiece* hair, int iterations) {
                 }
             }
         }
+        /* Bend constraints (salto de 1 fila): evita que el primer segmento pegado
+           a la raíz absorba solo toda la curvatura cuando la cabeza se mueve rápido. */
+        for (int c = 0; c < cols; c++) {
+            for (int r = 0; r < hair->rows - 2; r++) {
+                int i0 = r * cols + c;
+                int i1 = (r + 2) * cols + c;
+                Vector3 delta = Vector3Subtract(hair->vertices[i1], hair->vertices[i0]);
+                float len = Vector3Length(delta);
+                float restLen = Vector3Distance(hair->baseVertices[i0], hair->baseVertices[i1]);
+                if (len > 0.0001f) {
+                    float diff = (len - restLen) / len;
+                    Vector3 correction = Vector3Scale(delta, diff * 0.25f * hair->stiffness);
+                    if (!hair->pinned[i0]) hair->vertices[i0] = Vector3Add(hair->vertices[i0], correction);
+                    if (!hair->pinned[i1]) hair->vertices[i1] = Vector3Subtract(hair->vertices[i1], correction);
+                }
+            }
+        }
     }
 }
 

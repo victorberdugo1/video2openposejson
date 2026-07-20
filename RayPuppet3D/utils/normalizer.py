@@ -510,11 +510,17 @@ def ground_and_center_animation(animation_data, verbose=False):
     
     grounded_animation = {}
     
-    for frame_name, frame_data in animation_data.items():
-        grounded_frame = {}
+    frame_names = sorted(animation_data.keys())
+    
+    # --- Calcular los offsets UNA SOLA VEZ (con el primer frame), no por frame ---
+    # Si se recalculan por frame, la cadera queda clavada en (0.5, 0.5) en todo
+    # momento, borrando el sway/traslación real de la caminata y haciendo que
+    # las piernas tengan que compensar con una zancada artificialmente enorme.
+    person_offsets = {}
+    if frame_names:
+        first_frame_data = animation_data[frame_names[0]]
         
-        for person_id, person_data in frame_data.items():
-            # --- Y: anclar tobillo más bajo al suelo ---
+        for person_id, person_data in first_frame_data.items():
             ankle_y_values = []
             if 'LAnkle' in person_data:
                 ankle_y_values.append(person_data['LAnkle']['y'])
@@ -522,18 +528,13 @@ def ground_and_center_animation(animation_data, verbose=False):
                 ankle_y_values.append(person_data['RAnkle']['y'])
             
             if not ankle_y_values:
-                if verbose:
-                    print(f"   ⚠️  No se encontraron tobillos en {frame_name}/{person_id}")
-                grounded_frame[person_id] = person_data
+                person_offsets[person_id] = None
                 continue
             
             # En el sistema, Y está invertido (0=arriba, 1=abajo)
             max_ankle_y = max(ankle_y_values)
             y_offset = 1.0 - max_ankle_y
             
-            # --- X/Z: centrar usando caderas (estables durante el caminar) ---
-            # Las caderas se mueven poco en X/Z vs los pies, evitando que el
-            # movimiento de los pies desplace toda la figura lateralmente.
             hip_x = []
             hip_z = []
             for hip in ('LHip', 'RHip'):
@@ -545,19 +546,44 @@ def ground_and_center_animation(animation_data, verbose=False):
                 center_x = sum(hip_x) / len(hip_x)
                 center_z = sum(hip_z) / len(hip_z)
             else:
-                # Fallback: min/max de todos los joints (comportamiento original)
                 x_values = [j['x'] for j in person_data.values() if isinstance(j, dict) and 'x' in j]
                 z_values = [j['z'] for j in person_data.values() if isinstance(j, dict) and 'z' in j]
                 if not x_values:
-                    grounded_frame[person_id] = person_data
+                    person_offsets[person_id] = None
                     continue
                 center_x = (min(x_values) + max(x_values)) / 2.0
                 center_z = (min(z_values) + max(z_values)) / 2.0
             
-            x_offset = 0.5 - center_x
-            z_offset = 0.5 - center_z
+            person_offsets[person_id] = {
+                'x': 0.5 - center_x,
+                'y': y_offset,
+                'z': 0.5 - center_z,
+            }
             
-            # --- Aplicar offsets a todos los joints ---
+            if verbose:
+                print(f"   Offsets fijos para {person_id} (calculados en {frame_names[0]}):")
+                print(f"     Y offset: {y_offset:+.6f} (tobillos al suelo)")
+                print(f"     X offset: {0.5 - center_x:+.6f} (caderas centradas)")
+                print(f"     Z offset: {0.5 - center_z:+.6f} (caderas centradas)")
+    
+    for frame_name in frame_names:
+        frame_data = animation_data[frame_name]
+        grounded_frame = {}
+        
+        for person_id, person_data in frame_data.items():
+            offsets = person_offsets.get(person_id)
+            
+            if offsets is None:
+                if verbose:
+                    print(f"   ⚠️  No se encontraron tobillos/caderas en {frame_name}/{person_id}")
+                grounded_frame[person_id] = person_data
+                continue
+            
+            x_offset = offsets['x']
+            y_offset = offsets['y']
+            z_offset = offsets['z']
+            
+            # --- Aplicar offsets (fijos, iguales en todos los frames) a todos los joints ---
             grounded_person = {}
             for joint_name, joint_data in person_data.items():
                 if isinstance(joint_data, dict) and 'x' in joint_data:
@@ -574,16 +600,6 @@ def ground_and_center_animation(animation_data, verbose=False):
                 grounded_person[joint_name] = grounded_joint
             
             grounded_frame[person_id] = grounded_person
-            
-            if verbose and frame_name == list(animation_data.keys())[0]:
-                print(f"   Primer frame ({frame_name}/{person_id}):")
-                print(f"     Y offset: {y_offset:+.6f} (tobillos al suelo)")
-                print(f"     X offset: {x_offset:+.6f} (caderas centradas)")
-                print(f"     Z offset: {z_offset:+.6f} (caderas centradas)")
-                if 'LAnkle' in grounded_person:
-                    print(f"     LAnkle Y final: {grounded_person['LAnkle']['y']:.6f}")
-                if 'RAnkle' in grounded_person:
-                    print(f"     RAnkle Y final: {grounded_person['RAnkle']['y']:.6f}")
         
         grounded_animation[frame_name] = grounded_frame
     
