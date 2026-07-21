@@ -26,12 +26,12 @@ RKnee data/textures/qui/shin.png 1 0.18
 LAnkle data/textures/qui/foot.png 1 0.15
 RAnkle data/textures/qui/foot.png 1 0.15
 
-
+#      nombre     ancla wTop	wBot	height	offY	offX	offZ	rot	color	  physics
 @CLOTH LoinBack   Hip	0.05  	0.02	0.19	0.03	0.00	0.06	0.0	103d1eFF  veryhard
 @CLOTH LoinBLeft   Hip	0.05	0.01	0.15	0.031	0.00	0.06	325.0	103d1eEF  soft
 @CLOTH LoinBRight  Hip	0.05	0.01	0.15	0.031	0.00	0.06	40.0	103d1eEF  soft
 @CLOTH LoinLeft   Hip	0.05  	0.02	0.19	0.032	0.00	0.06	290.0	103d1eFF  veryhard
-@CLOTH LoinRight   Hip	0.05  	0.02	0.19	0.032	0.00	0.06	80.0	103d1eFF  veryhard
+@CLOTH LoinRight   Hip	0.05  	0.02	0.19	0.032	0.00	0.07	80.0	103d1eFF  veryhard
 
 
 @HAIRPIECE Hair Head  0.0,-0.015,-0.05S 0.0,0.0,1.0  data/textures/qui/hair.png 4   10   0.16   0.25   soft
