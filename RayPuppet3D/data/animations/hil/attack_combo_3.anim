@@ -1,0 +1,11 @@
+{
+  "name": "punch_fast",
+  "fps": 60,
+  "start_frame": 0,
+  "end_frame": 21,
+  "loop": true,
+  "events": [
+    {"time": 2.0, "type": "texture", "bone": "Head", "variant": "blink"},
+    {"time": 2.2, "type": "texture", "bone": "Head", "variant": "idle"}
+  ]
+}
