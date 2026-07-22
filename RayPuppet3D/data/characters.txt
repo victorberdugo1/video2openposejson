@@ -1,10 +1,10 @@
 # Character profiles configuration
 # Format: name texture_config texture_sets animations_path
 
+Eldwin data/textures/eld/bone_textures.txt data/textures/eld/texture_sets.txt data/animations/eld/
 Gabriel data/textures/gab/bone_textures.txt data/textures/gab/texture_sets.txt data/animations/gab/
 Quimbur data/textures/qui/bone_textures.txt data/textures/qui/texture_sets.txt data/animations/qui/
 Hilda data/textures/hil/bone_textures.txt data/textures/hil/texture_sets.txt data/animations/hil
-Eldwin data/textures/eld/bone_textures.txt data/textures/eld/texture_sets.txt data/animations/eld/
 Zeta data/textures/zeta/bone_textures.txt data/textures/zeta/texture_sets.txt data/animations/zeta/
 Lizard data/textures/liz00/bone_textures.txt data/textures/liz00/texture_sets.txt data/animations/liz00/
 
