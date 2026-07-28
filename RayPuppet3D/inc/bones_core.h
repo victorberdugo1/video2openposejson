@@ -5935,6 +5935,11 @@ static inline Shader HairSystem_GetAlphaCutoutShader(void)
     static Shader shader = { 0 };
     static bool   loaded = false;
     if (!loaded) {
+#if defined(PLATFORM_WEB) || defined(__EMSCRIPTEN__)
+    #ifndef GRAPHICS_API_OPENGL_ES2
+        #define GRAPHICS_API_OPENGL_ES2
+    #endif
+#endif
 #if defined(GRAPHICS_API_OPENGL_ES2)
         const char* vs =
             "#version 100                                     \n"
