@@ -1,5 +1,14 @@
 #include "bones_core.h"
-#include <dirent.h>
+
+#ifdef _WIN32
+    #define WIN32_LEAN_AND_MEAN
+    #define NOGDI
+    #define NOUSER
+    #include <windows.h>
+#else
+    #include <dirent.h>
+    #include <sys/stat.h>
+#endif
 
 #define BASE_WIDTH 1920
 #define BASE_HEIGHT 1080
@@ -42,7 +51,11 @@ typedef enum {
 typedef enum {
 	UNDO_BONE_MOVE,
 	UNDO_KEYFRAME_MOVE,
-	UNDO_FRAME_PROMOTE
+	UNDO_FRAME_PROMOTE,
+	UNDO_FRAME_DELETE,
+	UNDO_FRAME_DUPLICATE,
+	UNDO_FRAMES_ADD,
+	UNDO_PASTE_POSE
 } UndoActionType;
 
 typedef struct {
@@ -54,6 +67,13 @@ typedef struct {
 	int oldFrameNumber;
 	int newFrameNumber;
 	int promotedFrameNumber;
+	AnimationFrame* snapshotFrames;
+	int snapshotStartIndex;
+	int snapshotCount;
+	int oldFrameCount;
+	int opFrameIndex;
+	int opCount;
+	AnimationFrame* redoFrame;
 } UndoAction;
 
 typedef struct {
@@ -118,6 +138,9 @@ typedef struct {
 	bool isDraggingGizmo;
 	bool showAddFramesDialog;
 	int framesToAdd;
+	char saveStatusMessage[160];
+	float saveStatusTimer;
+	bool saveStatusIsError;
 } EditorState;
 
 typedef struct {
@@ -169,6 +192,8 @@ typedef struct {
 } CharacterManager;
 
 static void InitUndoHistory(UndoHistory* history);
+static void PushUndoAction(UndoHistory* history, UndoAction action);
+void AnimController_UpdateFrameBounds(AnimationController* controller, int clipIndex, BonesAnimation* animation);
 static CharacterManager g_characterManager = {0};
 static void RecalculateAffectedInterpolations(AppState* app, int movedKeyframe);
 static void MoveBoneInFrame(AppState* app, int frameNumber, const char* boneName, Vector3 newPosition);
@@ -181,6 +206,8 @@ static void AddMultipleFramesAtEnd(AppState* app, int numFramesToAdd, BonesAnima
 static void DrawAddFramesDialog(AppState* app);
 bool BonesDeleteFrame(AppState* app, BonesAnimation* animation, int frameIndex);
 bool BonesDuplicateFrame(AppState* app, BonesAnimation* animation, int frameIndex);
+bool BonesExportToJSON(BonesAnimation* animation, const char* filepath, int startIdx, int endIdx);
+static void PerformSave(AppState* app);
 
 // ============================================================================
 // CLIPBOARD FUNCTIONS
@@ -326,6 +353,46 @@ static void PastePoseFromClipboard(AppState* app) {
 	}
 }
 
+static void PastePoseFromClipboardWithUndo(AppState* app) {
+	if (!g_clipboard.hasCopiedData || !app->character->animation.isLoaded) {
+		PastePoseFromClipboard(app);
+		return;
+	}
+
+	int currentFrame = app->character->currentFrame;
+	if (currentFrame < 0 || currentFrame >= app->character->animation.frameCount) {
+		PastePoseFromClipboard(app);
+		return;
+	}
+
+	AnimationFrame beforeFrame = app->character->animation.frames[currentFrame];
+
+	PastePoseFromClipboard(app);
+
+	if (currentFrame >= app->character->animation.frameCount) return;
+	if (memcmp(&beforeFrame, &app->character->animation.frames[currentFrame], sizeof(AnimationFrame)) == 0) return;
+
+	AnimationFrame* beforeCopy = (AnimationFrame*)malloc(sizeof(AnimationFrame));
+	AnimationFrame* afterCopy = (AnimationFrame*)malloc(sizeof(AnimationFrame));
+	if (!beforeCopy || !afterCopy) {
+		free(beforeCopy);
+		free(afterCopy);
+		return;
+	}
+	*beforeCopy = beforeFrame;
+	*afterCopy = app->character->animation.frames[currentFrame];
+
+	UndoAction action = {0};
+	action.type = UNDO_PASTE_POSE;
+	action.opFrameIndex = currentFrame;
+	action.snapshotFrames = beforeCopy;
+	action.snapshotStartIndex = currentFrame;
+	action.snapshotCount = 1;
+	action.oldFrameCount = app->character->animation.frameCount;
+	action.redoFrame = afterCopy;
+	PushUndoAction(&app->editor.undoHistory, action);
+}
+
 // ============================================================================
 // ANIM SYSTEM
 // ============================================================================
@@ -338,20 +405,33 @@ static bool HasExtension(const char* filename, const char* ext) {
 }
 
 static bool LoadAnimationsFromDirectory(AnimationManager* manager, const char* animationsPath) {
+	manager->animationCount = 0;
+
+#ifdef _WIN32
+	char pattern[512];
+	snprintf(pattern, sizeof(pattern), "%s*.anim", animationsPath);
+	WIN32_FIND_DATAA findData;
+	HANDLE hFind = FindFirstFileA(pattern, &findData);
+	if (hFind == INVALID_HANDLE_VALUE) {
+		TraceLog(LOG_WARNING, "Cannot open animations directory: %s", animationsPath);
+		return false;
+	}
+	do {
+		if (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+		const char* name = findData.cFileName;
+#else
 	DIR* dir = opendir(animationsPath);
 	if (!dir) {
 		TraceLog(LOG_WARNING, "Cannot open animations directory: %s", animationsPath);
-		if (manager) manager->animationCount = 0;
 		return false;
 	}
-
-	manager->animationCount = 0;
 	struct dirent* entry;
 	while ((entry = readdir(dir)) != NULL && manager->animationCount < MAX_ANIMATIONS) {
 		const char* name = entry->d_name;
 		if (!name) continue;
+#endif
 
-		if (HasExtension(name, ".anim")) {
+		if (HasExtension(name, ".anim") && manager->animationCount < MAX_ANIMATIONS) {
 			char baseName[64];
 			strncpy(baseName, name, sizeof(baseName) - 1);
 			baseName[sizeof(baseName) - 1] = '\0';
@@ -379,17 +459,22 @@ static bool LoadAnimationsFromDirectory(AnimationManager* manager, const char* a
 				TraceLog(LOG_DEBUG, "Skipping anim without json: %s", name);
 			}
 		}
+
+#ifdef _WIN32
+	} while (FindNextFileA(hFind, &findData));
+	FindClose(hFind);
+#else
 	}
 	closedir(dir);
+#endif
 
 	if (manager->animationCount > 0) {
 		manager->currentAnimationIndex = 0;
 		TraceLog(LOG_INFO, "Loaded %d animations from %s", manager->animationCount, animationsPath);
 		return true;
-	} else {
-		manager->currentAnimationIndex = -1;
-		return false;
 	}
+	manager->currentAnimationIndex = -1;
+	return false;
 }
 
 static void LoadAnimationByIndex(AppState* app, int animIndex) {
@@ -436,7 +521,43 @@ static void LoadPreviousAnimation(AppState* app) {
 // UNDO/REDO SYSTEM
 // ============================================================================
 
+static void FreeUndoActionData(UndoAction* action) {
+	if (action->snapshotFrames) {
+		free(action->snapshotFrames);
+		action->snapshotFrames = NULL;
+	}
+	if (action->redoFrame) {
+		free(action->redoFrame);
+		action->redoFrame = NULL;
+	}
+}
+
+static bool SnapshotFrameRange(UndoAction* action, const BonesAnimation* animation, int startIndex, int count) {
+	action->snapshotStartIndex = startIndex;
+	action->snapshotCount = count;
+	action->oldFrameCount = animation->frameCount;
+	if (count <= 0) {
+		action->snapshotFrames = NULL;
+		return true;
+	}
+	action->snapshotFrames = (AnimationFrame*)malloc(sizeof(AnimationFrame) * (size_t)count);
+	if (!action->snapshotFrames) return false;
+	memcpy(action->snapshotFrames, &animation->frames[startIndex], sizeof(AnimationFrame) * (size_t)count);
+	return true;
+}
+
+static void RestoreFrameRange(BonesAnimation* animation, const UndoAction* action) {
+	if (action->snapshotCount > 0 && action->snapshotFrames) {
+		memcpy(&animation->frames[action->snapshotStartIndex], action->snapshotFrames,
+				sizeof(AnimationFrame) * (size_t)action->snapshotCount);
+	}
+	animation->frameCount = action->oldFrameCount;
+}
+
 static void InitUndoHistory(UndoHistory* history) {
+	for (int i = 0; i < history->count; i++) {
+		FreeUndoActionData(&history->actions[i]);
+	}
 	memset(history, 0, sizeof(UndoHistory));
 	history->count = 0;
 	history->currentIndex = -1;
@@ -444,9 +565,13 @@ static void InitUndoHistory(UndoHistory* history) {
 
 static void PushUndoAction(UndoHistory* history, UndoAction action) {
 	if (history->currentIndex < history->count - 1) {
+		for (int i = history->currentIndex + 1; i < history->count; i++) {
+			FreeUndoActionData(&history->actions[i]);
+		}
 		history->count = history->currentIndex + 1;
 	}
 	if (history->count >= MAX_UNDO_STACK) {
+		FreeUndoActionData(&history->actions[0]);
 		for (int i = 0; i < MAX_UNDO_STACK - 1; i++) {
 			history->actions[i] = history->actions[i + 1];
 		}
@@ -483,6 +608,36 @@ static bool PerformUndo(AppState* app) {
 									 }
 									 break;
 								 }
+		case UNDO_FRAME_DELETE:
+		case UNDO_FRAME_DUPLICATE:
+		case UNDO_FRAMES_ADD: {
+									 RestoreFrameRange(&app->character->animation, action);
+									 app->character->maxFrames = app->character->animation.frameCount;
+									 if (app->character->animController && app->character->animController->currentClipIndex >= 0) {
+										 AnimController_UpdateFrameBounds(app->character->animController,
+												 app->character->animController->currentClipIndex,
+												 &app->character->animation);
+									 }
+									 int clampedFrame = app->character->currentFrame;
+									 if (clampedFrame >= app->character->animation.frameCount) {
+										 clampedFrame = app->character->animation.frameCount - 1;
+									 }
+									 if (clampedFrame >= 0) {
+										 SetCharacterFrame(app->character, clampedFrame);
+									 }
+									 app->character->forceUpdate = true;
+									 break;
+								 }
+		case UNDO_PASTE_POSE: {
+								  RestoreFrameRange(&app->character->animation, action);
+								  RecalculateAffectedInterpolations(app, app->character->animation.frames[action->opFrameIndex].frameNumber);
+								  int frameIndex = FindFrameIndexByNumber(app, app->character->animation.frames[action->opFrameIndex].frameNumber);
+								  if (frameIndex != -1) {
+									  SetCharacterFrame(app->character, frameIndex);
+								  }
+								  app->character->forceUpdate = true;
+								  break;
+							  }
 	}
 	history->currentIndex--;
 	app->editor.needsSave = true;
@@ -515,6 +670,34 @@ static bool PerformRedo(AppState* app) {
 									 }
 									 break;
 								 }
+		case UNDO_FRAME_DELETE: {
+									 BonesDeleteFrame(app, &app->character->animation, action->opFrameIndex);
+									 app->character->maxFrames = app->character->animation.frameCount;
+									 app->character->forceUpdate = true;
+									 break;
+								 }
+		case UNDO_FRAME_DUPLICATE: {
+										BonesDuplicateFrame(app, &app->character->animation, action->opFrameIndex);
+										app->character->forceUpdate = true;
+										break;
+									}
+		case UNDO_FRAMES_ADD: {
+								  AddMultipleFramesAtEnd(app, action->opCount, &app->character->animation);
+								  app->character->forceUpdate = true;
+								  break;
+							  }
+		case UNDO_PASTE_POSE: {
+								  if (action->redoFrame) {
+									  app->character->animation.frames[action->opFrameIndex] = *action->redoFrame;
+									  RecalculateAffectedInterpolations(app, app->character->animation.frames[action->opFrameIndex].frameNumber);
+									  int frameIndex = FindFrameIndexByNumber(app, app->character->animation.frames[action->opFrameIndex].frameNumber);
+									  if (frameIndex != -1) {
+										  SetCharacterFrame(app->character, frameIndex);
+									  }
+									  app->character->forceUpdate = true;
+								  }
+								  break;
+							  }
 	}
 	app->editor.needsSave = true;
 	return true;
@@ -660,6 +843,39 @@ bool BonesDeleteFrame(AppState* app, BonesAnimation* animation, int frameIndex) 
 	return true;
 }
 
+static bool DeleteFrameWithUndo(AppState* app, int frameIndex) {
+	BonesAnimation* animation = &app->character->animation;
+	UndoAction action = {0};
+	action.type = UNDO_FRAME_DELETE;
+	action.opFrameIndex = frameIndex;
+	if (!SnapshotFrameRange(&action, animation, 0, animation->frameCount)) return false;
+
+	if (!BonesDeleteFrame(app, animation, frameIndex)) {
+		FreeUndoActionData(&action);
+		return false;
+	}
+
+	app->character->maxFrames = animation->frameCount;
+	PushUndoAction(&app->editor.undoHistory, action);
+	return true;
+}
+
+static bool DuplicateFrameWithUndo(AppState* app, int frameIndex) {
+	BonesAnimation* animation = &app->character->animation;
+	UndoAction action = {0};
+	action.type = UNDO_FRAME_DUPLICATE;
+	action.opFrameIndex = frameIndex;
+	if (!SnapshotFrameRange(&action, animation, frameIndex + 1, animation->frameCount - (frameIndex + 1))) return false;
+
+	if (!BonesDuplicateFrame(app, animation, frameIndex)) {
+		FreeUndoActionData(&action);
+		return false;
+	}
+
+	PushUndoAction(&app->editor.undoHistory, action);
+	return true;
+}
+
 static void AddMultipleFramesAtEnd(AppState* app, int numFramesToAdd, BonesAnimation* animation) {
 	if (numFramesToAdd < 1 || !animation) {
 		TraceLog(LOG_WARNING, "Invalid number of frames to add: %d", numFramesToAdd);
@@ -784,6 +1000,23 @@ static void AddMultipleFramesAtEnd(AppState* app, int numFramesToAdd, BonesAnima
 			numFramesToAdd, numFramesToAdd - 1, animation->frameCount);
 }
 
+static bool AddMultipleFramesAtEndWithUndo(AppState* app, int numFramesToAdd, BonesAnimation* animation) {
+	UndoAction action = {0};
+	action.type = UNDO_FRAMES_ADD;
+	action.opCount = numFramesToAdd;
+	if (!SnapshotFrameRange(&action, animation, animation->frameCount, 0)) return false;
+
+	int frameCountBefore = animation->frameCount;
+	AddMultipleFramesAtEnd(app, numFramesToAdd, animation);
+	if (animation->frameCount == frameCountBefore) {
+		FreeUndoActionData(&action);
+		return false;
+	}
+
+	PushUndoAction(&app->editor.undoHistory, action);
+	return true;
+}
+
 static void DrawAddFramesDialog(AppState* app) {
 	if (!app->editor.showAddFramesDialog) return;
 
@@ -824,7 +1057,7 @@ static void DrawAddFramesDialog(AppState* app) {
 	int btnW = (int)(100 * scale);
 	if (Button((Rectangle){(float)(dialogX + padding), (float)(dialogY + dialogH - buttonH - padding),
 				(float)btnW, (float)buttonH}, "ADD", GREEN)) {
-		AddMultipleFramesAtEnd(app, app->editor.framesToAdd, &app->character->animation);
+		AddMultipleFramesAtEndWithUndo(app, app->editor.framesToAdd, &app->character->animation);
 		app->editor.showAddFramesDialog = false;
 	}
 
@@ -1030,46 +1263,46 @@ typedef struct {
 } SnapPoint;
 
 static const SnapPoint SNAP_POINTS[] = {
-	{"FRONT", 0.0f * PI / 180.0f, 0.0f, (Color){255, 0, 127, 255}},
-	{"DIAG45", 45.0f * PI / 180.0f, 0.0f, (Color){255, 127, 0, 255}},
-	{"SIDE90", 90.0f * PI / 180.0f, 0.0f, (Color){255, 255, 0, 255}},
-	{"BACK135", 135.0f * PI / 180.0f, 0.0f, (Color){127, 255, 0, 255}},
-	{"BACK", 180.0f * PI / 180.0f, 0.0f, (Color){0, 255, 127, 255}},
-	{"BACK315", -45.0f * PI / 180.0f, 0.0f, (Color){127, 0, 255, 255}},
-	{"SIDE270", -90.0f * PI / 180.0f, 0.0f, (Color){0, 127, 255, 255}},
-	{"DIAG225", -135.0f * PI / 180.0f, 0.0f, (Color){0, 255, 255, 255}},
+	{"FRONT",    0.0f   * PI / 180.0f,  0.0f, (Color){255,  80, 120, 255}},
+	{"DIAG45",   45.0f  * PI / 180.0f,  0.0f, (Color){255, 160,  40, 255}},
+	{"SIDE90",   90.0f  * PI / 180.0f,  0.0f, (Color){240, 220,  30, 255}},
+	{"BACK135",  135.0f * PI / 180.0f,  0.0f, (Color){ 80, 220,  80, 255}},
+	{"BACK",     180.0f * PI / 180.0f,  0.0f, (Color){ 30, 200, 160, 255}},
+	{"BACK",    -180.0f * PI / 180.0f,  0.0f, (Color){ 30, 200, 160, 255}},
+	{"BACK315",  -45.0f * PI / 180.0f,  0.0f, (Color){160,  60, 240, 255}},
+	{"SIDE270",  -90.0f * PI / 180.0f,  0.0f, (Color){ 40, 140, 255, 255}},
+	{"DIAG225", -135.0f * PI / 180.0f,  0.0f, (Color){ 30, 220, 210, 255}},
 
-	{"HIGH-0", 0.0f * PI / 180.0f, 30.0f * PI / 180.0f, (Color){255, 182, 193, 255}},
-	{"HIGH-45", 45.0f * PI / 180.0f, 30.0f * PI / 180.0f, (Color){255, 218, 185, 255}},
-	{"HIGH-90", 90.0f * PI / 180.0f, 30.0f * PI / 180.0f, (Color){255, 255, 153, 255}},
-	{"HIGH-135", 135.0f * PI / 180.0f, 30.0f * PI / 180.0f, (Color){204, 255, 153, 255}},
-	{"HIGH-180", 180.0f * PI / 180.0f, 30.0f * PI / 180.0f, (Color){153, 255, 204, 255}},
-	{"HIGH-225", -135.0f * PI / 180.0f, 30.0f * PI / 180.0f, (Color){153, 204, 255, 255}},
-	{"HIGH-270", -90.0f * PI / 180.0f, 30.0f * PI / 180.0f, (Color){204, 153, 255, 255}},
-	{"HIGH-315", -45.0f * PI / 180.0f, 30.0f * PI / 180.0f, (Color){255, 153, 255, 255}},
+	{"HIGH-0",    0.0f   * PI / 180.0f, 30.0f * PI / 180.0f, (Color){255, 140, 160, 255}},
+	{"HIGH-45",   45.0f  * PI / 180.0f, 30.0f * PI / 180.0f, (Color){255, 190, 120, 255}},
+	{"HIGH-90",   90.0f  * PI / 180.0f, 30.0f * PI / 180.0f, (Color){230, 220,  80, 255}},
+	{"HIGH-135",  135.0f * PI / 180.0f, 30.0f * PI / 180.0f, (Color){130, 230, 120, 255}},
+	{"HIGH-180",  180.0f * PI / 180.0f, 30.0f * PI / 180.0f, (Color){ 80, 220, 180, 255}},
+	{"HIGH-180", -180.0f * PI / 180.0f, 30.0f * PI / 180.0f, (Color){ 80, 220, 180, 255}},
+	{"HIGH-225", -135.0f * PI / 180.0f, 30.0f * PI / 180.0f, (Color){130, 150, 240, 255}},
+	{"HIGH-270",  -90.0f * PI / 180.0f, 30.0f * PI / 180.0f, (Color){100, 180, 255, 255}},
+	{"HIGH-315",  -45.0f * PI / 180.0f, 30.0f * PI / 180.0f, (Color){210, 130, 255, 255}},
 
-	{"LOW-0", 0.0f * PI / 180.0f, -30.0f * PI / 180.0f, (Color){220, 20, 60, 255}},
-	{"LOW-45", 45.0f * PI / 180.0f, -30.0f * PI / 180.0f, (Color){255, 140, 0, 255}},
-	{"LOW-90", 90.0f * PI / 180.0f, -30.0f * PI / 180.0f, (Color){218, 165, 32, 255}},
-	{"LOW-135", 135.0f * PI / 180.0f, -30.0f * PI / 180.0f, (Color){50, 205, 50, 255}},
-	{"LOW-180", 180.0f * PI / 180.0f, -30.0f * PI / 180.0f, (Color){0, 206, 209, 255}},
-	{"LOW-225", -135.0f * PI / 180.0f, -30.0f * PI / 180.0f, (Color){30, 144, 255, 255}},
-	{"LOW-270", -90.0f * PI / 180.0f, -30.0f * PI / 180.0f, (Color){138, 43, 226, 255}},
-	{"LOW-315", -45.0f * PI / 180.0f, -30.0f * PI / 180.0f, (Color){255, 20, 147, 255}},
+	{"LOW-0",    0.0f   * PI / 180.0f, -30.0f * PI / 180.0f, (Color){240,  60,  90, 255}},
+	{"LOW-45",   45.0f  * PI / 180.0f, -30.0f * PI / 180.0f, (Color){255, 130,  30, 255}},
+	{"LOW-90",   90.0f  * PI / 180.0f, -30.0f * PI / 180.0f, (Color){210, 170,  20, 255}},
+	{"LOW-135",  135.0f * PI / 180.0f, -30.0f * PI / 180.0f, (Color){ 40, 190,  60, 255}},
+	{"LOW-180",  180.0f * PI / 180.0f, -30.0f * PI / 180.0f, (Color){ 20, 190, 180, 255}},
+	{"LOW-180", -180.0f * PI / 180.0f, -30.0f * PI / 180.0f, (Color){ 20, 190, 180, 255}},
+	{"LOW-225", -135.0f * PI / 180.0f, -30.0f * PI / 180.0f, (Color){ 80, 100, 220, 255}},
+	{"LOW-270",  -90.0f * PI / 180.0f, -30.0f * PI / 180.0f, (Color){ 40, 120, 240, 255}},
+	{"LOW-315",  -45.0f * PI / 180.0f, -30.0f * PI / 180.0f, (Color){220,  60, 180, 255}},
 
-	{"TOP", 0.0f, MAX_PITCH, (Color){255, 255, 255, 255}},
-
-	{"BOTTOM", 0.0f, MIN_PITCH, (Color){0, 0, 0, 255}},
+	{"TOP",    0.0f, MAX_PITCH, (Color){240, 240, 255, 255}},
+	{"BOTTOM", 0.0f, MIN_PITCH, (Color){ 60,  60,  80, 255}},
 };
 
-static const int SNAP_POINT_COUNT = 26;
+static const int SNAP_POINT_COUNT = 29;
 
 static Rectangle GetGizmoRect(AppState* app) {
 	float scale = fminf(app->screenWidth / 1920.0f, app->screenHeight / 1080.0f);
 
 	int gizmoSize = (int)(280 * scale);
-	if (gizmoSize < 200) gizmoSize = 200;
-	if (gizmoSize > 400) gizmoSize = 400;
 
 	Rectangle timeline = GetTimelineRect(app);
 	int margin = (int)(10 * scale);
@@ -1629,7 +1862,8 @@ static int FindAllBonesUnderMouse(AppState* app, BoneCandidate* candidates, int 
 	Camera camera = app->character->renderer->camera;
 	Vector2 mousePos = GetMousePosition();
 	int candidateCount = 0;
-	const float SELECTION_RADIUS = 50.0f;
+	float scale = fminf((float)app->screenWidth / 1920.0f, (float)app->screenHeight / 1080.0f);
+	const float SELECTION_RADIUS = 50.0f * scale;
 	for (int p = 0; p < frame->personCount; p++) {
 		const Person* person = &frame->persons[p];
 		if (!person->active) continue;
@@ -1935,8 +2169,8 @@ static void DrawTimeline(AppState* app) {
 	float markerX = timeline.x + currentFrameNumber * frameWidth + frameWidth / 2;
 	DrawLineEx((Vector2){markerX, timeline.y},
 			(Vector2){markerX, timeline.y + timeline.height},
-			3, RED);
-	DrawCircle((int)markerX, (int)(timeline.y + timeline.height + 5), 6, RED);
+			3.0f * scale, RED);
+	DrawCircle((int)markerX, (int)(timeline.y + timeline.height + 5 * scale), (int)(6 * scale), RED);
 	if (app->editor.isDraggingKeyframe) {
 		Vector2 mousePos = GetMousePosition();
 		if (CheckCollisionPointRec(mousePos, timeline)) {
@@ -1951,9 +2185,11 @@ static void DrawTimeline(AppState* app) {
 				int dragTextSize = (int)(12 * scale);
 				if (dragTextSize < 10) dragTextSize = 10;
 				int textW = MeasureText(dragText, dragTextSize);
-				DrawRectangle((int)mousePos.x - textW / 2 - 5, (int)mousePos.y - 30,
-						textW + 10, 20, (Color){128, 0, 128, 200});
-				DrawText(dragText, (int)mousePos.x - textW / 2, (int)mousePos.y - 27, dragTextSize, WHITE);
+				int tooltipH = (int)(20 * scale);
+				int tooltipOffY = (int)(30 * scale);
+				DrawRectangle((int)mousePos.x - textW / 2 - 5, (int)mousePos.y - tooltipOffY,
+						textW + 10, tooltipH, (Color){128, 0, 128, 200});
+				DrawText(dragText, (int)mousePos.x - textW / 2, (int)(mousePos.y - tooltipOffY + (tooltipH - dragTextSize) / 2), dragTextSize, WHITE);
 			}
 		}
 	}
@@ -2130,8 +2366,7 @@ static void DrawControlPanel(AppState* app) {
 			int frameIndex = FindFrameIndexByNumber(app, app->editor.selectionStart);
 			if (frameIndex != -1) {
 				int deletedFrameNumber = app->editor.selectionStart;
-				BonesDeleteFrame(app, &app->character->animation, frameIndex);
-				app->character->maxFrames = app->character->animation.frameCount;
+				DeleteFrameWithUndo(app, frameIndex);
 				app->editor.needsSave = true;
 				int nextValidFrame = -1;
 				for (int i = deletedFrameNumber; i <= maxFrameNumber; i++) {
@@ -2183,7 +2418,7 @@ static void DrawControlPanel(AppState* app) {
 				if (isLastKeyframe) {
 					app->editor.showAddFramesDialog = true;
 				} else {
-					if (BonesDuplicateFrame(app, &app->character->animation, frameIndex)) {
+					if (DuplicateFrameWithUndo(app, frameIndex)) {
 						app->editor.needsSave = true;
 
 						int newFrameNumber = app->editor.selectionStart + 1;
@@ -2234,7 +2469,13 @@ static void DrawControlPanel(AppState* app) {
 	buttonX += interpBtnWidth + spacing;
 
 	if (Button((Rectangle){(float)buttonX, (float)panelY, (float)btnWidth, (float)buttonSize},
-				"EXPORT", app->editor.needsSave ? ORANGE : DARKGREEN)) {
+				"SAVE", app->editor.needsSave ? ORANGE : DARKGREEN)) {
+		PerformSave(app);
+	}
+	buttonX += btnWidth + spacing;
+
+	if (Button((Rectangle){(float)buttonX, (float)panelY, (float)btnWidth, (float)buttonSize},
+				"EXPORT", GRAY)) {
 		app->editor.showExportDialog = !app->editor.showExportDialog;
 	}
 	buttonX += btnWidth + spacing;
@@ -2528,6 +2769,215 @@ bool BonesExportToJSON(BonesAnimation* animation, const char* filepath, int star
 	return exportedCount > 0;
 }
 
+// ============================================================================
+// SAFE SAVE TO SOURCE FILE (backup + atomic replace)
+// ============================================================================
+
+typedef enum {
+	SAVE_RESULT_OK,
+	SAVE_RESULT_NO_ANIMATION,
+	SAVE_RESULT_NO_PATH,
+	SAVE_RESULT_BACKUP_FAILED,
+	SAVE_RESULT_WRITE_FAILED,
+	SAVE_RESULT_REPLACE_FAILED
+} SaveResult;
+
+#define MAX_ANIMATION_BACKUPS 10
+
+static void SetSaveStatus(AppState* app, const char* message, bool isError) {
+	strncpy(app->editor.saveStatusMessage, message, sizeof(app->editor.saveStatusMessage) - 1);
+	app->editor.saveStatusMessage[sizeof(app->editor.saveStatusMessage) - 1] = '\0';
+	app->editor.saveStatusIsError = isError;
+	app->editor.saveStatusTimer = isError ? 6.0f : 3.0f;
+}
+
+static bool CopyFileContents(const char* srcPath, const char* dstPath) {
+	FILE* src = fopen(srcPath, "rb");
+	if (!src) return false;
+	FILE* dst = fopen(dstPath, "wb");
+	if (!dst) {
+		fclose(src);
+		return false;
+	}
+
+	char buffer[8192];
+	size_t bytesRead;
+	bool ok = true;
+	while ((bytesRead = fread(buffer, 1, sizeof(buffer), src)) > 0) {
+		if (fwrite(buffer, 1, bytesRead, dst) != bytesRead) {
+			ok = false;
+			break;
+		}
+	}
+
+	fclose(src);
+	fclose(dst);
+	if (!ok) remove(dstPath);
+	return ok;
+}
+
+static void GetBackupDirectory(const char* animationFilePath, char* outDir, size_t outDirSize) {
+	const char* dir = GetDirectoryPath(animationFilePath);
+	snprintf(outDir, outDirSize, "%s/.bones_backups", (dir && dir[0]) ? dir : ".");
+}
+
+static int CompareBackupPaths(const void* a, const void* b) {
+	return strcmp((const char*)a, (const char*)b);
+}
+
+static void RotateAnimationBackups(const char* backupDir, const char* baseName) {
+	FilePathList files = LoadDirectoryFilesEx(backupDir, ".bak", false);
+	if (files.count <= MAX_ANIMATION_BACKUPS) {
+		UnloadDirectoryFiles(files);
+		return;
+	}
+
+	size_t baseLen = strlen(baseName);
+	char (*matches)[MAX_FILE_PATH_LENGTH] = (char(*)[MAX_FILE_PATH_LENGTH])malloc(sizeof(char[MAX_FILE_PATH_LENGTH]) * files.count);
+	if (matches) {
+		int matchCount = 0;
+		for (unsigned int i = 0; i < files.count; i++) {
+			const char* name = GetFileNameWithoutExt(files.paths[i]);
+			if (strncmp(name, baseName, baseLen) == 0) {
+				strncpy(matches[matchCount], files.paths[i], MAX_FILE_PATH_LENGTH - 1);
+				matches[matchCount][MAX_FILE_PATH_LENGTH - 1] = '\0';
+				matchCount++;
+			}
+		}
+
+		qsort(matches, matchCount, sizeof(char[MAX_FILE_PATH_LENGTH]), CompareBackupPaths);
+
+		int toDelete = matchCount - MAX_ANIMATION_BACKUPS;
+		for (int i = 0; i < toDelete; i++) {
+			remove(matches[i]);
+		}
+		free(matches);
+	}
+
+	UnloadDirectoryFiles(files);
+}
+
+static SaveResult ReplaceFileAtomically(const char* tmpPath, const char* finalPath) {
+	if (rename(tmpPath, finalPath) == 0) {
+		return SAVE_RESULT_OK;
+	}
+
+	char oldPath[MAX_FILE_PATH_LENGTH];
+	snprintf(oldPath, sizeof(oldPath), "%s.old", finalPath);
+	remove(oldPath);
+
+	bool hadOriginal = (rename(finalPath, oldPath) == 0);
+
+	if (rename(tmpPath, finalPath) == 0) {
+		if (hadOriginal) remove(oldPath);
+		return SAVE_RESULT_OK;
+	}
+
+	if (hadOriginal) {
+		rename(oldPath, finalPath);
+	}
+	return SAVE_RESULT_REPLACE_FAILED;
+}
+
+static SaveResult SaveAnimationToSourceFile(BonesAnimation* animation) {
+	if (!animation || !animation->isLoaded) return SAVE_RESULT_NO_ANIMATION;
+	if (animation->filePath[0] == '\0') return SAVE_RESULT_NO_PATH;
+	if (animation->frameCount <= 0) return SAVE_RESULT_NO_ANIMATION;
+
+	char backupDir[MAX_FILE_PATH_LENGTH];
+	GetBackupDirectory(animation->filePath, backupDir, sizeof(backupDir));
+	if (!DirectoryExists(backupDir)) {
+#ifdef _WIN32
+		CreateDirectoryA(backupDir, NULL);
+#else
+		mkdir(backupDir, 0755);
+#endif
+	}
+
+	const char* baseName = GetFileNameWithoutExt(animation->filePath);
+
+	FILE* probe = fopen(animation->filePath, "rb");
+	bool originalExists = (probe != NULL);
+	if (probe) fclose(probe);
+
+	if (originalExists) {
+		time_t now = time(NULL);
+		struct tm* tmInfo = localtime(&now);
+		int yr  = ((tmInfo->tm_year + 1900) & 0x7FFF) % 10000;
+		int mon = (tmInfo->tm_mon  & 0xFF) % 12 + 1;
+		int day = (tmInfo->tm_mday & 0xFF) % 31 + 1;
+		int hr  = (tmInfo->tm_hour & 0xFF) % 24;
+		int min = (tmInfo->tm_min  & 0xFF) % 60;
+		int sec = (tmInfo->tm_sec  & 0xFF) % 61;
+		char backupPath[MAX_FILE_PATH_LENGTH * 2];
+		snprintf(backupPath, sizeof(backupPath), "%s/%s_%04d%02d%02d_%02d%02d%02d.bak",
+				backupDir, baseName, yr, mon, day, hr, min, sec);
+
+		if (!CopyFileContents(animation->filePath, backupPath)) {
+			return SAVE_RESULT_BACKUP_FAILED;
+		}
+	}
+
+	char tmpPath[MAX_FILE_PATH_LENGTH];
+	snprintf(tmpPath, sizeof(tmpPath), "%s.tmp", animation->filePath);
+
+	if (!BonesExportToJSON(animation, tmpPath, 0, animation->frameCount - 1)) {
+		remove(tmpPath);
+		return SAVE_RESULT_WRITE_FAILED;
+	}
+
+	FILE* verify = fopen(tmpPath, "rb");
+	if (!verify) {
+		return SAVE_RESULT_WRITE_FAILED;
+	}
+	fseek(verify, 0, SEEK_END);
+	long tmpSize = ftell(verify);
+	fclose(verify);
+	if (tmpSize <= 0) {
+		remove(tmpPath);
+		return SAVE_RESULT_WRITE_FAILED;
+	}
+
+	SaveResult replaceResult = ReplaceFileAtomically(tmpPath, animation->filePath);
+	if (replaceResult != SAVE_RESULT_OK) {
+		remove(tmpPath);
+		return replaceResult;
+	}
+
+	RotateAnimationBackups(backupDir, baseName);
+	return SAVE_RESULT_OK;
+}
+
+static void PerformSave(AppState* app) {
+	if (!app->character) {
+		SetSaveStatus(app, "No hay personaje cargado", true);
+		return;
+	}
+
+	SaveResult result = SaveAnimationToSourceFile(&app->character->animation);
+	switch (result) {
+		case SAVE_RESULT_OK:
+			app->editor.needsSave = false;
+			SetSaveStatus(app, "Guardado correctamente", false);
+			break;
+		case SAVE_RESULT_NO_ANIMATION:
+			SetSaveStatus(app, "No hay animacion cargada para guardar", true);
+			break;
+		case SAVE_RESULT_NO_PATH:
+			SetSaveStatus(app, "No se pudo guardar: ruta de origen desconocida. Usa EXPORT AS", true);
+			break;
+		case SAVE_RESULT_BACKUP_FAILED:
+			SetSaveStatus(app, "NO SE GUARDO: fallo el backup. El archivo original sigue intacto", true);
+			break;
+		case SAVE_RESULT_WRITE_FAILED:
+			SetSaveStatus(app, "NO SE GUARDO: fallo al escribir. El archivo original sigue intacto", true);
+			break;
+		case SAVE_RESULT_REPLACE_FAILED:
+			SetSaveStatus(app, "NO SE GUARDO: el archivo original sigue intacto (revisa .bones_backups)", true);
+			break;
+	}
+}
+
 static void DrawExportDialog(AppState* app) {
 	if (!app->editor.showExportDialog) return;
 	float scale = fminf(app->screenWidth / 1920.0f, app->screenHeight / 1080.0f);
@@ -2599,22 +3049,24 @@ static void App_DrawUI(AppState* app) {
 	int existingFrames = app->character->animation.frameCount;
 	int currentFrameNumber = GetCurrentFrameNumber(app);
 
-	DrawText("BONES3D ANIMATION EDITOR", 10, 10, titleSize, BLUE);
+	int marginX = (int)(10 * scale);
+	int marginY = (int)(10 * scale);
+	DrawText("BONES3D ANIMATION EDITOR", marginX, marginY, titleSize, BLUE);
 
 	if (g_characterManager.currentProfileIndex >= 0 &&
 			g_characterManager.currentProfileIndex < g_characterManager.profileCount) {
 		char profileText[128];
 		snprintf(profileText, sizeof(profileText), "Character: %s",
 				g_characterManager.profiles[g_characterManager.currentProfileIndex].name);
-		DrawText(profileText, 10, 10 + titleSize + 5, textSize, ORANGE);
+		DrawText(profileText, marginX, marginY + titleSize + (int)(5 * scale), textSize, ORANGE);
 	}
 
-	int yPos = 10 + titleSize + textSize + 10;
-	DrawText("1/2/3/4: Switch Character | 5-8: Load Anims | H/T: Billboards", 10, yPos, smallSize, DARKGRAY);
-	yPos += smallSize + 3;
-	DrawText("LEFT CLICK: Select | RIGHT CLICK: Move | CTRL+LEFT (timeline): Drag keyframe", 10, yPos, smallSize, DARKGRAY);
+	int yPos = marginY + titleSize + textSize + (int)(10 * scale);
+	DrawText("1/2/3/4: Switch Character | 5-8: Load Anims | H/T: Billboards", marginX, yPos, smallSize, DARKGRAY);
+	yPos += smallSize + (int)(3 * scale);
+	DrawText("LEFT CLICK: Select | RIGHT CLICK: Move | CTRL+LEFT (timeline): Drag keyframe", marginX, yPos, smallSize, DARKGRAY);
 
-	yPos += smallSize + 5;
+	yPos += smallSize + (int)(5 * scale);
 	char frameText[128];
 	snprintf(frameText, sizeof(frameText), "Animation: %s | Frame: %d/%d (%d existing) %s %s",
 			app->currentAnimation,
@@ -2623,27 +3075,33 @@ static void App_DrawUI(AppState* app) {
 			existingFrames,
 			app->editor.isPlaying ? "[PLAYING]" : "[PAUSED]",
 			app->editor.needsSave ? "[*]" : "");
-	DrawText(frameText, 10, yPos, textSize, app->editor.needsSave ? ORANGE : DARKGRAY);
+	DrawText(frameText, marginX, yPos, textSize, app->editor.needsSave ? ORANGE : DARKGRAY);
 
-	yPos += textSize + 3;
+	yPos += textSize + (int)(3 * scale);
 	if (app->editor.isDraggingKeyframe) {
-		DrawText("[DRAGGING KEYFRAME] Release to confirm", 10, yPos, textSize, PURPLE);
+		DrawText("[DRAGGING KEYFRAME] Release to confirm", marginX, yPos, textSize, PURPLE);
 	} else if (app->editor.hasBoneSelected) {
 		bool isKeyframe = IsCurrentFrameKeyframe(app);
 		char selectionText[256];
 		if (app->editor.isDraggingBone) {
 			snprintf(selectionText, sizeof(selectionText), "[DRAGGING BONE] %s | Live preview",
 					app->editor.selectedBoneName);
-			DrawText(selectionText, 10, yPos, textSize, RED);
+			DrawText(selectionText, marginX, yPos, textSize, RED);
 		} else if (isKeyframe) {
 			snprintf(selectionText, sizeof(selectionText), "[KEYFRAME] %s | Right-click: move",
 					app->editor.selectedBoneName);
-			DrawText(selectionText, 10, yPos, textSize, GREEN);
+			DrawText(selectionText, marginX, yPos, textSize, GREEN);
 		} else {
 			snprintf(selectionText, sizeof(selectionText), "[INTERPOLATED] %s | Right-click: convert & move",
 					app->editor.selectedBoneName);
-			DrawText(selectionText, 10, yPos, textSize, ORANGE);
+			DrawText(selectionText, marginX, yPos, textSize, ORANGE);
 		}
+	}
+
+	if (app->editor.saveStatusTimer > 0.0f && app->editor.saveStatusMessage[0] != '\0') {
+		yPos += textSize + (int)(3 * scale);
+		Color statusColor = app->editor.saveStatusIsError ? RED : DARKGREEN;
+		DrawText(app->editor.saveStatusMessage, marginX, yPos, textSize + 2, statusColor);
 	}
 }
 
@@ -2692,7 +3150,7 @@ static void App_HandleInput(AppState* app) {
 			return;
 		}
 		if (IsKeyPressed(KEY_S)) {
-			app->editor.showExportDialog = true;
+			PerformSave(app);
 			return;
 		}
 		if (IsKeyPressed(KEY_C)) {
@@ -2700,7 +3158,7 @@ static void App_HandleInput(AppState* app) {
 			return;
 		}
 		if (IsKeyPressed(KEY_V)) {
-			PastePoseFromClipboard(app);
+			PastePoseFromClipboardWithUndo(app);
 			return;
 		}
 		return;
@@ -2888,8 +3346,7 @@ static void App_HandleInput(AppState* app) {
 		int frameIndex = FindFrameIndexByNumber(app, app->editor.selectionStart);
 		if (frameIndex != -1) {
 			int deletedFrameNumber = app->editor.selectionStart;
-			BonesDeleteFrame(app, &app->character->animation, frameIndex);
-			app->character->maxFrames = app->character->animation.frameCount;
+			DeleteFrameWithUndo(app, frameIndex);
 			app->editor.needsSave = true;
 			int nextValidFrame = -1;
 			for (int i = deletedFrameNumber; i <= maxFrameNumber; i++) {
@@ -3137,6 +3594,9 @@ int main(void) {
 		app.screenHeight = GetScreenHeight();
 		App_HandleInput(&app);
 		App_UpdateCamera(&app, dt);
+		if (app.editor.saveStatusTimer > 0.0f) {
+			app.editor.saveStatusTimer -= dt;
+		}
 		DrawGrid(10, 1.0f);
 		UpdateAnimatedCharacter(app.character, dt);
 		App_Draw(&app);

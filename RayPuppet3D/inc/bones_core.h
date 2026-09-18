@@ -888,6 +888,8 @@ static inline void HairSystem_Update(HairSystem* sys, const Person* person, cons
 static inline void HairSystem_Collect(HairSystem* sys, Camera camera,
                                       DrawableQuad* outQuads, int* outQuadCount, int maxQuads);
 static inline void HairSystem_Draw(HairSystem* sys, Camera camera);
+static inline void HairSystem_DrawTransformed(HairSystem* sys, Camera camera,
+                                              Vector3 worldPosition, Vector3 pivot, Matrix rot);
 static inline void HairSystem_Destroy(HairSystem* sys);
 static inline void HairSystem_DebugPrint(HairSystem* sys);
 static inline void HairSystem_LoadTextures(HairSystem* sys, BonesRenderer* renderer);
@@ -5935,11 +5937,6 @@ static inline Shader HairSystem_GetAlphaCutoutShader(void)
     static Shader shader = { 0 };
     static bool   loaded = false;
     if (!loaded) {
-#if defined(PLATFORM_WEB) || defined(__EMSCRIPTEN__)
-    #ifndef GRAPHICS_API_OPENGL_ES2
-        #define GRAPHICS_API_OPENGL_ES2
-    #endif
-#endif
 #if defined(GRAPHICS_API_OPENGL_ES2)
         const char* vs =
             "#version 100                                     \n"
@@ -6131,6 +6128,159 @@ rlEnableDepthMask();
 rlEnableBackfaceCulling();
 }
 
+/* Igual que HairSystem_Draw, pero aplica la transformación de mundo (posición +
+   rotación Y) del personaje, tal y como hacen Cloth_Collect/WaistCloth_Collect y
+   la copia de bones/heads/torsos en DrawAnimatedCharacterTransformed. Usada por
+   personajes que se dibujan en una posición/rotación de mundo (jugador, summons),
+   a diferencia de DrawAnimatedCharacter (editor/animador), donde el personaje
+   siempre se dibuja en el origen y por eso no hace falta transformar nada.
+   No muta hair->vertices ni hair->anchorOrientation: son el estado persistente
+   que usa la física Verlet en HairSystem_Update, así que aquí se trabaja sobre
+   copias locales solo para el dibujado de este frame. */
+static inline void HairSystem_DrawTransformed(HairSystem* sys, Camera camera,
+                                              Vector3 worldPosition, Vector3 pivot, Matrix rot)
+{
+    if (!sys || !sys->loaded) return;
+
+    Vector3 camFwd   = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+    Vector3 camRight = Vector3Normalize(Vector3CrossProduct(camFwd, camera.up));
+    rlDisableBackfaceCulling();
+
+    rlEnableDepthTest();
+    rlEnableDepthMask();
+
+    BeginBlendMode(BLEND_ALPHA);
+    BeginShaderMode(HairSystem_GetAlphaCutoutShader());
+
+    BeginMode3D(camera);
+
+    for (int h = 0; h < sys->count; h++)
+    {
+        HairPiece* hair = &sys->pieces[h];
+        if (!hair->enabled || !hair->visible || !hair->textureLoaded)
+            continue;
+
+        int cols = hair->cols;
+
+        BoneOrientation worldOrient = hair->anchorOrientation;
+        worldOrient.position = RotatePointAroundPivot(hair->anchorOrientation.position, pivot, worldPosition, rot);
+        worldOrient.forward  = SafeNormalize(Vector3Transform(hair->anchorOrientation.forward, rot));
+        worldOrient.up       = SafeNormalize(Vector3Transform(hair->anchorOrientation.up,      rot));
+        worldOrient.right    = SafeNormalize(Vector3Transform(hair->anchorOrientation.right,   rot));
+
+        int ci;
+        float rotDeg;
+        bool mirrored;
+        CalculateHairRenderData(worldOrient.position,
+                                &worldOrient,
+                                camera,
+                                &ci,
+                                &rotDeg,
+                                &mirrored);
+
+        bool finalMirrored;
+        Rectangle src = SrcFromLogical(hair->texture,
+                                       ci % ATLAS_COLS,
+                                       ci / ATLAS_COLS,
+                                       ATLAS_COLS,
+                                       ATLAS_ROWS,
+                                       mirrored,
+                                       &finalMirrored);
+
+        float u0 = src.x / hair->texture.width;
+        float v0 = src.y / hair->texture.height;
+        float u1 = (src.x + src.width) / hair->texture.width;
+        float v1 = (src.y + src.height) / hair->texture.height;
+
+        if (finalMirrored)
+        {
+            float tmp = u0;
+            u0 = u1;
+            u1 = tmp;
+        }
+
+        rlColor4ub(255, 255, 255, 255);
+        rlSetTexture(hair->texture.id);
+
+        Vector3 worldVerts[MAX_HAIR_POLYGON_VERTS];
+        int vertCount = hair->rows * cols;
+        if (vertCount > MAX_HAIR_POLYGON_VERTS) vertCount = MAX_HAIR_POLYGON_VERTS;
+        for (int i = 0; i < vertCount; i++)
+            worldVerts[i] = RotatePointAroundPivot(hair->vertices[i], pivot, worldPosition, rot);
+
+        for (int r = 0; r < hair->rows; r++)
+        {
+            Vector3 rowStart = worldVerts[r * cols];
+            Vector3 rowEnd   = worldVerts[r * cols + cols - 1];
+            Vector3 rowCenter = Vector3Scale(Vector3Add(rowStart, rowEnd), 0.5f);
+            float rowWidth = Vector3Distance(rowStart, rowEnd);
+
+            for (int c = 0; c < cols; c++)
+            {
+                float u = (cols > 1) ? (float)c / (float)(cols - 1) : 0.5f;
+                int idx = r * cols + c;
+
+                hair->renderVertices[idx] = Vector3Add(
+                    rowCenter,
+                    Vector3Scale(camRight, (u - 0.5f) * rowWidth));
+            }
+        }
+
+        for (int r = 0; r < hair->rows - 1; r++)
+        {
+            for (int c = 0; c < cols - 1; c++)
+            {
+                int i0 = r * cols + c;
+                int i1 = r * cols + c + 1;
+                int i2 = (r + 1) * cols + c + 1;
+                int i3 = (r + 1) * cols + c;
+
+                Vector2 uv0 = hair->uv[i0];
+                Vector2 uv1 = hair->uv[i1];
+                Vector2 uv2 = hair->uv[i2];
+                Vector2 uv3 = hair->uv[i3];
+
+                uv0.x = u0 + uv0.x * (u1 - u0);
+                uv0.y = v0 + uv0.y * (v1 - v0);
+
+                uv1.x = u0 + uv1.x * (u1 - u0);
+                uv1.y = v0 + uv1.y * (v1 - v0);
+
+                uv2.x = u0 + uv2.x * (u1 - u0);
+                uv2.y = v0 + uv2.y * (v1 - v0);
+
+                uv3.x = u0 + uv3.x * (u1 - u0);
+                uv3.y = v0 + uv3.y * (v1 - v0);
+
+                rlBegin(RL_QUADS);
+
+                rlTexCoord2f(uv0.x, uv0.y);
+                rlVertex3f(hair->renderVertices[i0].x, hair->renderVertices[i0].y, hair->renderVertices[i0].z);
+
+                rlTexCoord2f(uv1.x, uv1.y);
+                rlVertex3f(hair->renderVertices[i1].x, hair->renderVertices[i1].y, hair->renderVertices[i1].z);
+
+                rlTexCoord2f(uv2.x, uv2.y);
+                rlVertex3f(hair->renderVertices[i2].x, hair->renderVertices[i2].y, hair->renderVertices[i2].z);
+
+                rlTexCoord2f(uv3.x, uv3.y);
+                rlVertex3f(hair->renderVertices[i3].x, hair->renderVertices[i3].y, hair->renderVertices[i3].z);
+
+                rlEnd();
+            }
+        }
+
+        rlSetTexture(0);
+    }
+
+    EndMode3D();
+
+    EndShaderMode();
+    EndBlendMode();
+
+    rlEnableDepthMask();
+    rlEnableBackfaceCulling();
+}
 
 static inline void HairSystem_Destroy(HairSystem* sys) {
     if (!sys) return;
@@ -6722,6 +6872,10 @@ static inline void DrawAnimatedCharacterTransformed(AnimatedCharacter* character
     if (character->waistCloths && character->waistCloths->loaded)
         WaistCloth_Collect(character->waistCloths, camera, character->worldPosition, clothRot,
                            character->worldPivot, clothQuads, &clothQuadCount, MAX_DRAWABLE_QUADS);
+
+    if (character->hairSystem && character->hairSystem->loaded)
+        HairSystem_DrawTransformed(character->hairSystem, camera,
+                                   character->worldPosition, character->worldPivot, clothRot);
 
     BonesRenderer_RenderFrame(character->renderer,
         bonesCopy  ? bonesCopy  : character->renderBones,  bc,
