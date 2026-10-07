@@ -201,6 +201,8 @@ typedef struct {
     bool          valid;
     bool          visible;
     bool          isAsymmetric;
+    float         yawOffset;
+    float         pitchOffset;
 } BoneRenderData;
 
 typedef struct {
@@ -1530,8 +1532,8 @@ static inline bool AnimController_LoadClipMetadata(AnimationController* controll
 
     char* jsonData = (char*)malloc(fileSize + 1);
     if (!jsonData) { fclose(file); return false; }
-    fread(jsonData, 1, fileSize, file);
-    jsonData[fileSize] = '\0';
+    size_t bytesRead = fread(jsonData, 1, fileSize, file);
+    jsonData[bytesRead] = '\0';
     fclose(file);
 
     AnimationClipMetadata* clip = &controller->clips[controller->clipCount];
@@ -1855,11 +1857,14 @@ static inline int BonesRenderer_LoadTexture(BonesRenderer* renderer, const char*
     return renderer->textureCount++;
 }
 
+static Color g_quadRenderTint = {255, 255, 255, 255};
+static bool  g_quadRenderNoDepthTest = false;
+
 static void DrawQuadTextured3D(Texture2D tex, Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3,
                                 float u0, float v0t, float u1, float v1t) {
     rlSetTexture(tex.id);
     rlBegin(RL_QUADS);
-    rlColor4ub(255, 255, 255, 255);
+    rlColor4ub(g_quadRenderTint.r, g_quadRenderTint.g, g_quadRenderTint.b, g_quadRenderTint.a);
     rlTexCoord2f(u0, v0t); rlVertex3f(v0.x, v0.y, v0.z);
     rlTexCoord2f(u1, v0t); rlVertex3f(v1.x, v1.y, v1.z);
     rlTexCoord2f(u1, v1t); rlVertex3f(v2.x, v2.y, v2.z);
@@ -1872,7 +1877,7 @@ static void DrawQuadTextured3D_UVs(Texture2D tex, Vector3 v0, Vector3 v1, Vector
                                     Vector2 uv0, Vector2 uv1, Vector2 uv2, Vector2 uv3) {
     rlSetTexture(tex.id);
     rlBegin(RL_QUADS);
-    rlColor4ub(255, 255, 255, 255);
+    rlColor4ub(g_quadRenderTint.r, g_quadRenderTint.g, g_quadRenderTint.b, g_quadRenderTint.a);
     rlTexCoord2f(uv0.x, uv0.y); rlVertex3f(v0.x, v0.y, v0.z);
     rlTexCoord2f(uv1.x, uv1.y); rlVertex3f(v1.x, v1.y, v1.z);
     rlTexCoord2f(uv2.x, uv2.y); rlVertex3f(v2.x, v2.y, v2.z);
@@ -3397,17 +3402,36 @@ static void RenderBoneInternal(BonesRenderer* renderer, const BoneRenderData* bo
     int ci = 0; float rot = 0.0f; bool mir = false;
     const Person* bonePerson = frame ? FindPersonByBoneName(frame, bone->boneName) : NULL;
 
+    BoneRenderData boneWithOffsets = *bone;
+    if ((bone->yawOffset != 0.0f || bone->pitchOffset != 0.0f) && bone->orientation.valid) {
+        float yawRad   = bone->yawOffset   * (PI / 180.0f);
+        float pitchRad = bone->pitchOffset * (PI / 180.0f);
+        Vector3 fw = bone->orientation.forward;
+        Vector3 up = bone->orientation.up;
+        Vector3 rt = bone->orientation.right;
+        Vector3 axisUp  = up;
+        Vector3 axisRt  = rt;
+        fw = Vector3RotateByAxisAngle(fw, axisUp, yawRad);
+        rt = Vector3RotateByAxisAngle(rt, axisUp, yawRad);
+        fw = Vector3RotateByAxisAngle(fw, axisRt, pitchRad);
+        up = Vector3RotateByAxisAngle(up, axisRt, pitchRad);
+        boneWithOffsets.orientation.forward = Vector3Normalize(fw);
+        boneWithOffsets.orientation.up      = Vector3Normalize(up);
+        boneWithOffsets.orientation.right   = Vector3Normalize(rt);
+    }
+    const BoneRenderData* boneEff = &boneWithOffsets;
+
     if (useHandAtlas) {
         if (isWrist) {
-            if (bone->orientation.valid)
-                CalculateHandBoneRenderDataWithOrientation(bone, renderer->camera, &ci, &rot, &mir);
+            if (boneEff->orientation.valid)
+                CalculateHandBoneRenderDataWithOrientation(boneEff, renderer->camera, &ci, &rot, &mir);
             else
-                CalculateHandBoneRenderData(bone->position, renderer->camera, &ci, &rot, &mir, bone->boneName);
+                CalculateHandBoneRenderData(boneEff->position, renderer->camera, &ci, &rot, &mir, boneEff->boneName);
         } else {
-            CalculateAsymmetricBoneRenderData(bone, renderer->camera, &ci, &rot, &mir);
+            CalculateAsymmetricBoneRenderData(boneEff, renderer->camera, &ci, &rot, &mir);
         }
-    } else if (bone->orientation.valid) {
-        CalculateLimbBoneRenderData(bone, bonePerson, renderer->camera, &ci, &rot, &mir);
+    } else if (boneEff->orientation.valid) {
+        CalculateLimbBoneRenderData(boneEff, bonePerson, renderer->camera, &ci, &rot, &mir);
     }
 
     int maxIdx = cols * rows - 1;
@@ -3513,7 +3537,7 @@ static inline void BonesRenderer_RenderFrame(BonesRenderer* renderer,
         SortRenderItems(renderItems, itemCount);
 
         BeginBlendMode(BLEND_ALPHA_PREMULTIPLY);
-        rlEnableDepthTest();
+        if (g_quadRenderNoDepthTest) rlDisableDepthTest(); else rlEnableDepthTest();
         rlDisableDepthMask();
         rlDisableBackfaceCulling();
 

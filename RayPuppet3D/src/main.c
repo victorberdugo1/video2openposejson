@@ -55,8 +55,22 @@ typedef enum {
 	UNDO_FRAME_DELETE,
 	UNDO_FRAME_DUPLICATE,
 	UNDO_FRAMES_ADD,
-	UNDO_PASTE_POSE
+	UNDO_PASTE_POSE,
+	UNDO_BONE_ROTATE,
+	UNDO_GROUP_TRANSFORM,
+	UNDO_ORIENT_OFFSET
 } UndoActionType;
+
+#define MAX_GROUP_BONES 32
+#define ROTATION_HANDLE_RADIUS 40.0f
+
+typedef struct {
+	char boneName[MAX_BONE_NAME_LENGTH];
+	Vector3 oldPosition;
+	Vector3 newPosition;
+	float oldRotation;
+	float newRotation;
+} GroupBoneSnapshot;
 
 typedef struct {
 	UndoActionType type;
@@ -64,6 +78,8 @@ typedef struct {
 	int frameNumber;
 	Vector3 oldPosition;
 	Vector3 newPosition;
+	float oldRotation;
+	float newRotation;
 	int oldFrameNumber;
 	int newFrameNumber;
 	int promotedFrameNumber;
@@ -74,6 +90,8 @@ typedef struct {
 	int opFrameIndex;
 	int opCount;
 	AnimationFrame* redoFrame;
+	GroupBoneSnapshot groupSnapshots[MAX_GROUP_BONES];
+	int groupSnapshotCount;
 } UndoAction;
 
 typedef struct {
@@ -101,6 +119,16 @@ typedef struct {
 } PoseClipboard;
 
 static PoseClipboard g_clipboard = {0};
+
+typedef struct {
+    char  boneName[MAX_BONE_NAME_LENGTH];
+    float yaw;
+    float pitch;
+} BoneOrientOffset;
+
+#define MAX_ORIENT_OFFSETS 64
+static BoneOrientOffset g_orientOffsets[MAX_ORIENT_OFFSETS];
+static int              g_orientOffsetCount = 0;
 
 // ============================================================================
 // EDITOR STATE
@@ -141,6 +169,20 @@ typedef struct {
 	char saveStatusMessage[160];
 	float saveStatusTimer;
 	bool saveStatusIsError;
+	bool isDraggingRotationHandle;
+	float rotationHandleStartAngle;
+	float rotationHandleStartBoneRotation;
+	char groupSelectedBones[MAX_GROUP_BONES][MAX_BONE_NAME_LENGTH];
+	int groupSelectedCount;
+	Vector3 groupDragStartPositions[MAX_GROUP_BONES];
+	float groupDragStartRotations[MAX_GROUP_BONES];
+	Vector3 groupDragAnchorStart;
+	Vector2 groupDragStartMouse;
+	bool isDraggingGroup;
+	bool groupDragWasPlaying;
+	int  orientDragAxis;
+	float orientDragStartAngle;
+	float orientDragStartValue;
 } EditorState;
 
 typedef struct {
@@ -148,6 +190,7 @@ typedef struct {
 	bool showDebugSpheres;
 	bool showConnections;
 	bool showOrientation;
+	bool showOnionSkin;
 } DebugOptions;
 
 #define MAX_ANIMATIONS 100
@@ -196,7 +239,9 @@ static void PushUndoAction(UndoHistory* history, UndoAction action);
 void AnimController_UpdateFrameBounds(AnimationController* controller, int clipIndex, BonesAnimation* animation);
 static CharacterManager g_characterManager = {0};
 static void RecalculateAffectedInterpolations(AppState* app, int movedKeyframe);
+static void RecalculateInterpolatedFrames(AppState* app, int keyframeA, int keyframeB);
 static void MoveBoneInFrame(AppState* app, int frameNumber, const char* boneName, Vector3 newPosition);
+static void RotateBoneInFrame(AppState* app, int frameNumber, const char* boneName, float newRotation);
 static void MoveKeyframeInTimeline(AppState* app, int fromFrameNumber, int toFrameNumber);
 static int FindFrameIndexByNumber(AppState* app, int frameNumber);
 static int FindMaxFrameNumber(AppState* app);
@@ -208,6 +253,16 @@ bool BonesDeleteFrame(AppState* app, BonesAnimation* animation, int frameIndex);
 bool BonesDuplicateFrame(AppState* app, BonesAnimation* animation, int frameIndex);
 bool BonesExportToJSON(BonesAnimation* animation, const char* filepath, int startIdx, int endIdx);
 static void PerformSave(AppState* app);
+static int GetCurrentFrameNumber(AppState* app);
+static void UpdateBoneRotationHandle(AppState* app);
+static void DrawBoneRotationHandle(AppState* app);
+static void UpdateBoneOrientGizmo(AppState* app);
+static void DrawBoneOrientGizmo(AppState* app);
+static void InjectOrientOffsets(AppState* app);
+static BoneOrientOffset* GetOrientOffset(const char* boneName);
+static void DrawOnionSkin(AppState* app);
+static bool IsInGroup(AppState* app, const char* boneName);
+static void UpdateGroupDrag(AppState* app);
 
 // ============================================================================
 // CLIPBOARD FUNCTIONS
@@ -638,6 +693,30 @@ static bool PerformUndo(AppState* app) {
 								  app->character->forceUpdate = true;
 								  break;
 							  }
+		case UNDO_BONE_ROTATE: {
+								   RotateBoneInFrame(app, action->frameNumber, action->boneName, action->oldRotation);
+								   int frameIndex = FindFrameIndexByNumber(app, action->frameNumber);
+								   if (frameIndex != -1) SetCharacterFrame(app->character, frameIndex);
+								   break;
+							   }
+		case UNDO_GROUP_TRANSFORM: {
+									   int currentFrameNumber = GetCurrentFrameNumber(app);
+									   for (int i = 0; i < action->groupSnapshotCount; i++) {
+										   MoveBoneInFrame(app, currentFrameNumber, action->groupSnapshots[i].boneName, action->groupSnapshots[i].oldPosition);
+										   RotateBoneInFrame(app, currentFrameNumber, action->groupSnapshots[i].boneName, action->groupSnapshots[i].oldRotation);
+									   }
+									   RecalculateAffectedInterpolations(app, currentFrameNumber);
+									   app->character->forceUpdate = true;
+									   break;
+								   }
+		case UNDO_ORIENT_OFFSET: {
+									 BoneOrientOffset* off = GetOrientOffset(action->boneName);
+									 if (off) {
+										 if (action->opFrameIndex == 1) off->yaw   = action->oldRotation;
+										 else                            off->pitch = action->oldRotation;
+									 }
+									 break;
+								 }
 	}
 	history->currentIndex--;
 	app->editor.needsSave = true;
@@ -698,6 +777,30 @@ static bool PerformRedo(AppState* app) {
 								  }
 								  break;
 							  }
+		case UNDO_BONE_ROTATE: {
+								   RotateBoneInFrame(app, action->frameNumber, action->boneName, action->newRotation);
+								   int frameIndex = FindFrameIndexByNumber(app, action->frameNumber);
+								   if (frameIndex != -1) SetCharacterFrame(app->character, frameIndex);
+								   break;
+							   }
+		case UNDO_GROUP_TRANSFORM: {
+									   int currentFrameNumber = GetCurrentFrameNumber(app);
+									   for (int i = 0; i < action->groupSnapshotCount; i++) {
+										   MoveBoneInFrame(app, currentFrameNumber, action->groupSnapshots[i].boneName, action->groupSnapshots[i].newPosition);
+										   RotateBoneInFrame(app, currentFrameNumber, action->groupSnapshots[i].boneName, action->groupSnapshots[i].newRotation);
+									   }
+									   RecalculateAffectedInterpolations(app, currentFrameNumber);
+									   app->character->forceUpdate = true;
+									   break;
+								   }
+		case UNDO_ORIENT_OFFSET: {
+									 BoneOrientOffset* off = GetOrientOffset(action->boneName);
+									 if (off) {
+										 if (action->opFrameIndex == 1) off->yaw   = action->newRotation;
+										 else                            off->pitch = action->newRotation;
+									 }
+									 break;
+								 }
 	}
 	app->editor.needsSave = true;
 	return true;
@@ -734,6 +837,12 @@ void AnimController_UpdateFrameBounds(AnimationController* controller, int clipI
 	clip->endFrame = maxFrame;
 }
 
+static void NormalizeFrameNumbers(BonesAnimation* animation) {
+	for (int i = 0; i < animation->frameCount; i++) {
+		animation->frames[i].frameNumber = i;
+	}
+}
+
 bool BonesDuplicateFrame(AppState* app, BonesAnimation* animation, int frameIndex) {
 	if (!animation || frameIndex < 0 || frameIndex >= animation->frameCount ||
 			animation->frameCount >= animation->maxFrames) {
@@ -750,6 +859,8 @@ bool BonesDuplicateFrame(AppState* app, BonesAnimation* animation, int frameInde
 	animation->frames[frameIndex + 1] = *sourceFrame;
 	animation->frames[frameIndex + 1].isOriginalKeyframe = true;
 	animation->frameCount++;
+
+	NormalizeFrameNumbers(animation);
 
 	if (app->character->animController &&
 			app->character->animController->currentClipIndex >= 0) {
@@ -805,10 +916,12 @@ bool BonesDeleteFrame(AppState* app, BonesAnimation* animation, int frameIndex) 
 		}
 	}
 
+	bool isClustered = (prevKeyframeIdx == frameIndex - 1) || (nextKeyframeIdx == frameIndex + 1);
+
 	int startDeleteIdx = frameIndex;
 	int endDeleteIdx = frameIndex;
 
-	if (prevKeyframeIdx != -1) {
+	if (!isClustered && prevKeyframeIdx != -1) {
 		startDeleteIdx = prevKeyframeIdx + 1;
 	}
 
@@ -822,14 +935,14 @@ bool BonesDeleteFrame(AppState* app, BonesAnimation* animation, int frameIndex) 
 	}
 
 	animation->frameCount -= framesToDelete;
+	NormalizeFrameNumbers(animation);
 
-	if (prevKeyframeIdx != -1 && nextKeyframeIdx != -1) {
+	if (!isClustered && prevKeyframeIdx != -1 && nextKeyframeIdx != -1) {
 		int newPrevIdx = prevKeyframeIdx;
 		int newNextIdx = nextKeyframeIdx - framesToDelete;
 
 		if (newNextIdx > newPrevIdx + 1) {
-			BonesInterpolateFrames(animation, newPrevIdx, newNextIdx,
-					newNextIdx - newPrevIdx - 1);
+			RecalculateInterpolatedFrames(app, newPrevIdx, newNextIdx);
 		}
 	}
 
@@ -1816,6 +1929,42 @@ static void MoveBoneInFrame(AppState* app, int frameNumber, const char* boneName
 	}
 }
 
+static void RotateBoneInFrame(AppState* app, int frameNumber, const char* boneName, float newRotation) {
+	int frameIndex = FindFrameIndexByNumber(app, frameNumber);
+	if (frameIndex == -1) return;
+	AnimationFrame* frame = &app->character->animation.frames[frameIndex];
+	for (int p = 0; p < frame->personCount; p++) {
+		Person* person = &frame->persons[p];
+		if (!person->active) continue;
+		for (int b = 0; b < person->boneCount; b++) {
+			Bone* bone = &person->bones[b];
+			if (strcmp(bone->name, boneName) == 0 && bone->position.valid) {
+				bone->rotation = newRotation;
+				app->editor.needsSave = true;
+				app->character->forceUpdate = true;
+				return;
+			}
+		}
+	}
+}
+
+static float GetBoneRotation(AppState* app, int frameNumber, const char* boneName) {
+	int frameIndex = FindFrameIndexByNumber(app, frameNumber);
+	if (frameIndex == -1) return 0.0f;
+	const AnimationFrame* frame = &app->character->animation.frames[frameIndex];
+	for (int p = 0; p < frame->personCount; p++) {
+		const Person* person = &frame->persons[p];
+		if (!person->active) continue;
+		for (int b = 0; b < person->boneCount; b++) {
+			const Bone* bone = &person->bones[b];
+			if (strcmp(bone->name, boneName) == 0 && bone->position.valid) {
+				return bone->rotation;
+			}
+		}
+	}
+	return 0.0f;
+}
+
 static void MoveBoneWithMouse(AppState* app) {
 	if (!app->editor.hasBoneSelected || !app->editor.isDraggingBone) return;
 	if (!app->character->animation.isLoaded) return;
@@ -1894,6 +2043,310 @@ static int FindAllBonesUnderMouse(AppState* app, BoneCandidate* candidates, int 
 	return candidateCount;
 }
 
+static bool IsInGroup(AppState* app, const char* boneName) {
+	for (int i = 0; i < app->editor.groupSelectedCount; i++) {
+		if (strcmp(app->editor.groupSelectedBones[i], boneName) == 0) return true;
+	}
+	return false;
+}
+
+static void UpdateBoneRotationHandle(AppState* app) {
+	if (!app->editor.hasBoneSelected || !app->character->animation.isLoaded) return;
+	if (app->editor.isDraggingBone || app->editor.isDraggingGroup) return;
+	if (app->debug.showOrientation) return;
+
+	int currentFrame = app->character->currentFrame;
+	if (currentFrame < 0 || currentFrame >= app->character->animation.frameCount) return;
+
+	const AnimationFrame* frame = &app->character->animation.frames[currentFrame];
+	Camera camera = app->character->renderer->camera;
+	Vector2 mousePos = GetMousePosition();
+
+	Vector3 boneWorldPos = {0};
+	bool found = false;
+	for (int p = 0; p < frame->personCount && !found; p++) {
+		const Person* person = &frame->persons[p];
+		if (!person->active) continue;
+		for (int b = 0; b < person->boneCount; b++) {
+			const Bone* bone = &person->bones[b];
+			if (strcmp(bone->name, app->editor.selectedBoneName) == 0 && bone->position.valid) {
+				boneWorldPos = bone->position.position;
+				found = true;
+				break;
+			}
+		}
+	}
+	if (!found) return;
+
+	float scale = fminf((float)app->screenWidth / 1920.0f, (float)app->screenHeight / 1080.0f);
+	float radius = ROTATION_HANDLE_RADIUS * scale;
+	Vector2 boneScreen = GetWorldToScreen(boneWorldPos, camera);
+	Vector2 handleOffset = {mousePos.x - boneScreen.x, mousePos.y - boneScreen.y};
+	if (app->editor.isDraggingRotationHandle) {
+		if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+			float angle = atan2f(handleOffset.x, -handleOffset.y) * RAD2DEG;
+			float delta = angle - app->editor.rotationHandleStartAngle;
+			float newRotation = app->editor.rotationHandleStartBoneRotation + delta;
+
+			int currentFrameNumber = GetCurrentFrameNumber(app);
+			if (IsInGroup(app, app->editor.selectedBoneName) && app->editor.groupSelectedCount > 1) {
+				for (int i = 0; i < app->editor.groupSelectedCount; i++) {
+					float startRot = app->editor.groupDragStartRotations[i];
+					RotateBoneInFrame(app, currentFrameNumber, app->editor.groupSelectedBones[i], startRot + delta);
+				}
+			} else {
+				RotateBoneInFrame(app, currentFrameNumber, app->editor.selectedBoneName, newRotation);
+			}
+		} else {
+			int currentFrameNumber = GetCurrentFrameNumber(app);
+			if (IsInGroup(app, app->editor.selectedBoneName) && app->editor.groupSelectedCount > 1) {
+				UndoAction action = {0};
+				action.type = UNDO_GROUP_TRANSFORM;
+				action.frameNumber = currentFrameNumber;
+				action.groupSnapshotCount = app->editor.groupSelectedCount;
+				for (int i = 0; i < app->editor.groupSelectedCount; i++) {
+					strncpy(action.groupSnapshots[i].boneName, app->editor.groupSelectedBones[i], MAX_BONE_NAME_LENGTH - 1);
+					action.groupSnapshots[i].oldPosition = app->editor.groupDragStartPositions[i];
+					action.groupSnapshots[i].newPosition = app->editor.groupDragStartPositions[i];
+					action.groupSnapshots[i].oldRotation = app->editor.groupDragStartRotations[i];
+					action.groupSnapshots[i].newRotation = GetBoneRotation(app, currentFrameNumber, app->editor.groupSelectedBones[i]);
+				}
+				PushUndoAction(&app->editor.undoHistory, action);
+			} else {
+				UndoAction action = {0};
+				action.type = UNDO_BONE_ROTATE;
+				strncpy(action.boneName, app->editor.selectedBoneName, 63);
+				action.frameNumber = currentFrameNumber;
+				action.oldRotation = app->editor.rotationHandleStartBoneRotation;
+				action.newRotation = GetBoneRotation(app, currentFrameNumber, app->editor.selectedBoneName);
+				PushUndoAction(&app->editor.undoHistory, action);
+			}
+			app->editor.isDraggingRotationHandle = false;
+		}
+		return;
+	}
+
+	float dotRadius = 8.0f * scale;
+	float currentRotation = GetBoneRotation(app, GetCurrentFrameNumber(app), app->editor.selectedBoneName);
+	float handleAngleRad = currentRotation * DEG2RAD;
+	Vector2 handlePos = {
+		boneScreen.x + sinf(handleAngleRad) * radius,
+		boneScreen.y - cosf(handleAngleRad) * radius
+	};
+
+	if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
+			Vector2Distance(mousePos, handlePos) < dotRadius * 2.0f &&
+			!CheckCollisionPointRec(mousePos, GetTimelineRect(app)) &&
+			!CheckCollisionPointRec(mousePos, GetGizmoRect(app))) {
+		if (!IsCurrentFrameKeyframe(app)) PromoteFrameToKeyframe(app);
+		app->editor.isDraggingRotationHandle = true;
+		app->editor.rotationHandleStartAngle = atan2f(handleOffset.x, -handleOffset.y) * RAD2DEG;
+		app->editor.rotationHandleStartBoneRotation = currentRotation;
+		if (IsInGroup(app, app->editor.selectedBoneName) && app->editor.groupSelectedCount > 1) {
+			int cfn = GetCurrentFrameNumber(app);
+			for (int i = 0; i < app->editor.groupSelectedCount; i++) {
+				app->editor.groupDragStartRotations[i] = GetBoneRotation(app, cfn, app->editor.groupSelectedBones[i]);
+			}
+		}
+	}
+}
+
+static void DrawBoneRotationHandle(AppState* app) {
+	(void)app;
+}
+
+static void DrawOnionSkin(AppState* app) {
+	if (!app->debug.showOnionSkin || !app->character->animation.isLoaded) return;
+
+	int currentFrameIndex = app->character->currentFrame;
+	if (currentFrameIndex < 0 || currentFrameIndex >= app->character->animation.frameCount) return;
+	int currentFrameNumber = app->character->animation.frames[currentFrameIndex].frameNumber;
+
+	AnimatedCharacter* ch = app->character;
+	int savedFrame = ch->currentFrame;
+
+	for (int delta = -2; delta <= 2; delta++) {
+		if (delta == 0) continue;
+		int targetFrameNumber = currentFrameNumber + delta;
+		if (targetFrameNumber < 0) continue;
+		int targetIdx = FindFrameIndexByNumber(app, targetFrameNumber);
+		if (targetIdx == -1) continue;
+		if (!ch->animation.frames[targetIdx].valid) continue;
+
+		ch->currentFrame             = targetIdx;
+		ch->animation.currentFrame   = targetIdx;
+		ch->renderBonesCount  = 0;
+		ch->renderHeadsCount  = 0;
+		ch->renderTorsosCount = 0;
+
+		CollectBonesForRendering(&ch->animation, ch->renderer->camera,
+			&ch->renderBones, &ch->renderBonesCount, &ch->renderBonesCapacity,
+			ch->boneConfigs, ch->boneConfigCount, ch->textureSets, ch->ornaments);
+
+		if (ch->renderHeadBillboards)
+			CollectHeadsForRendering(&ch->animation, &ch->renderHeads,
+				&ch->renderHeadsCount, &ch->renderHeadsCapacity,
+				ch->boneConfigs, ch->boneConfigCount, ch->textureSets);
+
+		if (ch->renderTorsoBillboards)
+			CollectTorsosForRendering(&ch->animation, &ch->renderTorsos,
+				&ch->renderTorsosCount, &ch->renderTorsosCapacity,
+				ch->boneConfigs, ch->boneConfigCount, ch->textureSets);
+
+		float alpha = 1.0f - (float)(abs(delta) - 1) * 0.35f;
+		float a = alpha * 0.65f;
+		unsigned char ar = (unsigned char)(a * (delta < 0 ? 100 : 255));
+		unsigned char ag = (unsigned char)(a * (delta < 0 ? 200 : 160));
+		unsigned char ab = (unsigned char)(a * (delta < 0 ? 255 :  60));
+		unsigned char aa = (unsigned char)(a * 255.0f);
+		g_quadRenderTint        = (Color){ar, ag, ab, aa};
+		g_quadRenderNoDepthTest = true;
+
+		BonesRenderer_RenderFrame(ch->renderer,
+			ch->renderBones,  ch->renderBonesCount,
+			ch->renderHeads,  ch->renderHeadsCount,
+			ch->renderTorsos, ch->renderTorsosCount,
+			ch->autoCenter, ch->autoCenterCalculated,
+			NULL, 0);
+	}
+
+	g_quadRenderTint        = (Color){255, 255, 255, 255};
+	g_quadRenderNoDepthTest = false;
+
+	ch->currentFrame             = savedFrame;
+	ch->animation.currentFrame   = savedFrame;
+	ch->renderBonesCount  = 0;
+	ch->renderHeadsCount  = 0;
+	ch->renderTorsosCount = 0;
+
+	CollectBonesForRendering(&ch->animation, ch->renderer->camera,
+		&ch->renderBones, &ch->renderBonesCount, &ch->renderBonesCapacity,
+		ch->boneConfigs, ch->boneConfigCount, ch->textureSets, ch->ornaments);
+
+	if (ch->renderHeadBillboards)
+		CollectHeadsForRendering(&ch->animation, &ch->renderHeads,
+			&ch->renderHeadsCount, &ch->renderHeadsCapacity,
+			ch->boneConfigs, ch->boneConfigCount, ch->textureSets);
+
+	if (ch->renderTorsoBillboards)
+		CollectTorsosForRendering(&ch->animation, &ch->renderTorsos,
+			&ch->renderTorsosCount, &ch->renderTorsosCapacity,
+			ch->boneConfigs, ch->boneConfigCount, ch->textureSets);
+}
+
+static void UpdateGroupDrag(AppState* app) {
+	if (app->editor.groupSelectedCount < 2) return;
+	if (!app->editor.hasBoneSelected) return;
+	if (!app->character->animation.isLoaded) return;
+
+	int currentFrame = app->character->currentFrame;
+	if (currentFrame < 0 || currentFrame >= app->character->animation.frameCount) return;
+
+	Camera camera = app->character->renderer->camera;
+	Vector2 mousePos = GetMousePosition();
+	Rectangle timeline = GetTimelineRect(app);
+	Rectangle gizmoRect = GetGizmoRect(app);
+
+	if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT) &&
+			!CheckCollisionPointRec(mousePos, timeline) &&
+			!CheckCollisionPointRec(mousePos, gizmoRect) &&
+			IsInGroup(app, app->editor.selectedBoneName)) {
+		if (!IsCurrentFrameKeyframe(app)) PromoteFrameToKeyframe(app);
+		app->editor.isDraggingGroup = true;
+		app->editor.groupDragWasPlaying = app->character->autoPlay;
+		SetCharacterAutoPlay(app->character, false);
+		app->editor.groupDragStartMouse = mousePos;
+
+		int cfn = GetCurrentFrameNumber(app);
+		const AnimationFrame* frame = &app->character->animation.frames[currentFrame];
+		for (int i = 0; i < app->editor.groupSelectedCount; i++) {
+			app->editor.groupDragStartPositions[i] = (Vector3){0};
+			app->editor.groupDragStartRotations[i] = 0.0f;
+			for (int p = 0; p < frame->personCount; p++) {
+				const Person* person = &frame->persons[p];
+				if (!person->active) continue;
+				for (int b = 0; b < person->boneCount; b++) {
+					const Bone* bone = &person->bones[b];
+					if (strcmp(bone->name, app->editor.groupSelectedBones[i]) == 0 && bone->position.valid) {
+						app->editor.groupDragStartPositions[i] = bone->position.position;
+						app->editor.groupDragStartRotations[i] = bone->rotation;
+						break;
+					}
+				}
+			}
+		}
+		int anchorIdx = -1;
+		const AnimationFrame* frame2 = &app->character->animation.frames[currentFrame];
+		for (int p = 0; p < frame2->personCount; p++) {
+			const Person* person = &frame2->persons[p];
+			if (!person->active) continue;
+			for (int b = 0; b < person->boneCount; b++) {
+				const Bone* bone = &person->bones[b];
+				if (strcmp(bone->name, app->editor.selectedBoneName) == 0 && bone->position.valid) {
+					app->editor.groupDragAnchorStart = bone->position.position;
+					anchorIdx = 0;
+					break;
+				}
+			}
+			if (anchorIdx >= 0) break;
+		}
+		(void)cfn;
+	}
+
+	if (app->editor.isDraggingGroup && IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) {
+		Vector3 anchorWorld = app->editor.groupDragAnchorStart;
+		Ray anchorRay = GetMouseRay(app->editor.groupDragStartMouse, camera);
+		Vector3 camToAnchor = Vector3Subtract(anchorWorld, camera.position);
+		Vector3 planeNormal = Vector3Normalize(camToAnchor);
+		Vector3 anchorPlanePoint;
+		if (!RayPlaneIntersection(anchorRay, anchorWorld, planeNormal, &anchorPlanePoint)) return;
+
+		Ray currentRay = GetMouseRay(mousePos, camera);
+		Vector3 currentPlanePoint;
+		if (!RayPlaneIntersection(currentRay, anchorWorld, planeNormal, &currentPlanePoint)) return;
+
+		Vector3 delta = Vector3Subtract(currentPlanePoint, anchorPlanePoint);
+		int cfn = GetCurrentFrameNumber(app);
+		for (int i = 0; i < app->editor.groupSelectedCount; i++) {
+			Vector3 newPos = Vector3Add(app->editor.groupDragStartPositions[i], delta);
+			MoveBoneInFrame(app, cfn, app->editor.groupSelectedBones[i], newPos);
+		}
+		if (IsCurrentFrameKeyframe(app)) RecalculateAffectedInterpolations(app, cfn);
+		app->character->forceUpdate = true;
+	}
+
+	if (IsMouseButtonReleased(MOUSE_BUTTON_RIGHT) && app->editor.isDraggingGroup) {
+		int cfn = GetCurrentFrameNumber(app);
+		UndoAction action = {0};
+		action.type = UNDO_GROUP_TRANSFORM;
+		action.frameNumber = cfn;
+		action.groupSnapshotCount = app->editor.groupSelectedCount;
+		for (int i = 0; i < app->editor.groupSelectedCount; i++) {
+			strncpy(action.groupSnapshots[i].boneName, app->editor.groupSelectedBones[i], MAX_BONE_NAME_LENGTH - 1);
+			action.groupSnapshots[i].oldPosition = app->editor.groupDragStartPositions[i];
+			action.groupSnapshots[i].newPosition = (Vector3){0};
+			const AnimationFrame* frame3 = &app->character->animation.frames[app->character->currentFrame];
+			for (int p = 0; p < frame3->personCount; p++) {
+				const Person* person = &frame3->persons[p];
+				if (!person->active) continue;
+				for (int b = 0; b < person->boneCount; b++) {
+					const Bone* bone = &person->bones[b];
+					if (strcmp(bone->name, app->editor.groupSelectedBones[i]) == 0 && bone->position.valid) {
+						action.groupSnapshots[i].newPosition = bone->position.position;
+						break;
+					}
+				}
+			}
+			action.groupSnapshots[i].oldRotation = app->editor.groupDragStartRotations[i];
+			action.groupSnapshots[i].newRotation = GetBoneRotation(app, cfn, app->editor.groupSelectedBones[i]);
+		}
+		PushUndoAction(&app->editor.undoHistory, action);
+		app->editor.isDraggingGroup = false;
+		if (app->editor.groupDragWasPlaying)
+			SetCharacterAutoPlay(app->character, true);
+	}
+}
+
 static void UpdateBoneSelection(AppState* app) {
 	if (app->camMode != 1) {
 		app->editor.hasBoneSelected = false;
@@ -1907,7 +2360,8 @@ static void UpdateBoneSelection(AppState* app) {
 	if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
 			!CheckCollisionPointRec(mousePos, timeline) &&
 			!CheckCollisionPointRec(mousePos, gizmoRect) &&
-			!IsKeyDown(KEY_LEFT_CONTROL)) {
+			!IsKeyDown(KEY_LEFT_CONTROL) &&
+			!app->editor.isDraggingRotationHandle) {
 		BoneCandidate candidates[100];
 		int candidateCount = FindAllBonesUnderMouse(app, candidates, 100);
 		if (candidateCount > 0) {
@@ -1924,6 +2378,32 @@ static void UpdateBoneSelection(AppState* app) {
 				app->editor.cycleIndex = 0;
 			}
 			BoneCandidate* selected = &candidates[app->editor.cycleIndex];
+
+			if (IsKeyDown(KEY_LEFT_SHIFT)) {
+				bool alreadyInGroup = false;
+				for (int i = 0; i < app->editor.groupSelectedCount; i++) {
+					if (strcmp(app->editor.groupSelectedBones[i], selected->boneName) == 0) {
+						for (int j = i; j < app->editor.groupSelectedCount - 1; j++) {
+							strncpy(app->editor.groupSelectedBones[j], app->editor.groupSelectedBones[j+1], MAX_BONE_NAME_LENGTH);
+						}
+						app->editor.groupSelectedCount--;
+						alreadyInGroup = true;
+						break;
+					}
+				}
+				if (!alreadyInGroup && app->editor.groupSelectedCount < MAX_GROUP_BONES) {
+					if (app->editor.hasBoneSelected && !IsInGroup(app, app->editor.selectedBoneName)) {
+						strncpy(app->editor.groupSelectedBones[app->editor.groupSelectedCount], app->editor.selectedBoneName, MAX_BONE_NAME_LENGTH - 1);
+						app->editor.groupSelectedCount++;
+					}
+					strncpy(app->editor.groupSelectedBones[app->editor.groupSelectedCount], selected->boneName, MAX_BONE_NAME_LENGTH - 1);
+					app->editor.groupSelectedBones[app->editor.groupSelectedCount][MAX_BONE_NAME_LENGTH - 1] = '\0';
+					app->editor.groupSelectedCount++;
+				}
+			} else {
+				app->editor.groupSelectedCount = 0;
+			}
+
 			app->editor.hasBoneSelected = true;
 			strncpy(app->editor.selectedBoneName, selected->boneName, 63);
 			app->editor.selectedBoneName[63] = '\0';
@@ -1934,8 +2414,14 @@ static void UpdateBoneSelection(AppState* app) {
 		} else {
 			app->editor.hasBoneSelected = false;
 			app->editor.cycleIndex = 0;
+			app->editor.groupSelectedCount = 0;
 		}
 	}
+
+	UpdateGroupDrag(app);
+
+	if (app->editor.isDraggingGroup) return;
+
 	if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT) && app->editor.hasBoneSelected) {
 		if (!CheckCollisionPointRec(mousePos, timeline) && !CheckCollisionPointRec(mousePos, gizmoRect)) {
 			BoneCandidate candidates[100];
@@ -2050,6 +2536,34 @@ static void DrawBoneSelectionFeedback(AppState* app) {
 	const AnimationFrame* frame = &app->character->animation.frames[currentFrame];
 	Camera camera = app->character->renderer->camera;
 
+	if (app->editor.groupSelectedCount > 1) {
+		char drawnNames[MAX_GROUP_BONES][MAX_BONE_NAME_LENGTH];
+		int drawnCount = 0;
+		BeginMode3D(camera);
+		rlDisableDepthTest();
+		for (int p = 0; p < frame->personCount; p++) {
+			const Person* person = &frame->persons[p];
+			if (!person->active) continue;
+			for (int b = 0; b < person->boneCount; b++) {
+				const Bone* bone = &person->bones[b];
+				if (!bone->position.valid) continue;
+				if (!IsInGroup(app, bone->name) || strcmp(bone->name, app->editor.selectedBoneName) == 0) continue;
+				bool alreadyDrawn = false;
+				for (int i = 0; i < drawnCount; i++) {
+					if (strcmp(drawnNames[i], bone->name) == 0) { alreadyDrawn = true; break; }
+				}
+				if (alreadyDrawn) continue;
+				strncpy(drawnNames[drawnCount], bone->name, MAX_BONE_NAME_LENGTH - 1);
+				drawnNames[drawnCount][MAX_BONE_NAME_LENGTH - 1] = '\0';
+				drawnCount++;
+				DrawSphere(bone->position.position, 0.028f, (Color){255, 200, 0, 160});
+				DrawSphereWires(bone->position.position, 0.031f, 8, 8, (Color){255, 230, 100, 255});
+			}
+		}
+		rlEnableDepthTest();
+		EndMode3D();
+	}
+
 	bool hasMultiSelection = (app->editor.selectionStart != -1 && 
 			app->editor.selectionEnd != -1 && 
 			app->editor.selectionStart != app->editor.selectionEnd);
@@ -2062,6 +2576,7 @@ static void DrawBoneSelectionFeedback(AppState* app) {
 			if (strcmp(bone->name, app->editor.selectedBoneName) == 0 && bone->position.valid) {
 				Vector2 screenPos = GetWorldToScreen(bone->position.position, camera);
 				BeginMode3D(camera);
+				rlDisableDepthTest();
 				Color highlightColor;
 				const char* modeText;
 				if (app->editor.isDraggingKeyframe) {
@@ -2087,6 +2602,7 @@ static void DrawBoneSelectionFeedback(AppState* app) {
 				}
 				DrawSphere(bone->position.position, 0.030f, highlightColor);
 				DrawSphereWires(bone->position.position, 0.033f, 8, 8, WHITE);
+				rlEnableDepthTest();
 				EndMode3D();
 				float scale = fminf(app->screenWidth / 1920.0f, app->screenHeight / 1080.0f);
 				int fontSize = (int)(12 * scale);
@@ -2500,7 +3016,7 @@ static void DrawDebugPanel(AppState* app) {
 	if (!app->showUI) return;
 	float scale = fminf(app->screenWidth / 1920.0f, app->screenHeight / 1080.0f);
 	int panelWidth = (int)(210 * scale);
-	int panelHeight = (int)(200 * scale);
+	int panelHeight = (int)(245 * scale);
 	int panelX = app->screenWidth - panelWidth - (int)(10 * scale);
 	int panelY = (int)(10 * scale);
 	int buttonWidth = panelWidth - (int)(20 * scale);
@@ -2537,11 +3053,232 @@ static void DrawDebugPanel(AppState* app) {
 				"Orientation", app->debug.showOrientation, GREEN, DARKGRAY)) {
 		app->debug.showOrientation = !app->debug.showOrientation;
 	}
+	buttonY += buttonHeight + spacing;
+
+	if (ToggleButton((Rectangle){(float)(panelX + 10 * scale), (float)buttonY, (float)buttonWidth, (float)buttonHeight},
+				"Onion Skin [F6]", app->debug.showOnionSkin, (Color){180, 100, 0, 255}, DARKGRAY)) {
+		app->debug.showOnionSkin = !app->debug.showOnionSkin;
+	}
 }
 
 // ============================================================================
 // DEBUG VISUALIZATION FUNCTIONS
 // ============================================================================
+
+static BoneOrientOffset* GetOrientOffset(const char* boneName) {
+	for (int i = 0; i < g_orientOffsetCount; i++)
+		if (strcmp(g_orientOffsets[i].boneName, boneName) == 0) return &g_orientOffsets[i];
+	if (g_orientOffsetCount < MAX_ORIENT_OFFSETS) {
+		BoneOrientOffset* e = &g_orientOffsets[g_orientOffsetCount++];
+		strncpy(e->boneName, boneName, MAX_BONE_NAME_LENGTH - 1);
+		e->boneName[MAX_BONE_NAME_LENGTH - 1] = '\0';
+		e->yaw = 0.0f; e->pitch = 0.0f;
+		return e;
+	}
+	return NULL;
+}
+
+static void InjectOrientOffsets(AppState* app) {
+	for (int i = 0; i < app->character->renderBonesCount; i++) {
+		BoneRenderData* rd = &app->character->renderBones[i];
+		rd->yawOffset = 0.0f; rd->pitchOffset = 0.0f;
+		for (int j = 0; j < g_orientOffsetCount; j++) {
+			if (strcmp(g_orientOffsets[j].boneName, rd->boneName) == 0) {
+				rd->yawOffset   = g_orientOffsets[j].yaw;
+				rd->pitchOffset = g_orientOffsets[j].pitch;
+				break;
+			}
+		}
+	}
+}
+
+static BoneOrientation GetOrientWithOffsets(const char* boneName, const Person* person, Vector3 pos) {
+	BoneOrientation orient = CalculateBoneOrientation(boneName, person, pos);
+	if (!orient.valid) return orient;
+	BoneOrientOffset* off = GetOrientOffset(boneName);
+	if (!off || (off->yaw == 0.0f && off->pitch == 0.0f)) return orient;
+	float yawRad   = off->yaw   * (PI / 180.0f);
+	float pitchRad = off->pitch * (PI / 180.0f);
+	Vector3 fw = orient.forward, up = orient.up, rt = orient.right;
+	Vector3 axisUp = up, axisRt = rt;
+	fw = Vector3RotateByAxisAngle(fw, axisUp, yawRad);
+	rt = Vector3RotateByAxisAngle(rt, axisUp, yawRad);
+	fw = Vector3RotateByAxisAngle(fw, axisRt, pitchRad);
+	up = Vector3RotateByAxisAngle(up, axisRt, pitchRad);
+	orient.forward = Vector3Normalize(fw);
+	orient.up      = Vector3Normalize(up);
+	orient.right   = Vector3Normalize(rt);
+	return orient;
+}
+
+static void UpdateBoneOrientGizmo(AppState* app) {
+	if (!app->debug.showOrientation || !app->editor.hasBoneSelected) return;
+	if (!app->character->animation.isLoaded) return;
+	if (app->editor.isDraggingRotationHandle) return;
+	if (app->editor.isDraggingBone || app->editor.isDraggingGroup) return;
+
+	int currentFrame = app->character->currentFrame;
+	if (currentFrame < 0 || currentFrame >= app->character->animation.frameCount) return;
+	const AnimationFrame* frame = &app->character->animation.frames[currentFrame];
+	Camera camera = app->character->renderer->camera;
+	Vector2 mousePos = GetMousePosition();
+
+	const Person* person = NULL;
+	Vector3 bonePos = {0};
+	bool found = false;
+	for (int p = 0; p < frame->personCount && !found; p++) {
+		const Person* pr = &frame->persons[p];
+		if (!pr->active) continue;
+		for (int b = 0; b < pr->boneCount; b++) {
+			if (strcmp(pr->bones[b].name, app->editor.selectedBoneName) == 0 && pr->bones[b].position.valid) {
+				bonePos = pr->bones[b].position.position;
+				person  = pr;
+				found   = true;
+				break;
+			}
+		}
+	}
+	if (!found || !person) return;
+
+	BoneOrientation orient = GetOrientWithOffsets(app->editor.selectedBoneName, person, bonePos);
+	if (!orient.valid) return;
+
+	if (app->editor.orientDragAxis != 0) {
+		if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+			Vector2 boneScreen = GetWorldToScreen(bonePos, camera);
+			Vector2 off = {mousePos.x - boneScreen.x, mousePos.y - boneScreen.y};
+			float angle = atan2f(off.x, -off.y) * RAD2DEG;
+			float delta = angle - app->editor.orientDragStartAngle;
+			BoneOrientOffset* offsets = GetOrientOffset(app->editor.selectedBoneName);
+			if (offsets) {
+				if (app->editor.orientDragAxis == 1)
+					offsets->yaw = app->editor.orientDragStartValue + delta;
+				else if (app->editor.orientDragAxis == 2)
+					offsets->pitch = app->editor.orientDragStartValue + delta;
+				else if (app->editor.orientDragAxis == 3) {
+					float newRot = app->editor.orientDragStartValue + delta;
+					RotateBoneInFrame(app, GetCurrentFrameNumber(app), app->editor.selectedBoneName, newRot);
+				}
+			}
+		} else {
+			if (app->editor.orientDragAxis == 3) {
+				UndoAction action = {0};
+				action.type = UNDO_BONE_ROTATE;
+				strncpy(action.boneName, app->editor.selectedBoneName, 63);
+				action.frameNumber = GetCurrentFrameNumber(app);
+				action.oldRotation = app->editor.orientDragStartValue;
+				action.newRotation = GetBoneRotation(app, action.frameNumber, app->editor.selectedBoneName);
+				PushUndoAction(&app->editor.undoHistory, action);
+			} else if (app->editor.orientDragAxis == 1 || app->editor.orientDragAxis == 2) {
+				BoneOrientOffset* off = GetOrientOffset(app->editor.selectedBoneName);
+				if (off) {
+					float newVal = (app->editor.orientDragAxis == 1) ? off->yaw : off->pitch;
+					if (newVal != app->editor.orientDragStartValue) {
+						UndoAction action = {0};
+						action.type = UNDO_ORIENT_OFFSET;
+						strncpy(action.boneName, app->editor.selectedBoneName, 63);
+						action.opFrameIndex = app->editor.orientDragAxis;
+						action.oldRotation = app->editor.orientDragStartValue;
+						action.newRotation = newVal;
+						PushUndoAction(&app->editor.undoHistory, action);
+					}
+				}
+			}
+			app->editor.orientDragAxis = 0;
+		}
+		return;
+	}
+
+	if (!IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) return;
+	if (CheckCollisionPointRec(mousePos, GetTimelineRect(app))) return;
+	if (CheckCollisionPointRec(mousePos, GetGizmoRect(app))) return;
+
+	float sphereScreenRadius = 15.0f;
+
+	Vector3 tips[3] = {
+		Vector3Add(bonePos, Vector3Scale(orient.right,   AXIS_LENGTH * 1.4f)),
+		Vector3Add(bonePos, Vector3Scale(orient.up,      AXIS_LENGTH * 1.4f)),
+		Vector3Add(bonePos, Vector3Scale(orient.forward, AXIS_LENGTH * 1.4f))
+	};
+
+	for (int axis = 1; axis <= 3; axis++) {
+		Vector2 tipScreen = GetWorldToScreen(tips[axis - 1], camera);
+		if (Vector2Distance(mousePos, tipScreen) < sphereScreenRadius * 2.0f) {
+			Vector2 boneScreen = GetWorldToScreen(bonePos, camera);
+			Vector2 off = {mousePos.x - boneScreen.x, mousePos.y - boneScreen.y};
+			app->editor.orientDragAxis = axis;
+			app->editor.orientDragStartAngle = atan2f(off.x, -off.y) * RAD2DEG;
+			BoneOrientOffset* offsets = GetOrientOffset(app->editor.selectedBoneName);
+			if (offsets) {
+				if (axis == 1) app->editor.orientDragStartValue = offsets->yaw;
+				else if (axis == 2) app->editor.orientDragStartValue = offsets->pitch;
+				else app->editor.orientDragStartValue = GetBoneRotation(app, GetCurrentFrameNumber(app), app->editor.selectedBoneName);
+			}
+			return;
+		}
+	}
+}
+
+static void DrawBoneOrientGizmo(AppState* app) {
+	if (!app->debug.showOrientation || !app->editor.hasBoneSelected) return;
+	if (app->editor.orientDragAxis == 0) return;
+	if (!app->character->animation.isLoaded) return;
+
+	int currentFrame = app->character->currentFrame;
+	if (currentFrame < 0 || currentFrame >= app->character->animation.frameCount) return;
+	const AnimationFrame* frame = &app->character->animation.frames[currentFrame];
+	Camera camera = app->character->renderer->camera;
+
+	Vector3 bonePos = {0};
+	bool found = false;
+	for (int p = 0; p < frame->personCount && !found; p++) {
+		const Person* pr = &frame->persons[p];
+		if (!pr->active) continue;
+		for (int b = 0; b < pr->boneCount; b++) {
+			if (strcmp(pr->bones[b].name, app->editor.selectedBoneName) == 0 && pr->bones[b].position.valid) {
+				bonePos = pr->bones[b].position.position;
+				found   = true;
+				break;
+			}
+		}
+	}
+	if (!found) return;
+
+	float scale = fminf((float)app->screenWidth / 1920.0f, (float)app->screenHeight / 1080.0f);
+	float radius = ROTATION_HANDLE_RADIUS * scale;
+	float dotRadius = 8.0f * scale;
+	Vector2 boneScreen = GetWorldToScreen(bonePos, camera);
+
+	Color axisColor = (app->editor.orientDragAxis == 1) ? RED :
+	                  (app->editor.orientDragAxis == 2) ? GREEN : BLUE;
+
+	DrawCircleLines((int)boneScreen.x, (int)boneScreen.y, radius, axisColor);
+
+	float currentValue = 0.0f;
+	if (app->editor.orientDragAxis == 3) {
+		currentValue = GetBoneRotation(app, GetCurrentFrameNumber(app), app->editor.selectedBoneName);
+	} else {
+		BoneOrientOffset* off = GetOrientOffset(app->editor.selectedBoneName);
+		if (off) currentValue = (app->editor.orientDragAxis == 1) ? off->yaw : off->pitch;
+	}
+
+	float handleAngleRad = currentValue * DEG2RAD;
+	Vector2 handlePos = {
+		boneScreen.x + sinf(handleAngleRad) * radius,
+		boneScreen.y - cosf(handleAngleRad) * radius
+	};
+	DrawCircleV(handlePos, dotRadius, ORANGE);
+	DrawCircleLines((int)handlePos.x, (int)handlePos.y, dotRadius, WHITE);
+
+	float scale2 = fminf((float)app->screenWidth / 1920.0f, (float)app->screenHeight / 1080.0f);
+	int fs = (int)(11 * scale2);
+	if (fs < 9) fs = 9;
+	const char* axisName = (app->editor.orientDragAxis == 1) ? "yaw" :
+	                       (app->editor.orientDragAxis == 2) ? "pitch" : "roll";
+	char label[32];
+	snprintf(label, sizeof(label), "%s %.1f", axisName, currentValue);
+	DrawText(label, (int)boneScreen.x + (int)(dotRadius * 2), (int)boneScreen.y - (int)(dotRadius * 2), fs, ORANGE);
+}
 
 static void DrawBoneOrientation(AppState* app) {
 	if (!app->debug.showOrientation || !app->character->animation.isLoaded) return;
@@ -2572,28 +3309,86 @@ static void DrawBoneOrientation(AppState* app) {
 				strncpy(uniqueBones[uniqueCount].name, bone->name, MAX_BONE_NAME_LENGTH - 1);
 				uniqueBones[uniqueCount].name[MAX_BONE_NAME_LENGTH - 1] = '\0';
 				uniqueBones[uniqueCount].position = bone->position.position;
-				uniqueBones[uniqueCount].orientation = CalculateBoneOrientation(bone->name, person, bone->position.position);
+				uniqueBones[uniqueCount].orientation = GetOrientWithOffsets(bone->name, person, bone->position.position);
 				uniqueCount++;
 			}
 		}
 	}
-	BeginMode3D(app->character->renderer->camera);
+
+	Camera camera = app->character->renderer->camera;
+	Vector2 mousePos = GetMousePosition();
+
+	int hoveredAxis = 0;
+	if (app->editor.hasBoneSelected && app->editor.orientDragAxis == 0) {
+		for (int i = 0; i < uniqueCount; i++) {
+			if (!uniqueBones[i].orientation.valid) continue;
+			if (strcmp(uniqueBones[i].name, app->editor.selectedBoneName) != 0) continue;
+			Vector3 pos = uniqueBones[i].position;
+			BoneOrientation orient = uniqueBones[i].orientation;
+			Vector3 tips[3] = {
+				Vector3Add(pos, Vector3Scale(orient.right,   AXIS_LENGTH)),
+				Vector3Add(pos, Vector3Scale(orient.up,      AXIS_LENGTH)),
+				Vector3Add(pos, Vector3Scale(orient.forward, AXIS_LENGTH))
+			};
+			for (int a = 0; a < 3; a++) {
+				Vector2 tipScreen = GetWorldToScreen(tips[a], camera);
+				if (Vector2Distance(mousePos, tipScreen) < 15.0f) {
+					hoveredAxis = a + 1;
+					break;
+				}
+			}
+			break;
+		}
+	}
+
+	BeginMode3D(camera);
 	for (int i = 0; i < uniqueCount; i++) {
 		if (!uniqueBones[i].orientation.valid) continue;
 		Vector3 pos = uniqueBones[i].position;
 		BoneOrientation orient = uniqueBones[i].orientation;
-		Vector3 forward = Vector3Scale(orient.forward, AXIS_LENGTH);
-		Vector3 right = Vector3Scale(orient.right, AXIS_LENGTH);
-		Vector3 up = Vector3Scale(orient.up, AXIS_LENGTH);
-		DrawLine3D(pos, Vector3Add(pos, right), RED);
-		DrawSphere(Vector3Add(pos, right), 0.0035f, RED);
-		DrawLine3D(pos, Vector3Add(pos, up), GREEN);
-		DrawSphere(Vector3Add(pos, up), 0.0035f, GREEN);
-		DrawLine3D(pos, Vector3Add(pos, forward), BLUE);
-		DrawSphere(Vector3Add(pos, forward), 0.0035f, BLUE);
+		bool isSelected = app->editor.hasBoneSelected &&
+			strcmp(uniqueBones[i].name, app->editor.selectedBoneName) == 0;
+
+		float tipSize = isSelected ? 0.007f : 0.0035f;
+		float axisLen = isSelected ? AXIS_LENGTH * 1.4f : AXIS_LENGTH;
+
+		Color rightColor = RED, upColor = GREEN, fwdColor = BLUE;
+		if (isSelected) {
+			if (app->editor.orientDragAxis == 1 || hoveredAxis == 1) rightColor = ORANGE;
+			if (app->editor.orientDragAxis == 2 || hoveredAxis == 2) upColor    = ORANGE;
+			if (app->editor.orientDragAxis == 3 || hoveredAxis == 3) fwdColor   = ORANGE;
+		}
+
+		Vector3 right   = Vector3Scale(orient.right,   axisLen);
+		Vector3 up      = Vector3Scale(orient.up,      axisLen);
+		Vector3 forward = Vector3Scale(orient.forward, axisLen);
+
+		DrawLine3D(pos, Vector3Add(pos, right),   rightColor);
+		DrawSphere(Vector3Add(pos, right),   tipSize, rightColor);
+		DrawLine3D(pos, Vector3Add(pos, up),      upColor);
+		DrawSphere(Vector3Add(pos, up),      tipSize, upColor);
+		DrawLine3D(pos, Vector3Add(pos, forward), fwdColor);
+		DrawSphere(Vector3Add(pos, forward), tipSize, fwdColor);
 		DrawSphere(pos, 0.005f, YELLOW);
 	}
 	EndMode3D();
+
+	float scale = fminf((float)app->screenWidth / 1920.0f, (float)app->screenHeight / 1080.0f);
+	int fs = (int)(10 * scale); if (fs < 8) fs = 8;
+	for (int i = 0; i < uniqueCount; i++) {
+		if (!uniqueBones[i].orientation.valid) continue;
+		if (!app->editor.hasBoneSelected) continue;
+		if (strcmp(uniqueBones[i].name, app->editor.selectedBoneName) != 0) continue;
+		Vector3 pos = uniqueBones[i].position;
+		BoneOrientation orient = uniqueBones[i].orientation;
+		float axisLen = AXIS_LENGTH * 1.4f;
+		Vector2 rScreen = GetWorldToScreen(Vector3Add(pos, Vector3Scale(orient.right,   axisLen)), camera);
+		Vector2 uScreen = GetWorldToScreen(Vector3Add(pos, Vector3Scale(orient.up,      axisLen)), camera);
+		Vector2 fScreen = GetWorldToScreen(Vector3Add(pos, Vector3Scale(orient.forward, axisLen)), camera);
+		DrawText("yaw",   (int)rScreen.x + 6, (int)rScreen.y - fs/2, fs, RED);
+		DrawText("pitch", (int)uScreen.x + 6, (int)uScreen.y - fs/2, fs, GREEN);
+		DrawText("roll",  (int)fScreen.x + 6, (int)fScreen.y - fs/2, fs, BLUE);
+	}
 }
 
 static void DrawDebugVisuals(AppState* app) {
@@ -3031,6 +3826,635 @@ static void DrawExportDialog(AppState* app) {
 	}
 }
 
+#define TEXED_MAX_PATHS 32
+#define TEXED_MAX_CELLS 25
+#define TEXED_SCALE_MIN 0.25f
+#define TEXED_SCALE_MAX 4.0f
+#define TEXED_ROT_SNAP 15.0f
+
+typedef struct {
+	float x[4];
+	float y[4];
+} TexCellXform;
+
+typedef enum {
+	TEXED_DRAG_NONE,
+	TEXED_DRAG_MOVE,
+	TEXED_DRAG_VERTEX,
+	TEXED_DRAG_ROTATE
+} TexDragMode;
+
+typedef struct {
+	bool open;
+	AnimatedCharacter* owner;
+	char paths[TEXED_MAX_PATHS][MAX_FILE_PATH_LENGTH];
+	int gridCols[TEXED_MAX_PATHS];
+	int gridRows[TEXED_MAX_PATHS];
+	int pathCount;
+	int current;
+	bool loaded;
+	Image original;
+	Image working;
+	Texture2D preview;
+	TexCellXform xform[TEXED_MAX_CELLS];
+	int selected;
+	TexDragMode dragMode;
+	int dragVertex;
+	Vector2 dragStartMouse;
+	TexCellXform dragStartXform;
+	Vector2 dragPivot;
+	float dragStartAngle;
+} TexEditor;
+
+static TexEditor g_texEd = {0};
+
+static float TexEd_UiScale(AppState* app) {
+	return fminf(app->screenWidth / 1920.0f, app->screenHeight / 1080.0f);
+}
+
+static float TexEd_HitRadius(float s) {
+	float r = 10.0f * s;
+	return r < 8.0f ? 8.0f : r;
+}
+
+static Rectangle TexEd_PanelRect(AppState* app) {
+	float s = TexEd_UiScale(app);
+	float w = 640.0f * s;
+	return (Rectangle){app->screenWidth - w - 10.0f * s, 10.0f * s, w, app->screenHeight - 20.0f * s};
+}
+
+static Rectangle TexEd_ToggleRect(AppState* app) {
+	float s = TexEd_UiScale(app);
+	float w = 190.0f * s;
+	return (Rectangle){app->screenWidth - w - 10.0f * s, 265.0f * s, w, 32.0f * s};
+}
+
+static Rectangle TexEd_AtlasRect(AppState* app) {
+	Rectangle p = TexEd_PanelRect(app);
+	float s = TexEd_UiScale(app);
+	float pad = 12.0f * s;
+	float availW = p.width - 2.0f * pad;
+	float availH = p.height - 250.0f * s;
+	float k = fminf(availW / (float)g_texEd.working.width, availH / (float)g_texEd.working.height);
+	float w = g_texEd.working.width * k;
+	float h = g_texEd.working.height * k;
+	return (Rectangle){p.x + (p.width - w) * 0.5f, p.y + 100.0f * s, w, h};
+}
+
+static void TexEd_CellSize(float* cw, float* ch) {
+	*cw = (float)(g_texEd.original.width / g_texEd.gridCols[g_texEd.current]);
+	*ch = (float)(g_texEd.original.height / g_texEd.gridRows[g_texEd.current]);
+}
+
+static TexCellXform TexEd_IdentityXform(void) {
+	float cw, ch;
+	TexEd_CellSize(&cw, &ch);
+	float hw = cw * 0.5f;
+	float hh = ch * 0.5f;
+	TexCellXform xf = {{-hw, hw, hw, -hw}, {-hh, -hh, hh, hh}};
+	return xf;
+}
+
+static bool TexEd_XformIsIdentity(const TexCellXform* xf) {
+	TexCellXform id = TexEd_IdentityXform();
+	for (int i = 0; i < 4; i++) {
+		if (fabsf(xf->x[i] - id.x[i]) > 0.01f || fabsf(xf->y[i] - id.y[i]) > 0.01f) return false;
+	}
+	return true;
+}
+
+static Vector2 TexEd_Centroid(const TexCellXform* xf) {
+	Vector2 c = {0.0f, 0.0f};
+	for (int i = 0; i < 4; i++) {
+		c.x += xf->x[i];
+		c.y += xf->y[i];
+	}
+	return (Vector2){c.x * 0.25f, c.y * 0.25f};
+}
+
+static float TexEd_ScaleOf(const TexCellXform* xf) {
+	float cw, ch;
+	TexEd_CellSize(&cw, &ch);
+	Vector2 c = TexEd_Centroid(xf);
+	float r = 0.0f;
+	for (int i = 0; i < 4; i++) r += hypotf(xf->x[i] - c.x, xf->y[i] - c.y);
+	return (r * 0.25f) / (hypotf(cw, ch) * 0.5f);
+}
+
+static float TexEd_RotationOf(const TexCellXform* xf) {
+	return atan2f(xf->y[1] - xf->y[0], xf->x[1] - xf->x[0]) * RAD2DEG;
+}
+
+static void TexEd_Translate(TexCellXform* xf, const TexCellXform* base, float dx, float dy) {
+	for (int i = 0; i < 4; i++) {
+		xf->x[i] = base->x[i] + dx;
+		xf->y[i] = base->y[i] + dy;
+	}
+}
+
+static void TexEd_RotateAbout(TexCellXform* xf, const TexCellXform* base, Vector2 pivot, float degrees) {
+	float c = cosf(degrees * DEG2RAD);
+	float s = sinf(degrees * DEG2RAD);
+	for (int i = 0; i < 4; i++) {
+		float dx = base->x[i] - pivot.x;
+		float dy = base->y[i] - pivot.y;
+		xf->x[i] = pivot.x + dx * c - dy * s;
+		xf->y[i] = pivot.y + dx * s + dy * c;
+	}
+}
+
+static void TexEd_ScaleAbout(TexCellXform* xf, float factor) {
+	float cur = TexEd_ScaleOf(xf);
+	if (cur <= 0.0001f) return;
+	float f = Clamp(cur * factor, TEXED_SCALE_MIN, TEXED_SCALE_MAX) / cur;
+	Vector2 c = TexEd_Centroid(xf);
+	for (int i = 0; i < 4; i++) {
+		xf->x[i] = c.x + (xf->x[i] - c.x) * f;
+		xf->y[i] = c.y + (xf->y[i] - c.y) * f;
+	}
+}
+
+static bool TexEd_IsDirty(void) {
+	if (!g_texEd.loaded) return false;
+	int cells = g_texEd.gridCols[g_texEd.current] * g_texEd.gridRows[g_texEd.current];
+	for (int i = 0; i < cells; i++) {
+		if (!TexEd_XformIsIdentity(&g_texEd.xform[i])) return true;
+	}
+	return false;
+}
+
+static void TexEd_ResetXforms(void) {
+	TexCellXform id = TexEd_IdentityXform();
+	for (int i = 0; i < TEXED_MAX_CELLS; i++) g_texEd.xform[i] = id;
+}
+
+static void TexEd_AddPath(const char* path, int cols, int rows) {
+	if (!path || path[0] == '\0' || strcmp(path, "NULL") == 0) return;
+	if (g_texEd.pathCount >= TEXED_MAX_PATHS) return;
+	for (int i = 0; i < g_texEd.pathCount; i++) {
+		if (strcmp(g_texEd.paths[i], path) == 0) return;
+	}
+	if (!FileExists(path)) return;
+	int n = g_texEd.pathCount++;
+	strncpy(g_texEd.paths[n], path, MAX_FILE_PATH_LENGTH - 1);
+	g_texEd.paths[n][MAX_FILE_PATH_LENGTH - 1] = '\0';
+	g_texEd.gridCols[n] = cols;
+	g_texEd.gridRows[n] = rows;
+}
+
+static void TexEd_CollectPaths(AppState* app) {
+	AnimatedCharacter* ch = app->character;
+	int physCols = ch->renderer->physCols;
+	int physRows = ch->renderer->physRows;
+	g_texEd.pathCount = 0;
+	for (int i = 0; i < ch->boneConfigCount; i++) {
+		BoneConfig* cfg = &ch->boneConfigs[i];
+		if (!cfg->valid) continue;
+		bool asym = cfg->visibleMode == 2 || IsWristBone(cfg->boneName);
+		TexEd_AddPath(cfg->texturePath, asym ? ASYM_ATLAS_COLS : physCols, asym ? ASYM_ATLAS_ROWS : physRows);
+	}
+	if (ch->textureSets) {
+		for (int i = 0; i < ch->textureSets->setCount; i++) {
+			BoneTextureSet* set = &ch->textureSets->sets[i];
+			bool asym = IsWristBone(set->boneName);
+			for (int j = 0; j < set->variantCount; j++) {
+				TexEd_AddPath(set->variants[j].texturePath, asym ? ASYM_ATLAS_COLS : physCols, asym ? ASYM_ATLAS_ROWS : physRows);
+			}
+		}
+	}
+	g_texEd.owner = ch;
+}
+
+static void TexEd_Unload(void) {
+	if (!g_texEd.loaded) return;
+	UnloadImage(g_texEd.original);
+	UnloadImage(g_texEd.working);
+	UnloadTexture(g_texEd.preview);
+	g_texEd.loaded = false;
+	g_texEd.dragMode = TEXED_DRAG_NONE;
+}
+
+static bool TexEd_Load(int index) {
+	TexEd_Unload();
+	Image img = LoadImage(g_texEd.paths[index]);
+	if (img.data == NULL) return false;
+	ImageFormat(&img, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+	g_texEd.original = img;
+	g_texEd.working = ImageCopy(img);
+	g_texEd.preview = LoadTextureFromImage(g_texEd.working);
+	SetTextureFilter(g_texEd.preview, TEXTURE_FILTER_BILINEAR);
+	g_texEd.current = index;
+	TexEd_ResetXforms();
+	g_texEd.selected = 0;
+	g_texEd.loaded = true;
+	return true;
+}
+
+static bool TexEd_SolveHomography(const float* fx, const float* fy, const float* tu, const float* tv, double h[8]) {
+	double m[8][9];
+	for (int i = 0; i < 4; i++) {
+		double x = fx[i];
+		double y = fy[i];
+		double u = tu[i];
+		double v = tv[i];
+		double* r0 = m[i * 2];
+		double* r1 = m[i * 2 + 1];
+		r0[0] = x; r0[1] = y; r0[2] = 1.0; r0[3] = 0.0; r0[4] = 0.0; r0[5] = 0.0; r0[6] = -u * x; r0[7] = -u * y; r0[8] = u;
+		r1[0] = 0.0; r1[1] = 0.0; r1[2] = 0.0; r1[3] = x; r1[4] = y; r1[5] = 1.0; r1[6] = -v * x; r1[7] = -v * y; r1[8] = v;
+	}
+	for (int c = 0; c < 8; c++) {
+		int p = c;
+		for (int r = c + 1; r < 8; r++) {
+			if (fabs(m[r][c]) > fabs(m[p][c])) p = r;
+		}
+		if (fabs(m[p][c]) < 1e-9) return false;
+		if (p != c) {
+			for (int k = 0; k < 9; k++) {
+				double t = m[c][k];
+				m[c][k] = m[p][k];
+				m[p][k] = t;
+			}
+		}
+		for (int r = 0; r < 8; r++) {
+			if (r == c) continue;
+			double f = m[r][c] / m[c][c];
+			for (int k = c; k < 9; k++) m[r][k] -= f * m[c][k];
+		}
+	}
+	for (int i = 0; i < 8; i++) h[i] = m[i][8] / m[i][i];
+	return true;
+}
+
+static void TexEd_ComposeCell(int cell) {
+	int cols = g_texEd.gridCols[g_texEd.current];
+	int rows = g_texEd.gridRows[g_texEd.current];
+	int cw = g_texEd.original.width / cols;
+	int chh = g_texEd.original.height / rows;
+	int x0 = (cell % cols) * cw;
+	int y0 = (cell / cols) * chh;
+	int stride = g_texEd.original.width;
+	const TexCellXform* xf = &g_texEd.xform[cell];
+	const Color* src = (const Color*)g_texEd.original.data;
+	Color* dst = (Color*)g_texEd.working.data;
+	float midX = cw * 0.5f;
+	float midY = chh * 0.5f;
+
+	float tu[4] = {-midX, midX, midX, -midX};
+	float tv[4] = {-midY, -midY, midY, midY};
+	double h[8];
+	if (!TexEd_SolveHomography(xf->x, xf->y, tu, tv, h)) return;
+
+	for (int y = 0; y < chh; y++) {
+		for (int x = 0; x < cw; x++) {
+			double px = x + 0.5 - midX;
+			double py = y + 0.5 - midY;
+			double den = h[6] * px + h[7] * py + 1.0;
+			Color out = {0, 0, 0, 0};
+			if (den > 1e-6) {
+				float sx = (float)((h[0] * px + h[1] * py + h[2]) / den) + midX - 0.5f;
+				float sy = (float)((h[3] * px + h[4] * py + h[5]) / den) + midY - 0.5f;
+				int ix = (int)floorf(sx);
+				int iy = (int)floorf(sy);
+				float fx = sx - (float)ix;
+				float fy = sy - (float)iy;
+				float r = 0.0f, g = 0.0f, b = 0.0f, a = 0.0f;
+				for (int j = 0; j < 2; j++) {
+					for (int i = 0; i < 2; i++) {
+						int qx = ix + i;
+						int qy = iy + j;
+						if (qx < 0 || qy < 0 || qx >= cw || qy >= chh) continue;
+						float w = (i ? fx : 1.0f - fx) * (j ? fy : 1.0f - fy);
+						if (w <= 0.0f) continue;
+						Color c = src[(y0 + qy) * stride + x0 + qx];
+						float ca = (c.a / 255.0f) * w;
+						r += c.r * ca;
+						g += c.g * ca;
+						b += c.b * ca;
+						a += ca;
+					}
+				}
+				if (a > 0.0001f) {
+					out.r = (unsigned char)fminf(255.0f, r / a + 0.5f);
+					out.g = (unsigned char)fminf(255.0f, g / a + 0.5f);
+					out.b = (unsigned char)fminf(255.0f, b / a + 0.5f);
+					out.a = (unsigned char)fminf(255.0f, a * 255.0f + 0.5f);
+				}
+			}
+			dst[(y0 + y) * stride + x0 + x] = out;
+		}
+	}
+}
+
+static void TexEd_SyncTextures(AppState* app) {
+	UpdateTexture(g_texEd.preview, g_texEd.working.data);
+	BonesRenderer* r = app->character->renderer;
+	for (int i = 0; i < r->textureCount; i++) {
+		if (strcmp(r->texturePaths[i], g_texEd.paths[g_texEd.current]) != 0) continue;
+		Texture2D t = r->textures[i];
+		if (t.width != g_texEd.working.width || t.height != g_texEd.working.height ||
+				t.format != PIXELFORMAT_UNCOMPRESSED_R8G8B8A8) return;
+		Image pm = ImageCopy(g_texEd.working);
+		ImageAlphaPremultiply(&pm);
+		UpdateTexture(t, pm.data);
+		UnloadImage(pm);
+		return;
+	}
+}
+
+static void TexEd_CellChanged(AppState* app, int cell) {
+	TexEd_ComposeCell(cell);
+	TexEd_SyncTextures(app);
+}
+
+static Vector2 TexEd_CellCenterScreen(Rectangle ar, int cell) {
+	int cols = g_texEd.gridCols[g_texEd.current];
+	int rows = g_texEd.gridRows[g_texEd.current];
+	float cellW = ar.width / cols;
+	float cellH = ar.height / rows;
+	return (Vector2){ar.x + (cell % cols + 0.5f) * cellW, ar.y + (cell / cols + 0.5f) * cellH};
+}
+
+static Vector2 TexEd_VertexScreen(const TexCellXform* xf, int i, Vector2 center, float k) {
+	return (Vector2){center.x + xf->x[i] * k, center.y + xf->y[i] * k};
+}
+
+static Vector2 TexEd_RotHandleScreen(const TexCellXform* xf, Vector2 center, float k, float dist, Vector2* anchor) {
+	Vector2 a = {center.x + (xf->x[0] + xf->x[1]) * 0.5f * k, center.y + (xf->y[0] + xf->y[1]) * 0.5f * k};
+	Vector2 cen = TexEd_Centroid(xf);
+	Vector2 d = {a.x - (center.x + cen.x * k), a.y - (center.y + cen.y * k)};
+	float len = hypotf(d.x, d.y);
+	if (len < 0.001f) {
+		d = (Vector2){0.0f, -1.0f};
+	} else {
+		d = (Vector2){d.x / len, d.y / len};
+	}
+	*anchor = a;
+	return (Vector2){a.x + d.x * dist, a.y + d.y * dist};
+}
+
+static bool TexEd_RotHandleBlocksUi(AppState* app) {
+	if (g_texEd.dragMode != TEXED_DRAG_NONE) return true;
+	Rectangle ar = TexEd_AtlasRect(app);
+	float k = ar.width / (float)g_texEd.working.width;
+	float s = TexEd_UiScale(app);
+	TexCellXform* xf = &g_texEd.xform[g_texEd.selected];
+	Vector2 center = TexEd_CellCenterScreen(ar, g_texEd.selected);
+	Vector2 anchor;
+	Vector2 rot = TexEd_RotHandleScreen(xf, center, k, 30.0f * s, &anchor);
+	Vector2 m = GetMousePosition();
+	return hypotf(m.x - rot.x, m.y - rot.y) <= TexEd_HitRadius(s);
+}
+
+static int TexEd_HitVertex(const TexCellXform* xf, Vector2 center, float k, Vector2 m, float radius) {
+	for (int i = 0; i < 4; i++) {
+		Vector2 v = TexEd_VertexScreen(xf, i, center, k);
+		if (hypotf(m.x - v.x, m.y - v.y) <= radius) return i;
+	}
+	return -1;
+}
+
+static void TexEd_Open(AppState* app) {
+	if (g_texEd.owner != app->character) {
+		TexEd_Unload();
+		TexEd_CollectPaths(app);
+	}
+	g_texEd.open = true;
+	if (!g_texEd.loaded && g_texEd.pathCount > 0) TexEd_Load(0);
+}
+
+static bool TexEd_Update(AppState* app) {
+	if (IsKeyPressed(KEY_F7)) {
+		if (g_texEd.open) g_texEd.open = false;
+		else TexEd_Open(app);
+	}
+	Vector2 m = GetMousePosition();
+	if (!g_texEd.open) {
+		return app->showUI && CheckCollisionPointRec(m, TexEd_ToggleRect(app));
+	}
+
+	bool hover = CheckCollisionPointRec(m, TexEd_PanelRect(app));
+	if (!g_texEd.loaded) return hover;
+
+	int cols = g_texEd.gridCols[g_texEd.current];
+	int rows = g_texEd.gridRows[g_texEd.current];
+	Rectangle ar = TexEd_AtlasRect(app);
+	float k = ar.width / (float)g_texEd.working.width;
+	bool inAtlas = CheckCollisionPointRec(m, ar);
+	float s = TexEd_UiScale(app);
+	float hitR = TexEd_HitRadius(s);
+	bool shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+
+	if (hover && g_texEd.dragMode == TEXED_DRAG_NONE && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+		TexCellXform* sel = &g_texEd.xform[g_texEd.selected];
+		Vector2 center = TexEd_CellCenterScreen(ar, g_texEd.selected);
+		int hitV = TexEd_HitVertex(sel, center, k, m, hitR);
+		Vector2 anchor;
+		Vector2 rot = TexEd_RotHandleScreen(sel, center, k, 30.0f * s, &anchor);
+		if (hitV >= 0) {
+			g_texEd.dragMode = TEXED_DRAG_VERTEX;
+			g_texEd.dragVertex = hitV;
+			g_texEd.dragStartMouse = m;
+			g_texEd.dragStartXform = *sel;
+		} else if (hypotf(m.x - rot.x, m.y - rot.y) <= hitR) {
+			Vector2 cen = TexEd_Centroid(sel);
+			Vector2 pv = {center.x + cen.x * k, center.y + cen.y * k};
+			g_texEd.dragMode = TEXED_DRAG_ROTATE;
+			g_texEd.dragPivot = cen;
+			g_texEd.dragStartAngle = atan2f(m.y - pv.y, m.x - pv.x) * RAD2DEG;
+			g_texEd.dragStartMouse = m;
+			g_texEd.dragStartXform = *sel;
+		} else if (inAtlas) {
+			int c = (int)((m.x - ar.x) / (ar.width / cols));
+			int r = (int)((m.y - ar.y) / (ar.height / rows));
+			if (c >= cols) c = cols - 1;
+			if (r >= rows) r = rows - 1;
+			g_texEd.selected = r * cols + c;
+			g_texEd.dragMode = TEXED_DRAG_MOVE;
+			g_texEd.dragStartMouse = m;
+			g_texEd.dragStartXform = g_texEd.xform[g_texEd.selected];
+		}
+	}
+
+	TexCellXform* xf = &g_texEd.xform[g_texEd.selected];
+	TexCellXform before = *xf;
+
+	if (g_texEd.dragMode != TEXED_DRAG_NONE) {
+		if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+			float dx = roundf((m.x - g_texEd.dragStartMouse.x) / k);
+			float dy = roundf((m.y - g_texEd.dragStartMouse.y) / k);
+			if (g_texEd.dragMode == TEXED_DRAG_MOVE) {
+				TexEd_Translate(xf, &g_texEd.dragStartXform, dx, dy);
+			} else if (g_texEd.dragMode == TEXED_DRAG_VERTEX) {
+				*xf = g_texEd.dragStartXform;
+				xf->x[g_texEd.dragVertex] += dx;
+				xf->y[g_texEd.dragVertex] += dy;
+			} else {
+				Vector2 center = TexEd_CellCenterScreen(ar, g_texEd.selected);
+				Vector2 pv = {center.x + g_texEd.dragPivot.x * k, center.y + g_texEd.dragPivot.y * k};
+				float d = atan2f(m.y - pv.y, m.x - pv.x) * RAD2DEG - g_texEd.dragStartAngle;
+				if (shift) d = roundf(d / TEXED_ROT_SNAP) * TEXED_ROT_SNAP;
+				TexEd_RotateAbout(xf, &g_texEd.dragStartXform, g_texEd.dragPivot, d);
+			}
+		} else {
+			g_texEd.dragMode = TEXED_DRAG_NONE;
+		}
+	}
+
+	if (inAtlas) {
+		float wheel = GetMouseWheelMove();
+		if (wheel != 0.0f) TexEd_ScaleAbout(xf, powf(1.03f, wheel));
+	}
+
+	if (hover) {
+		float step = shift ? 8.0f : 1.0f;
+		float rotStep = shift ? TEXED_ROT_SNAP : 1.0f;
+		if (IsKeyPressed(KEY_LEFT))  TexEd_Translate(xf, xf, -step, 0.0f);
+		if (IsKeyPressed(KEY_RIGHT)) TexEd_Translate(xf, xf, step, 0.0f);
+		if (IsKeyPressed(KEY_UP))    TexEd_Translate(xf, xf, 0.0f, -step);
+		if (IsKeyPressed(KEY_DOWN))  TexEd_Translate(xf, xf, 0.0f, step);
+		if (IsKeyPressed(KEY_Q)) TexEd_RotateAbout(xf, xf, TexEd_Centroid(xf), -rotStep);
+		if (IsKeyPressed(KEY_E)) TexEd_RotateAbout(xf, xf, TexEd_Centroid(xf), rotStep);
+		if (IsKeyPressed(KEY_R)) *xf = TexEd_IdentityXform();
+	}
+
+	if (memcmp(&before, xf, sizeof(before)) != 0) TexEd_CellChanged(app, g_texEd.selected);
+	return hover || g_texEd.dragMode != TEXED_DRAG_NONE;
+}
+
+static void TexEd_Draw(AppState* app) {
+	if (!g_texEd.open) {
+		if (app->showUI && Button(TexEd_ToggleRect(app), "TEXTURAS (F7)", DARKBLUE)) TexEd_Open(app);
+		return;
+	}
+
+	float s = TexEd_UiScale(app);
+	Rectangle p = TexEd_PanelRect(app);
+	int pad = (int)(12 * s);
+	int fs = (int)(16 * s);
+	if (fs < 12) fs = 12;
+
+	DrawRectangleRec(p, (Color){30, 30, 30, 240});
+	DrawRectangleLinesEx(p, 2, BLACK);
+	DrawText("TEXTURE EDITOR", (int)p.x + pad, (int)p.y + pad, fs + 4, YELLOW);
+
+	Rectangle closeBtn = {p.x + p.width - 100 * s - pad, p.y + 8 * s, 100 * s, 32 * s};
+	if (Button(closeBtn, "CLOSE", RED)) g_texEd.open = false;
+
+	if (!g_texEd.loaded) {
+		DrawText("No hay texturas para editar", (int)p.x + pad, (int)p.y + (int)(60 * s), fs, WHITE);
+		return;
+	}
+
+	int cols = g_texEd.gridCols[g_texEd.current];
+	int rows = g_texEd.gridRows[g_texEd.current];
+	bool dirty = TexEd_IsDirty();
+
+	Rectangle prevBtn = {p.x + pad, p.y + 52 * s, 40 * s, 32 * s};
+	Rectangle nextBtn = {p.x + pad + 48 * s, p.y + 52 * s, 40 * s, 32 * s};
+	int delta = 0;
+	bool uiBlocked = TexEd_RotHandleBlocksUi(app);
+	if (Button(prevBtn, "<", GRAY) && !uiBlocked) delta = -1;
+	if (Button(nextBtn, ">", GRAY) && !uiBlocked) delta = 1;
+	if (delta != 0) {
+		if (dirty) {
+			SetSaveStatus(app, "Guarda o resetea los cambios antes de cambiar de textura", true);
+		} else {
+			int next = (g_texEd.current + delta + g_texEd.pathCount) % g_texEd.pathCount;
+			TexEd_Load(next);
+			return;
+		}
+	}
+	DrawText(TextFormat("%s  [%dx%d]  %d/%d%s", GetFileName(g_texEd.paths[g_texEd.current]), cols, rows,
+				g_texEd.current + 1, g_texEd.pathCount, dirty ? "  *" : ""),
+			(int)(p.x + pad + 100 * s), (int)(p.y + 60 * s), fs, WHITE);
+
+	Rectangle ar = TexEd_AtlasRect(app);
+	float k = ar.width / (float)g_texEd.working.width;
+	DrawRectangleRec(ar, (Color){90, 90, 90, 255});
+	DrawTexturePro(g_texEd.preview, (Rectangle){0, 0, (float)g_texEd.working.width, (float)g_texEd.working.height},
+			ar, (Vector2){0, 0}, 0.0f, WHITE);
+
+	float cellW = ar.width / cols;
+	float cellH = ar.height / rows;
+	for (int i = 1; i < cols; i++) {
+		DrawLineV((Vector2){ar.x + i * cellW, ar.y}, (Vector2){ar.x + i * cellW, ar.y + ar.height}, (Color){255, 255, 255, 110});
+	}
+	for (int i = 1; i < rows; i++) {
+		DrawLineV((Vector2){ar.x, ar.y + i * cellH}, (Vector2){ar.x + ar.width, ar.y + i * cellH}, (Color){255, 255, 255, 110});
+	}
+	DrawRectangleLinesEx(ar, 1, WHITE);
+	int idxSize = fs - 2;
+	for (int i = 0; i < cols * rows; i++) {
+		DrawText(TextFormat("%d", i), (int)(ar.x + (i % cols) * cellW + 3), (int)(ar.y + (i / cols) * cellH + 2), idxSize, YELLOW);
+	}
+
+	Rectangle sel = {ar.x + (g_texEd.selected % cols) * cellW, ar.y + (g_texEd.selected / cols) * cellH, cellW, cellH};
+	DrawRectangleLinesEx(sel, 3, RED);
+
+	TexCellXform* xf = &g_texEd.xform[g_texEd.selected];
+	Vector2 center = TexEd_CellCenterScreen(ar, g_texEd.selected);
+	Vector2 m = GetMousePosition();
+	float hitR = TexEd_HitRadius(s);
+	int hoverV = TexEd_HitVertex(xf, center, k, m, hitR);
+	Color quadColor = {0, 255, 255, 220};
+	for (int i = 0; i < 4; i++) {
+		Vector2 a = TexEd_VertexScreen(xf, i, center, k);
+		Vector2 b = TexEd_VertexScreen(xf, (i + 1) % 4, center, k);
+		DrawLineEx(a, b, 2.0f, quadColor);
+	}
+	Vector2 anchor;
+	Vector2 rot = TexEd_RotHandleScreen(xf, center, k, 30.0f * s, &anchor);
+	DrawLineEx(anchor, rot, 2.0f, LIME);
+	bool rotActive = g_texEd.dragMode == TEXED_DRAG_ROTATE || hypotf(m.x - rot.x, m.y - rot.y) <= hitR;
+	DrawCircleV(rot, hitR * 0.8f, rotActive ? ORANGE : LIME);
+	DrawCircleLinesV(rot, hitR * 0.8f, BLACK);
+	for (int i = 0; i < 4; i++) {
+		Vector2 v = TexEd_VertexScreen(xf, i, center, k);
+		bool active = (g_texEd.dragMode == TEXED_DRAG_VERTEX && g_texEd.dragVertex == i) || (g_texEd.dragMode == TEXED_DRAG_NONE && hoverV == i);
+		DrawCircleV(v, hitR * 0.7f, active ? ORANGE : WHITE);
+		DrawCircleLinesV(v, hitR * 0.7f, BLACK);
+	}
+
+	Vector2 cen = TexEd_Centroid(xf);
+	float footerY = p.y + p.height - 140 * s;
+	DrawText(TextFormat("Celda %d (col %d, fila %d)   offset %d, %d px   giro %.1f   escala %.2f", g_texEd.selected,
+				g_texEd.selected % cols, g_texEd.selected / cols, (int)roundf(cen.x), (int)roundf(cen.y),
+				TexEd_RotationOf(xf), TexEd_ScaleOf(xf)),
+			(int)p.x + pad, (int)footerY, fs, WHITE);
+	DrawText("Arrastrar: mover  |  Vertices: estirar  |  Circulo verde: girar (Shift 15)  |  Rueda: escala",
+			(int)p.x + pad, (int)(footerY + 22 * s), fs - 3, LIGHTGRAY);
+	DrawText("Flechas: 1px (Shift 8)  |  Q/E: girar 1 (Shift 15)  |  R: reset celda",
+			(int)p.x + pad, (int)(footerY + 40 * s), fs - 3, LIGHTGRAY);
+
+	float btnY = footerY + 62 * s;
+	float btnW = (p.width - 4.0f * pad) / 3.0f;
+	Rectangle resetCell = {p.x + pad, btnY, btnW, 40 * s};
+	Rectangle resetAll = {p.x + 2 * pad + btnW, btnY, btnW, 40 * s};
+	Rectangle saveBtn = {p.x + 3 * pad + 2 * btnW, btnY, btnW, 40 * s};
+
+	if (Button(resetCell, "RESET CELDA", GRAY)) {
+		*xf = TexEd_IdentityXform();
+		TexEd_CellChanged(app, g_texEd.selected);
+	}
+	if (Button(resetAll, "RESET TODO", ORANGE)) {
+		TexEd_ResetXforms();
+		UnloadImage(g_texEd.working);
+		g_texEd.working = ImageCopy(g_texEd.original);
+		TexEd_SyncTextures(app);
+	}
+	if (Button(saveBtn, "GUARDAR", GREEN)) {
+		const char* path = g_texEd.paths[g_texEd.current];
+		if (ExportImage(g_texEd.working, path)) {
+			UnloadImage(g_texEd.original);
+			g_texEd.original = ImageCopy(g_texEd.working);
+			TexEd_ResetXforms();
+			SetSaveStatus(app, TextFormat("Textura guardada: %s", path), false);
+		} else {
+			SetSaveStatus(app, "No se pudo guardar la textura", true);
+		}
+	}
+}
+
 // ============================================================================
 // MAIN UI DRAWING
 // ============================================================================
@@ -3115,10 +4539,13 @@ static void App_Draw(AppState* app) {
 	DrawGrid(10, 1.0f);
 	EndMode3D();
 
+	DrawOnionSkin(app);
 	DrawAnimatedCharacter(app->character, app->character->renderer->camera);
 	DrawBoneOrientation(app);
 	DrawDebugVisuals(app);
 	DrawBoneSelectionFeedback(app);
+	DrawBoneRotationHandle(app);
+	DrawBoneOrientGizmo(app);
 
 	DrawCameraGizmo(app);
 	App_DrawUI(app);
@@ -3127,6 +4554,7 @@ static void App_Draw(AppState* app) {
 	DrawControlPanel(app);
 	DrawExportDialog(app);
 	DrawAddFramesDialog(app);
+	TexEd_Draw(app);
 
 	EndDrawing();
 }
@@ -3342,6 +4770,9 @@ static void App_HandleInput(AppState* app) {
 	if (IsKeyPressed(KEY_F5)) {
 		app->debug.showOrientation = !app->debug.showOrientation;
 	}
+	if (IsKeyPressed(KEY_F6)) {
+		app->debug.showOnionSkin = !app->debug.showOnionSkin;
+	}
 	if (IsKeyPressed(KEY_DELETE) && app->editor.selectionStart != -1 && FrameExists(app, app->editor.selectionStart)) {
 		int frameIndex = FindFrameIndexByNumber(app, app->editor.selectionStart);
 		if (frameIndex != -1) {
@@ -3435,6 +4866,8 @@ static void App_UpdateCamera(AppState* app, float dt) {
 				!app->editor.isDraggingSlider &&
 				!app->editor.isDraggingKeyframe &&
 				!app->editor.isDraggingGizmo &&
+				!app->editor.isDraggingRotationHandle &&
+				app->editor.orientDragAxis == 0 &&
 				!CheckCollisionPointRec(GetMousePosition(), GetTimelineRect(app)) &&
 				!CheckCollisionPointRec(GetMousePosition(), GetGizmoRect(app))) {
 			Vector2 mouseDelta = GetMouseDelta();
@@ -3505,8 +4938,10 @@ static void App_UpdateCamera(AppState* app, float dt) {
 	}
 
 	UpdateTimelineKeyframeDragging(app);
-	if (!app->editor.isDraggingKeyframe) {
+	UpdateBoneOrientGizmo(app);
+	if (!app->editor.isDraggingKeyframe && app->editor.orientDragAxis == 0) {
 		UpdateBoneSelection(app);
+		UpdateBoneRotationHandle(app);
 	}
 }
 
@@ -3577,6 +5012,7 @@ static bool App_Init(AppState* app) {
 
 static void App_Shutdown(AppState* app) {
 	if (!app) return;
+	TexEd_Unload();
 	DestroyAnimatedCharacter(app->character);
 	CloseWindow();
 }
@@ -3592,13 +5028,16 @@ int main(void) {
 		float dt = GetFrameTime();
 		app.screenWidth = GetScreenWidth();
 		app.screenHeight = GetScreenHeight();
-		App_HandleInput(&app);
-		App_UpdateCamera(&app, dt);
+		if (!TexEd_Update(&app)) {
+			App_HandleInput(&app);
+			App_UpdateCamera(&app, dt);
+		}
 		if (app.editor.saveStatusTimer > 0.0f) {
 			app.editor.saveStatusTimer -= dt;
 		}
 		DrawGrid(10, 1.0f);
 		UpdateAnimatedCharacter(app.character, dt);
+		InjectOrientOffsets(&app);
 		App_Draw(&app);
 	}
 	App_Shutdown(&app);
