@@ -3841,8 +3841,31 @@ typedef enum {
 	TEXED_DRAG_NONE,
 	TEXED_DRAG_MOVE,
 	TEXED_DRAG_VERTEX,
-	TEXED_DRAG_ROTATE
+	TEXED_DRAG_ROTATE,
+	TEXED_DRAG_BRUSH
 } TexDragMode;
+
+typedef enum {
+	TEXED_TOOL_MOVE,
+	TEXED_TOOL_ERASE,
+	TEXED_TOOL_SMUDGE
+} TexTool;
+
+#define TEXED_UNDO_MAX 24
+#define TEXED_BRUSH_MIN 1.0f
+#define TEXED_BRUSH_MAX 300.0f
+#define TEXED_CELL_ZOOM_STEP 1.05f
+#define TEXED_CELL_ZOOM_FINE 1.01f
+#define TEXED_TILE_SHIFT 6
+#define TEXED_TILE (1 << TEXED_TILE_SHIFT)
+
+typedef struct {
+	int x;
+	int y;
+	int w;
+	int h;
+	Color* pixels;
+} TexUndoPatch;
 
 typedef struct {
 	bool open;
@@ -3864,6 +3887,37 @@ typedef struct {
 	TexCellXform dragStartXform;
 	Vector2 dragPivot;
 	float dragStartAngle;
+	Image disk;
+	TexTool tool;
+	float brushSize;
+	float brushHardness;
+	float brushOpacity;
+	bool edited;
+	int sliderActive;
+	float* mask;
+	Image strokeBase;
+	bool strokeActive;
+	Vector2 strokePrevPt;
+	Vector2 strokePrevMid;
+	int strokeMinX;
+	int strokeMinY;
+	int strokeMaxX;
+	int strokeMaxY;
+	int frameMinX;
+	int frameMinY;
+	int frameMaxX;
+	int frameMaxY;
+	TexUndoPatch undo[TEXED_UNDO_MAX];
+	int undoCount;
+	bool wasPlaying;
+	float smudgeStrength;
+	float** smTiles;
+	int smTilesX;
+	int smTilesY;
+	float* smAccum;
+	int smDim;
+	bool smPrimed;
+	float smCarry;
 } TexEditor;
 
 static TexEditor g_texEd = {0};
@@ -3894,7 +3948,7 @@ static Rectangle TexEd_AtlasRect(AppState* app) {
 	float s = TexEd_UiScale(app);
 	float pad = 12.0f * s;
 	float availW = p.width - 2.0f * pad;
-	float availH = p.height - 250.0f * s;
+	float availH = p.height - 290.0f * s;
 	float k = fminf(availW / (float)g_texEd.working.width, availH / (float)g_texEd.working.height);
 	float w = g_texEd.working.width * k;
 	float h = g_texEd.working.height * k;
@@ -3976,6 +4030,7 @@ static void TexEd_ScaleAbout(TexCellXform* xf, float factor) {
 
 static bool TexEd_IsDirty(void) {
 	if (!g_texEd.loaded) return false;
+	if (g_texEd.edited) return true;
 	int cells = g_texEd.gridCols[g_texEd.current] * g_texEd.gridRows[g_texEd.current];
 	for (int i = 0; i < cells; i++) {
 		if (!TexEd_XformIsIdentity(&g_texEd.xform[i])) return true;
@@ -4025,12 +4080,54 @@ static void TexEd_CollectPaths(AppState* app) {
 	g_texEd.owner = ch;
 }
 
+static void TexEd_SmudgeRelease(void);
+
+static void TexEd_UndoClear(void) {
+	for (int i = 0; i < g_texEd.undoCount; i++) {
+		MemFree(g_texEd.undo[i].pixels);
+		g_texEd.undo[i].pixels = NULL;
+	}
+	g_texEd.undoCount = 0;
+}
+
+static void TexEd_UndoPush(int x0, int y0, int x1, int y1) {
+	int w = x1 - x0;
+	int h = y1 - y0;
+	if (w <= 0 || h <= 0) return;
+	Color* pixels = (Color*)MemAlloc((unsigned int)(w * h * (int)sizeof(Color)));
+	if (!pixels) return;
+	const Color* src = (const Color*)g_texEd.strokeBase.data;
+	int stride = g_texEd.strokeBase.width;
+	for (int y = 0; y < h; y++) {
+		memcpy(pixels + y * w, src + (y0 + y) * stride + x0, (size_t)w * sizeof(Color));
+	}
+	if (g_texEd.undoCount == TEXED_UNDO_MAX) {
+		MemFree(g_texEd.undo[0].pixels);
+		memmove(&g_texEd.undo[0], &g_texEd.undo[1], (TEXED_UNDO_MAX - 1) * sizeof(TexUndoPatch));
+		g_texEd.undoCount--;
+	}
+	g_texEd.undo[g_texEd.undoCount++] = (TexUndoPatch){x0, y0, w, h, pixels};
+}
+
 static void TexEd_Unload(void) {
 	if (!g_texEd.loaded) return;
+	if (g_texEd.strokeActive) {
+		UnloadImage(g_texEd.strokeBase);
+		g_texEd.strokeActive = false;
+	}
+	TexEd_SmudgeRelease();
+	TexEd_UndoClear();
+	if (g_texEd.mask) {
+		MemFree(g_texEd.mask);
+		g_texEd.mask = NULL;
+	}
 	UnloadImage(g_texEd.original);
 	UnloadImage(g_texEd.working);
+	UnloadImage(g_texEd.disk);
 	UnloadTexture(g_texEd.preview);
 	g_texEd.loaded = false;
+	g_texEd.edited = false;
+	g_texEd.sliderActive = 0;
 	g_texEd.dragMode = TEXED_DRAG_NONE;
 }
 
@@ -4041,6 +4138,10 @@ static bool TexEd_Load(int index) {
 	ImageFormat(&img, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
 	g_texEd.original = img;
 	g_texEd.working = ImageCopy(img);
+	g_texEd.disk = ImageCopy(img);
+	g_texEd.mask = (float*)MemAlloc((unsigned int)(img.width * img.height * (int)sizeof(float)));
+	g_texEd.edited = false;
+	g_texEd.sliderActive = 0;
 	g_texEd.preview = LoadTextureFromImage(g_texEd.working);
 	SetTextureFilter(g_texEd.preview, TEXTURE_FILTER_BILINEAR);
 	g_texEd.current = index;
@@ -4161,7 +4262,449 @@ static void TexEd_SyncTextures(AppState* app) {
 	}
 }
 
+static void TexEd_SyncRect(AppState* app, int x0, int y0, int x1, int y1) {
+	int w = x1 - x0;
+	int h = y1 - y0;
+	if (w <= 0 || h <= 0) return;
+	Color* buf = (Color*)MemAlloc((unsigned int)(w * h * (int)sizeof(Color)));
+	if (!buf) return;
+	const Color* src = (const Color*)g_texEd.working.data;
+	int stride = g_texEd.working.width;
+	for (int y = 0; y < h; y++) {
+		memcpy(buf + y * w, src + (y0 + y) * stride + x0, (size_t)w * sizeof(Color));
+	}
+	Rectangle rect = {(float)x0, (float)y0, (float)w, (float)h};
+	UpdateTextureRec(g_texEd.preview, rect, buf);
+	BonesRenderer* r = app->character->renderer;
+	for (int i = 0; i < r->textureCount; i++) {
+		if (strcmp(r->texturePaths[i], g_texEd.paths[g_texEd.current]) != 0) continue;
+		Texture2D t = r->textures[i];
+		if (t.width != g_texEd.working.width || t.height != g_texEd.working.height ||
+				t.format != PIXELFORMAT_UNCOMPRESSED_R8G8B8A8) break;
+		for (int j = 0; j < w * h; j++) {
+			unsigned int a = buf[j].a;
+			buf[j].r = (unsigned char)((buf[j].r * a + 127) / 255);
+			buf[j].g = (unsigned char)((buf[j].g * a + 127) / 255);
+			buf[j].b = (unsigned char)((buf[j].b * a + 127) / 255);
+		}
+		UpdateTextureRec(t, rect, buf);
+		break;
+	}
+	MemFree(buf);
+}
+
+static bool TexEd_UndoPop(AppState* app) {
+	if (g_texEd.undoCount == 0) return false;
+	TexUndoPatch patch = g_texEd.undo[--g_texEd.undoCount];
+	Color* work = (Color*)g_texEd.working.data;
+	Color* orig = (Color*)g_texEd.original.data;
+	int stride = g_texEd.working.width;
+	for (int y = 0; y < patch.h; y++) {
+		size_t off = (size_t)(patch.y + y) * stride + patch.x;
+		memcpy(work + off, patch.pixels + y * patch.w, (size_t)patch.w * sizeof(Color));
+		memcpy(orig + off, patch.pixels + y * patch.w, (size_t)patch.w * sizeof(Color));
+	}
+	TexEd_SyncRect(app, patch.x, patch.y, patch.x + patch.w, patch.y + patch.h);
+	MemFree(patch.pixels);
+	return true;
+}
+
+static void TexEd_BakeXforms(void) {
+	int cells = g_texEd.gridCols[g_texEd.current] * g_texEd.gridRows[g_texEd.current];
+	bool pending = false;
+	for (int i = 0; i < cells; i++) {
+		if (!TexEd_XformIsIdentity(&g_texEd.xform[i])) {
+			pending = true;
+			break;
+		}
+	}
+	if (!pending) return;
+	UnloadImage(g_texEd.original);
+	g_texEd.original = ImageCopy(g_texEd.working);
+	TexEd_ResetXforms();
+	TexEd_UndoClear();
+	g_texEd.edited = true;
+}
+
+static void TexEd_BrushShape(float* radius, float* inner, float* soft) {
+	float R = g_texEd.brushSize * 0.5f;
+	float hard = Clamp(g_texEd.brushHardness, 0.0f, 1.0f);
+	float sf = fminf(fmaxf(R * (1.0f - hard), 1.25f), R);
+	*radius = R;
+	*soft = sf;
+	*inner = R - sf;
+}
+
+static float TexEd_BrushCoverage(float d, float R, float inner, float soft) {
+	if (d >= R) return 0.0f;
+	float u = (d - inner) / soft;
+	return u <= 0.0f ? 1.0f : 1.0f - u * u * (3.0f - 2.0f * u);
+}
+
+static void TexEd_TouchBounds(int x0, int y0, int x1, int y1) {
+	if (x0 < g_texEd.strokeMinX) g_texEd.strokeMinX = x0;
+	if (y0 < g_texEd.strokeMinY) g_texEd.strokeMinY = y0;
+	if (x1 > g_texEd.strokeMaxX) g_texEd.strokeMaxX = x1;
+	if (y1 > g_texEd.strokeMaxY) g_texEd.strokeMaxY = y1;
+	if (x0 < g_texEd.frameMinX) g_texEd.frameMinX = x0;
+	if (y0 < g_texEd.frameMinY) g_texEd.frameMinY = y0;
+	if (x1 > g_texEd.frameMaxX) g_texEd.frameMaxX = x1;
+	if (y1 > g_texEd.frameMaxY) g_texEd.frameMaxY = y1;
+}
+
+static void TexEd_EraseSegment(Vector2 a, Vector2 b) {
+	int W = g_texEd.working.width;
+	int H = g_texEd.working.height;
+	float R, inner, soft;
+	TexEd_BrushShape(&R, &inner, &soft);
+	float opacity = Clamp(g_texEd.brushOpacity, 0.0f, 1.0f);
+	int x0 = (int)floorf(fminf(a.x, b.x) - R - 1.0f);
+	int x1 = (int)ceilf(fmaxf(a.x, b.x) + R + 1.0f);
+	int y0 = (int)floorf(fminf(a.y, b.y) - R - 1.0f);
+	int y1 = (int)ceilf(fmaxf(a.y, b.y) + R + 1.0f);
+	if (x0 < 0) x0 = 0;
+	if (y0 < 0) y0 = 0;
+	if (x1 > W) x1 = W;
+	if (y1 > H) y1 = H;
+	if (x1 <= x0 || y1 <= y0) return;
+
+	float dx = b.x - a.x;
+	float dy = b.y - a.y;
+	float len2 = dx * dx + dy * dy;
+	const Color* base = (const Color*)g_texEd.strokeBase.data;
+	Color* dst = (Color*)g_texEd.working.data;
+	float* mask = g_texEd.mask;
+
+	for (int y = y0; y < y1; y++) {
+		float py = y + 0.5f;
+		for (int x = x0; x < x1; x++) {
+			float px = x + 0.5f;
+			float t = 0.0f;
+			if (len2 > 1e-6f) t = Clamp(((px - a.x) * dx + (py - a.y) * dy) / len2, 0.0f, 1.0f);
+			float d = hypotf(a.x + dx * t - px, a.y + dy * t - py);
+			float cov = TexEd_BrushCoverage(d, R, inner, soft);
+			if (cov <= 0.0f) continue;
+			int idx = y * W + x;
+			if (cov <= mask[idx]) continue;
+			mask[idx] = cov;
+			dst[idx].a = (unsigned char)(base[idx].a * (1.0f - opacity * cov) + 0.5f);
+		}
+	}
+
+	TexEd_TouchBounds(x0, y0, x1, y1);
+}
+
+static float TexEd_SmudgeSpacing(void) {
+	return fmaxf(0.75f, g_texEd.brushSize * 0.08f);
+}
+
+static float* TexEd_SmudgeTile(int tx, int ty) {
+	int idx = ty * g_texEd.smTilesX + tx;
+	float* tile = g_texEd.smTiles[idx];
+	if (tile) return tile;
+	tile = (float*)MemAlloc((unsigned int)(TEXED_TILE * TEXED_TILE * 4 * (int)sizeof(float)));
+	if (!tile) return NULL;
+	int W = g_texEd.strokeBase.width;
+	int H = g_texEd.strokeBase.height;
+	const Color* base = (const Color*)g_texEd.strokeBase.data;
+	for (int y = 0; y < TEXED_TILE; y++) {
+		int iy = ty * TEXED_TILE + y;
+		if (iy >= H) break;
+		for (int x = 0; x < TEXED_TILE; x++) {
+			int ix = tx * TEXED_TILE + x;
+			if (ix >= W) break;
+			Color c = base[iy * W + ix];
+			float a = c.a / 255.0f;
+			float* px = tile + (y * TEXED_TILE + x) * 4;
+			px[0] = c.r / 255.0f * a;
+			px[1] = c.g / 255.0f * a;
+			px[2] = c.b / 255.0f * a;
+			px[3] = a;
+		}
+	}
+	g_texEd.smTiles[idx] = tile;
+	return tile;
+}
+
+static float* TexEd_SmudgePixel(int x, int y) {
+	float* tile = TexEd_SmudgeTile(x >> TEXED_TILE_SHIFT, y >> TEXED_TILE_SHIFT);
+	if (!tile) return NULL;
+	return tile + (((y & (TEXED_TILE - 1)) << TEXED_TILE_SHIFT) + (x & (TEXED_TILE - 1))) * 4;
+}
+
+static void TexEd_SmudgeStore(int x, int y, const float* px) {
+	Color* dst = (Color*)g_texEd.working.data + (size_t)y * g_texEd.working.width + x;
+	float a = Clamp(px[3], 0.0f, 1.0f);
+	dst->a = (unsigned char)(a * 255.0f + 0.5f);
+	if (a > 1e-4f) {
+		float inv = 255.0f / a;
+		dst->r = (unsigned char)Clamp(px[0] * inv + 0.5f, 0.0f, 255.0f);
+		dst->g = (unsigned char)Clamp(px[1] * inv + 0.5f, 0.0f, 255.0f);
+		dst->b = (unsigned char)Clamp(px[2] * inv + 0.5f, 0.0f, 255.0f);
+	}
+}
+
+static void TexEd_SmudgeRelease(void) {
+	if (g_texEd.smTiles) {
+		int n = g_texEd.smTilesX * g_texEd.smTilesY;
+		for (int i = 0; i < n; i++) {
+			if (g_texEd.smTiles[i]) MemFree(g_texEd.smTiles[i]);
+		}
+		MemFree(g_texEd.smTiles);
+		g_texEd.smTiles = NULL;
+	}
+	if (g_texEd.smAccum) {
+		MemFree(g_texEd.smAccum);
+		g_texEd.smAccum = NULL;
+	}
+	g_texEd.smPrimed = false;
+	g_texEd.smCarry = 0.0f;
+}
+
+static void TexEd_SmudgeDab(Vector2 c) {
+	int W = g_texEd.working.width;
+	int H = g_texEd.working.height;
+	float R, inner, soft;
+	TexEd_BrushShape(&R, &inner, &soft);
+	float strength = Clamp(g_texEd.smudgeStrength, 0.0f, 1.0f);
+	float ratio = TexEd_SmudgeSpacing() / R;
+	float rateDab = 1.0f - powf(1.0f - strength, ratio);
+	float rateAcc = 1.0f - powf(strength, ratio);
+	int D = g_texEd.smDim;
+	int ox = (int)floorf(c.x - R) - 1;
+	int oy = (int)floorf(c.y - R) - 1;
+	int x0 = ox < 0 ? 0 : ox;
+	int y0 = oy < 0 ? 0 : oy;
+	int x1 = ox + D > W ? W : ox + D;
+	int y1 = oy + D > H ? H : oy + D;
+	if (x1 <= x0 || y1 <= y0) return;
+	float* acc = g_texEd.smAccum;
+
+	if (!g_texEd.smPrimed) {
+		for (int y = y0; y < y1; y++) {
+			for (int x = x0; x < x1; x++) {
+				float* px = TexEd_SmudgePixel(x, y);
+				if (!px) continue;
+				memcpy(acc + ((y - oy) * D + (x - ox)) * 4, px, 4 * sizeof(float));
+			}
+		}
+		g_texEd.smPrimed = true;
+		return;
+	}
+
+	for (int y = y0; y < y1; y++) {
+		float py = y + 0.5f - c.y;
+		for (int x = x0; x < x1; x++) {
+			float px0 = x + 0.5f - c.x;
+			float cov = TexEd_BrushCoverage(hypotf(px0, py), R, inner, soft);
+			if (cov <= 0.0f) continue;
+			float* px = TexEd_SmudgePixel(x, y);
+			if (!px) continue;
+			float* a = acc + ((y - oy) * D + (x - ox)) * 4;
+			float w = rateDab * cov;
+			for (int ch = 0; ch < 4; ch++) {
+				float before = px[ch];
+				px[ch] = before + (a[ch] - before) * w;
+				a[ch] += (before - a[ch]) * rateAcc;
+			}
+			TexEd_SmudgeStore(x, y, px);
+		}
+	}
+	TexEd_TouchBounds(x0, y0, x1, y1);
+}
+
+static bool TexEd_SmudgeBegin(Vector2 pos) {
+	TexEd_SmudgeRelease();
+	g_texEd.smTilesX = (g_texEd.working.width + TEXED_TILE - 1) >> TEXED_TILE_SHIFT;
+	g_texEd.smTilesY = (g_texEd.working.height + TEXED_TILE - 1) >> TEXED_TILE_SHIFT;
+	g_texEd.smTiles = (float**)MemAlloc((unsigned int)(g_texEd.smTilesX * g_texEd.smTilesY * (int)sizeof(float*)));
+	g_texEd.smDim = (int)ceilf(g_texEd.brushSize) + 4;
+	g_texEd.smAccum = (float*)MemAlloc((unsigned int)(g_texEd.smDim * g_texEd.smDim * 4 * (int)sizeof(float)));
+	if (!g_texEd.smTiles || !g_texEd.smAccum) {
+		TexEd_SmudgeRelease();
+		return false;
+	}
+	g_texEd.smCarry = 0.0f;
+	g_texEd.smPrimed = false;
+	TexEd_SmudgeDab(pos);
+	return true;
+}
+
+static void TexEd_SmudgeWalk(Vector2 a, Vector2 b) {
+	float dx = b.x - a.x;
+	float dy = b.y - a.y;
+	float len = hypotf(dx, dy);
+	if (len < 1e-4f) return;
+	float spacing = TexEd_SmudgeSpacing();
+	float t = spacing - g_texEd.smCarry;
+	float lastT = 0.0f;
+	bool placed = false;
+	while (t <= len) {
+		float f = t / len;
+		TexEd_SmudgeDab((Vector2){a.x + dx * f, a.y + dy * f});
+		lastT = t;
+		placed = true;
+		t += spacing;
+	}
+	g_texEd.smCarry = placed ? len - lastT : g_texEd.smCarry + len;
+}
+
+static void TexEd_StrokeSegment(Vector2 a, Vector2 b) {
+	if (g_texEd.tool == TEXED_TOOL_SMUDGE) {
+		TexEd_SmudgeWalk(a, b);
+	} else {
+		TexEd_EraseSegment(a, b);
+	}
+}
+
+static void TexEd_ResetFrameBounds(void) {
+	g_texEd.frameMinX = g_texEd.working.width;
+	g_texEd.frameMinY = g_texEd.working.height;
+	g_texEd.frameMaxX = 0;
+	g_texEd.frameMaxY = 0;
+}
+
+static void TexEd_FlushFrame(AppState* app) {
+	TexEd_SyncRect(app, g_texEd.frameMinX, g_texEd.frameMinY, g_texEd.frameMaxX, g_texEd.frameMaxY);
+	TexEd_ResetFrameBounds();
+}
+
+static void TexEd_BeginStroke(AppState* app, Vector2 pos) {
+	if (!g_texEd.mask) return;
+	TexEd_BakeXforms();
+	g_texEd.strokeBase = ImageCopy(g_texEd.working);
+	g_texEd.strokeActive = true;
+	g_texEd.dragMode = TEXED_DRAG_BRUSH;
+	g_texEd.strokeMinX = g_texEd.working.width;
+	g_texEd.strokeMinY = g_texEd.working.height;
+	g_texEd.strokeMaxX = 0;
+	g_texEd.strokeMaxY = 0;
+	TexEd_ResetFrameBounds();
+	g_texEd.strokePrevPt = pos;
+	g_texEd.strokePrevMid = pos;
+	if (g_texEd.tool == TEXED_TOOL_SMUDGE) {
+		if (!TexEd_SmudgeBegin(pos)) {
+			UnloadImage(g_texEd.strokeBase);
+			g_texEd.strokeActive = false;
+			g_texEd.dragMode = TEXED_DRAG_NONE;
+			return;
+		}
+	} else {
+		TexEd_EraseSegment(pos, pos);
+	}
+	TexEd_FlushFrame(app);
+}
+
+static void TexEd_StrokeMove(Vector2 pos) {
+	Vector2 prev = g_texEd.strokePrevPt;
+	if (pos.x == prev.x && pos.y == prev.y) return;
+	Vector2 mid = {(prev.x + pos.x) * 0.5f, (prev.y + pos.y) * 0.5f};
+	Vector2 p0 = g_texEd.strokePrevMid;
+	float length = hypotf(prev.x - p0.x, prev.y - p0.y) + hypotf(mid.x - prev.x, mid.y - prev.y);
+	float spacing = fmaxf(1.0f, g_texEd.brushSize * 0.5f * 0.2f);
+	int n = (int)ceilf(length / spacing);
+	if (n < 1) n = 1;
+	if (n > 48) n = 48;
+	Vector2 last = p0;
+	for (int i = 1; i <= n; i++) {
+		float t = (float)i / (float)n;
+		float u = 1.0f - t;
+		Vector2 q = {u * u * p0.x + 2.0f * u * t * prev.x + t * t * mid.x,
+				u * u * p0.y + 2.0f * u * t * prev.y + t * t * mid.y};
+		TexEd_StrokeSegment(last, q);
+		last = q;
+	}
+	g_texEd.strokePrevMid = mid;
+	g_texEd.strokePrevPt = pos;
+}
+
+static void TexEd_EndStroke(AppState* app) {
+	TexEd_StrokeSegment(g_texEd.strokePrevMid, g_texEd.strokePrevPt);
+	TexEd_FlushFrame(app);
+	int x0 = g_texEd.strokeMinX;
+	int y0 = g_texEd.strokeMinY;
+	int x1 = g_texEd.strokeMaxX;
+	int y1 = g_texEd.strokeMaxY;
+	int W = g_texEd.working.width;
+	if (x1 > x0 && y1 > y0) {
+		TexEd_UndoPush(x0, y0, x1, y1);
+		const Color* work = (const Color*)g_texEd.working.data;
+		Color* orig = (Color*)g_texEd.original.data;
+		for (int y = y0; y < y1; y++) {
+			memcpy(orig + (size_t)y * W + x0, work + (size_t)y * W + x0, (size_t)(x1 - x0) * sizeof(Color));
+			memset(g_texEd.mask + (size_t)y * W + x0, 0, (size_t)(x1 - x0) * sizeof(float));
+		}
+		g_texEd.edited = true;
+	}
+	UnloadImage(g_texEd.strokeBase);
+	g_texEd.strokeActive = false;
+	g_texEd.dragMode = TEXED_DRAG_NONE;
+	TexEd_SmudgeRelease();
+}
+
+static void TexEd_ResetAll(AppState* app) {
+	if (g_texEd.strokeActive) return;
+	TexEd_ResetXforms();
+	UnloadImage(g_texEd.original);
+	UnloadImage(g_texEd.working);
+	g_texEd.original = ImageCopy(g_texEd.disk);
+	g_texEd.working = ImageCopy(g_texEd.disk);
+	g_texEd.edited = false;
+	TexEd_UndoClear();
+	TexEd_SyncTextures(app);
+}
+
+static void TexEd_CommitSave(void) {
+	UnloadImage(g_texEd.original);
+	g_texEd.original = ImageCopy(g_texEd.working);
+	UnloadImage(g_texEd.disk);
+	g_texEd.disk = ImageCopy(g_texEd.working);
+	g_texEd.edited = false;
+	TexEd_ResetXforms();
+}
+
+static void TexEd_Slider(int id, Rectangle r, const char* label, float* value, float lo, float hi, bool logScale) {
+	Vector2 m = GetMousePosition();
+	if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && g_texEd.sliderActive == 0 && CheckCollisionPointRec(m, r)) {
+		g_texEd.sliderActive = id;
+	}
+	if (g_texEd.sliderActive == id) {
+		if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+			float t = Clamp((m.x - r.x) / r.width, 0.0f, 1.0f);
+			*value = logScale ? lo * powf(hi / lo, t) : lo + t * (hi - lo);
+		} else {
+			g_texEd.sliderActive = 0;
+		}
+	}
+	float t = logScale ? logf(*value / lo) / logf(hi / lo) : (*value - lo) / (hi - lo);
+	t = Clamp(t, 0.0f, 1.0f);
+	DrawRectangleRec(r, (Color){50, 50, 50, 255});
+	DrawRectangleRec((Rectangle){r.x, r.y, r.width * t, r.height}, (Color){70, 130, 200, 255});
+	DrawRectangleLinesEx(r, 2, BLACK);
+	int fs = (int)(r.height * 0.45f);
+	if (fs < 10) fs = 10;
+	int tw = MeasureText(label, fs);
+	DrawText(label, (int)(r.x + (r.width - tw) * 0.5f), (int)(r.y + (r.height - fs) * 0.5f), fs, WHITE);
+}
+
+static void TexEd_DrawChecker(Rectangle ar, float cell) {
+	for (float y = 0.0f; y < ar.height; y += cell) {
+		float h = fminf(cell, ar.height - y);
+		for (float x = 0.0f; x < ar.width; x += cell) {
+			float w = fminf(cell, ar.width - x);
+			bool odd = (((int)(x / cell)) + ((int)(y / cell))) & 1;
+			DrawRectangleRec((Rectangle){ar.x + x, ar.y + y, w, h}, odd ? (Color){120, 120, 120, 255} : (Color){165, 165, 165, 255});
+		}
+	}
+}
+
+static void TexEd_DrawFitText(const char* text, int x, int y, int fs, int maxWidth, Color color) {
+	while (fs > 8 && MeasureText(text, fs) > maxWidth) fs--;
+	DrawText(text, x, y, fs, color);
+}
+
 static void TexEd_CellChanged(AppState* app, int cell) {
+	TexEd_UndoClear();
 	TexEd_ComposeCell(cell);
 	TexEd_SyncTextures(app);
 }
@@ -4194,6 +4737,7 @@ static Vector2 TexEd_RotHandleScreen(const TexCellXform* xf, Vector2 center, flo
 
 static bool TexEd_RotHandleBlocksUi(AppState* app) {
 	if (g_texEd.dragMode != TEXED_DRAG_NONE) return true;
+	if (g_texEd.tool != TEXED_TOOL_MOVE) return false;
 	Rectangle ar = TexEd_AtlasRect(app);
 	float k = ar.width / (float)g_texEd.working.width;
 	float s = TexEd_UiScale(app);
@@ -4213,18 +4757,68 @@ static int TexEd_HitVertex(const TexCellXform* xf, Vector2 center, float k, Vect
 	return -1;
 }
 
+static void TexEd_EnforceFrameLock(AppState* app) {
+	if (!g_texEd.open || !app->character) return;
+	app->editor.isPlaying = false;
+	SetCharacterAutoPlay(app->character, false);
+	if (app->character->animation.frameCount > 0 && app->character->currentFrame != 0) {
+		SetCharacterFrame(app->character, 0);
+	}
+}
+
+static void TexEd_Close(AppState* app) {
+	if (!g_texEd.open) return;
+	g_texEd.open = false;
+	if (g_texEd.wasPlaying && app->character) {
+		app->editor.isPlaying = true;
+		SetCharacterAutoPlay(app->character, true);
+	}
+	g_texEd.wasPlaying = false;
+}
+
 static void TexEd_Open(AppState* app) {
 	if (g_texEd.owner != app->character) {
 		TexEd_Unload();
 		TexEd_CollectPaths(app);
 	}
+	if (!g_texEd.open) g_texEd.wasPlaying = app->editor.isPlaying;
 	g_texEd.open = true;
+	TexEd_EnforceFrameLock(app);
+	if (g_texEd.brushSize <= 0.0f) {
+		g_texEd.brushSize = 40.0f;
+		g_texEd.brushHardness = 0.5f;
+		g_texEd.brushOpacity = 1.0f;
+		g_texEd.smudgeStrength = 0.6f;
+	}
 	if (!g_texEd.loaded && g_texEd.pathCount > 0) TexEd_Load(0);
+}
+
+static bool TexEd_UpdateBrush(AppState* app, Rectangle ar, float k, bool hover, bool inAtlas) {
+	Vector2 m = GetMousePosition();
+	Vector2 pos = {(m.x - ar.x) / k, (m.y - ar.y) / k};
+	bool ctrl = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
+
+	if (g_texEd.dragMode == TEXED_DRAG_NONE && g_texEd.sliderActive == 0 && inAtlas && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+		TexEd_BeginStroke(app, pos);
+	}
+
+	if (g_texEd.dragMode == TEXED_DRAG_BRUSH) {
+		TexEd_StrokeMove(pos);
+		TexEd_FlushFrame(app);
+		if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT)) TexEd_EndStroke(app);
+	} else {
+		if (hover && ctrl && IsKeyPressed(KEY_Z)) TexEd_UndoPop(app);
+		float wheel = GetMouseWheelMove();
+		if (inAtlas && wheel != 0.0f) {
+			g_texEd.brushSize = Clamp(g_texEd.brushSize * powf(1.1f, wheel), TEXED_BRUSH_MIN, TEXED_BRUSH_MAX);
+		}
+	}
+	return hover || g_texEd.dragMode != TEXED_DRAG_NONE || g_texEd.sliderActive != 0;
 }
 
 static bool TexEd_Update(AppState* app) {
 	if (IsKeyPressed(KEY_F7)) {
-		if (g_texEd.open) g_texEd.open = false;
+		if (g_texEd.open) TexEd_Close(app);
 		else TexEd_Open(app);
 	}
 	Vector2 m = GetMousePosition();
@@ -4243,6 +4837,11 @@ static bool TexEd_Update(AppState* app) {
 	float s = TexEd_UiScale(app);
 	float hitR = TexEd_HitRadius(s);
 	bool shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+
+	if (hover && IsKeyPressed(KEY_B) && g_texEd.dragMode == TEXED_DRAG_NONE) {
+		g_texEd.tool = (TexTool)((g_texEd.tool + 1) % 3);
+	}
+	if (g_texEd.tool != TEXED_TOOL_MOVE) return TexEd_UpdateBrush(app, ar, k, hover, inAtlas);
 
 	if (hover && g_texEd.dragMode == TEXED_DRAG_NONE && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
 		TexCellXform* sel = &g_texEd.xform[g_texEd.selected];
@@ -4338,7 +4937,7 @@ static void TexEd_Draw(AppState* app) {
 	DrawText("TEXTURE EDITOR", (int)p.x + pad, (int)p.y + pad, fs + 4, YELLOW);
 
 	Rectangle closeBtn = {p.x + p.width - 100 * s - pad, p.y + 8 * s, 100 * s, 32 * s};
-	if (Button(closeBtn, "CLOSE", RED)) g_texEd.open = false;
+	if (Button(closeBtn, "CLOSE", RED)) TexEd_Close(app);
 
 	if (!g_texEd.loaded) {
 		DrawText("No hay texturas para editar", (int)p.x + pad, (int)p.y + (int)(60 * s), fs, WHITE);
@@ -4348,6 +4947,32 @@ static void TexEd_Draw(AppState* app) {
 	int cols = g_texEd.gridCols[g_texEd.current];
 	int rows = g_texEd.gridRows[g_texEd.current];
 	bool dirty = TexEd_IsDirty();
+	bool moveTool = g_texEd.tool == TEXED_TOOL_MOVE;
+
+	float tbW = 72.0f * s;
+	Rectangle undoBtn = {closeBtn.x - 8.0f * s - tbW, p.y + 8.0f * s, tbW, 32.0f * s};
+	Rectangle smudgeBtn = {undoBtn.x - 6.0f * s - tbW, p.y + 8.0f * s, tbW, 32.0f * s};
+	Rectangle eraseBtn = {smudgeBtn.x - 6.0f * s - tbW, p.y + 8.0f * s, tbW, 32.0f * s};
+	Rectangle moveBtn = {eraseBtn.x - 6.0f * s - tbW, p.y + 8.0f * s, tbW, 32.0f * s};
+	bool idle = g_texEd.dragMode == TEXED_DRAG_NONE && g_texEd.sliderActive == 0;
+	if (ToggleButton(moveBtn, "MOVER", g_texEd.tool == TEXED_TOOL_MOVE, BLUE, GRAY) && idle) g_texEd.tool = TEXED_TOOL_MOVE;
+	if (ToggleButton(eraseBtn, "BORRAR", g_texEd.tool == TEXED_TOOL_ERASE, BLUE, GRAY) && idle) g_texEd.tool = TEXED_TOOL_ERASE;
+	if (ToggleButton(smudgeBtn, "SMUDGE", g_texEd.tool == TEXED_TOOL_SMUDGE, BLUE, GRAY) && idle) g_texEd.tool = TEXED_TOOL_SMUDGE;
+	if (Button(undoBtn, "DESHACER", DARKGRAY) && idle) TexEd_UndoPop(app);
+	moveTool = g_texEd.tool == TEXED_TOOL_MOVE;
+
+	if (moveTool) {
+		TexCellXform* zxf = &g_texEd.xform[g_texEd.selected];
+		Rectangle zoomInBtn = {p.x + p.width - pad - 30.0f * s, p.y + 52.0f * s, 30.0f * s, 32.0f * s};
+		Rectangle zoomOutBtn = {zoomInBtn.x - 4.0f * s - 30.0f * s, p.y + 52.0f * s, 30.0f * s, 32.0f * s};
+		float step = (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT)) ? TEXED_CELL_ZOOM_FINE : TEXED_CELL_ZOOM_STEP;
+		float scaleBefore = TexEd_ScaleOf(zxf);
+		if (Button(zoomOutBtn, "-", GRAY) && idle) TexEd_ScaleAbout(zxf, 1.0f / step);
+		if (Button(zoomInBtn, "+", GRAY) && idle) TexEd_ScaleAbout(zxf, step);
+		if (fabsf(TexEd_ScaleOf(zxf) - scaleBefore) > 1e-6f) TexEd_CellChanged(app, g_texEd.selected);
+		const char* zoomText = TextFormat("Zoom celda %d%%", (int)roundf(TexEd_ScaleOf(zxf) * 100.0f));
+		DrawText(zoomText, (int)(zoomOutBtn.x - 8.0f * s) - MeasureText(zoomText, fs), (int)(p.y + 60 * s), fs, LIGHTGRAY);
+	}
 
 	Rectangle prevBtn = {p.x + pad, p.y + 52 * s, 40 * s, 32 * s};
 	Rectangle nextBtn = {p.x + pad + 48 * s, p.y + 52 * s, 40 * s, 32 * s};
@@ -4370,7 +4995,11 @@ static void TexEd_Draw(AppState* app) {
 
 	Rectangle ar = TexEd_AtlasRect(app);
 	float k = ar.width / (float)g_texEd.working.width;
-	DrawRectangleRec(ar, (Color){90, 90, 90, 255});
+	if (moveTool) {
+		DrawRectangleRec(ar, (Color){90, 90, 90, 255});
+	} else {
+		TexEd_DrawChecker(ar, 8.0f * s < 4.0f ? 4.0f : 8.0f * s);
+	}
 	DrawTexturePro(g_texEd.preview, (Rectangle){0, 0, (float)g_texEd.working.width, (float)g_texEd.working.height},
 			ar, (Vector2){0, 0}, 0.0f, WHITE);
 
@@ -4388,43 +5017,84 @@ static void TexEd_Draw(AppState* app) {
 		DrawText(TextFormat("%d", i), (int)(ar.x + (i % cols) * cellW + 3), (int)(ar.y + (i / cols) * cellH + 2), idxSize, YELLOW);
 	}
 
-	Rectangle sel = {ar.x + (g_texEd.selected % cols) * cellW, ar.y + (g_texEd.selected / cols) * cellH, cellW, cellH};
-	DrawRectangleLinesEx(sel, 3, RED);
-
 	TexCellXform* xf = &g_texEd.xform[g_texEd.selected];
-	Vector2 center = TexEd_CellCenterScreen(ar, g_texEd.selected);
 	Vector2 m = GetMousePosition();
-	float hitR = TexEd_HitRadius(s);
-	int hoverV = TexEd_HitVertex(xf, center, k, m, hitR);
-	Color quadColor = {0, 255, 255, 220};
-	for (int i = 0; i < 4; i++) {
-		Vector2 a = TexEd_VertexScreen(xf, i, center, k);
-		Vector2 b = TexEd_VertexScreen(xf, (i + 1) % 4, center, k);
-		DrawLineEx(a, b, 2.0f, quadColor);
-	}
-	Vector2 anchor;
-	Vector2 rot = TexEd_RotHandleScreen(xf, center, k, 30.0f * s, &anchor);
-	DrawLineEx(anchor, rot, 2.0f, LIME);
-	bool rotActive = g_texEd.dragMode == TEXED_DRAG_ROTATE || hypotf(m.x - rot.x, m.y - rot.y) <= hitR;
-	DrawCircleV(rot, hitR * 0.8f, rotActive ? ORANGE : LIME);
-	DrawCircleLinesV(rot, hitR * 0.8f, BLACK);
-	for (int i = 0; i < 4; i++) {
-		Vector2 v = TexEd_VertexScreen(xf, i, center, k);
-		bool active = (g_texEd.dragMode == TEXED_DRAG_VERTEX && g_texEd.dragVertex == i) || (g_texEd.dragMode == TEXED_DRAG_NONE && hoverV == i);
-		DrawCircleV(v, hitR * 0.7f, active ? ORANGE : WHITE);
-		DrawCircleLinesV(v, hitR * 0.7f, BLACK);
+	float footerY = p.y + p.height - 140 * s;
+
+	if (moveTool) {
+		Rectangle sel = {ar.x + (g_texEd.selected % cols) * cellW, ar.y + (g_texEd.selected / cols) * cellH, cellW, cellH};
+		DrawRectangleLinesEx(sel, 3, RED);
+
+		Vector2 center = TexEd_CellCenterScreen(ar, g_texEd.selected);
+		float hitR = TexEd_HitRadius(s);
+		int hoverV = TexEd_HitVertex(xf, center, k, m, hitR);
+		Color quadColor = {0, 255, 255, 220};
+		for (int i = 0; i < 4; i++) {
+			Vector2 a = TexEd_VertexScreen(xf, i, center, k);
+			Vector2 b = TexEd_VertexScreen(xf, (i + 1) % 4, center, k);
+			DrawLineEx(a, b, 2.0f, quadColor);
+		}
+		Vector2 anchor;
+		Vector2 rot = TexEd_RotHandleScreen(xf, center, k, 30.0f * s, &anchor);
+		DrawLineEx(anchor, rot, 2.0f, LIME);
+		bool rotActive = g_texEd.dragMode == TEXED_DRAG_ROTATE || hypotf(m.x - rot.x, m.y - rot.y) <= hitR;
+		DrawCircleV(rot, hitR * 0.8f, rotActive ? ORANGE : LIME);
+		DrawCircleLinesV(rot, hitR * 0.8f, BLACK);
+		for (int i = 0; i < 4; i++) {
+			Vector2 v = TexEd_VertexScreen(xf, i, center, k);
+			bool active = (g_texEd.dragMode == TEXED_DRAG_VERTEX && g_texEd.dragVertex == i) || (g_texEd.dragMode == TEXED_DRAG_NONE && hoverV == i);
+			DrawCircleV(v, hitR * 0.7f, active ? ORANGE : WHITE);
+			DrawCircleLinesV(v, hitR * 0.7f, BLACK);
+		}
+
+	} else {
+		bool overView = CheckCollisionPointRec(m, ar);
+		if (g_texEd.sliderActive == 0 && (overView || g_texEd.dragMode == TEXED_DRAG_BRUSH)) {
+			float rad = g_texEd.brushSize * 0.5f * k;
+			DrawCircleLinesV(m, rad + 1.0f, BLACK);
+			DrawCircleLinesV(m, rad, WHITE);
+			if (g_texEd.brushHardness < 0.99f) DrawCircleLinesV(m, rad * g_texEd.brushHardness, (Color){255, 255, 255, 110});
+		}
 	}
 
-	Vector2 cen = TexEd_Centroid(xf);
-	float footerY = p.y + p.height - 140 * s;
-	DrawText(TextFormat("Celda %d (col %d, fila %d)   offset %d, %d px   giro %.1f   escala %.2f", g_texEd.selected,
-				g_texEd.selected % cols, g_texEd.selected / cols, (int)roundf(cen.x), (int)roundf(cen.y),
-				TexEd_RotationOf(xf), TexEd_ScaleOf(xf)),
-			(int)p.x + pad, (int)footerY, fs, WHITE);
-	DrawText("Arrastrar: mover  |  Vertices: estirar  |  Circulo verde: girar (Shift 15)  |  Rueda: escala",
-			(int)p.x + pad, (int)(footerY + 22 * s), fs - 3, LIGHTGRAY);
-	DrawText("Flechas: 1px (Shift 8)  |  Q/E: girar 1 (Shift 15)  |  R: reset celda",
-			(int)p.x + pad, (int)(footerY + 40 * s), fs - 3, LIGHTGRAY);
+	int textMaxW = (int)p.width - 2 * pad;
+	if (moveTool) {
+		Vector2 cen = TexEd_Centroid(xf);
+		DrawText(TextFormat("Celda %d (col %d, fila %d)   offset %d, %d px   giro %.1f   escala %.2f", g_texEd.selected,
+					g_texEd.selected % cols, g_texEd.selected / cols, (int)roundf(cen.x), (int)roundf(cen.y),
+					TexEd_RotationOf(xf), TexEd_ScaleOf(xf)),
+				(int)p.x + pad, (int)footerY, fs, WHITE);
+		DrawText("Arrastrar: mover  |  Vertices: estirar  |  Circulo verde: girar (Shift 15)  |  Rueda: escala",
+				(int)p.x + pad, (int)(footerY + 22 * s), fs - 3, LIGHTGRAY);
+		TexEd_DrawFitText("Flechas: 1px (Shift 8)  |  Q/E: girar  |  R: reset  |  Rueda o botones +/-: zoom celda (Shift fino)  |  B: herramienta",
+				(int)p.x + pad, (int)(footerY + 40 * s), fs - 3, textMaxW, LIGHTGRAY);
+	} else {
+		bool smudge = g_texEd.tool == TEXED_TOOL_SMUDGE;
+		float* thirdValue = smudge ? &g_texEd.smudgeStrength : &g_texEd.brushOpacity;
+		float sliderY = footerY - 40 * s;
+		float gap = 10 * s;
+		float sw = (p.width - 2.0f * pad - 2.0f * gap) / 3.0f;
+		float sh = 30 * s;
+		TexEd_Slider(1, (Rectangle){p.x + pad, sliderY, sw, sh},
+				TextFormat("Tamano: %d px", (int)roundf(g_texEd.brushSize)), &g_texEd.brushSize,
+				TEXED_BRUSH_MIN, TEXED_BRUSH_MAX, true);
+		TexEd_Slider(2, (Rectangle){p.x + pad + sw + gap, sliderY, sw, sh},
+				TextFormat("Dureza: %d%%", (int)roundf(g_texEd.brushHardness * 100.0f)), &g_texEd.brushHardness,
+				0.0f, 1.0f, false);
+		TexEd_Slider(3, (Rectangle){p.x + pad + 2.0f * (sw + gap), sliderY, sw, sh},
+				TextFormat("%s: %d%%", smudge ? "Fuerza" : "Opacidad", (int)roundf(*thirdValue * 100.0f)), thirdValue,
+				0.0f, 1.0f, false);
+
+		DrawText(TextFormat("%s   tamano %d px   dureza %d%%   %s %d%%", smudge ? "Smudge" : "Borrador",
+					(int)roundf(g_texEd.brushSize), (int)roundf(g_texEd.brushHardness * 100.0f),
+					smudge ? "fuerza" : "opacidad", (int)roundf(*thirdValue * 100.0f)),
+				(int)p.x + pad, (int)footerY, fs, WHITE);
+		TexEd_DrawFitText(smudge ? "Arrastrar: empujar pixeles  |  Rueda: tamano  |  Ctrl+Z: deshacer"
+				: "Arrastrar: borrar  |  Rueda: tamano  |  Ctrl+Z: deshacer",
+				(int)p.x + pad, (int)(footerY + 22 * s), fs - 3, textMaxW, LIGHTGRAY);
+		TexEd_DrawFitText("B: cambiar herramienta  |  RESET TODO: vuelve al archivo guardado",
+				(int)p.x + pad, (int)(footerY + 40 * s), fs - 3, textMaxW, LIGHTGRAY);
+	}
 
 	float btnY = footerY + 62 * s;
 	float btnW = (p.width - 4.0f * pad) / 3.0f;
@@ -4436,18 +5106,11 @@ static void TexEd_Draw(AppState* app) {
 		*xf = TexEd_IdentityXform();
 		TexEd_CellChanged(app, g_texEd.selected);
 	}
-	if (Button(resetAll, "RESET TODO", ORANGE)) {
-		TexEd_ResetXforms();
-		UnloadImage(g_texEd.working);
-		g_texEd.working = ImageCopy(g_texEd.original);
-		TexEd_SyncTextures(app);
-	}
+	if (Button(resetAll, "RESET TODO", ORANGE)) TexEd_ResetAll(app);
 	if (Button(saveBtn, "GUARDAR", GREEN)) {
 		const char* path = g_texEd.paths[g_texEd.current];
 		if (ExportImage(g_texEd.working, path)) {
-			UnloadImage(g_texEd.original);
-			g_texEd.original = ImageCopy(g_texEd.working);
-			TexEd_ResetXforms();
+			TexEd_CommitSave();
 			SetSaveStatus(app, TextFormat("Textura guardada: %s", path), false);
 		} else {
 			SetSaveStatus(app, "No se pudo guardar la textura", true);
@@ -4529,11 +5192,18 @@ static void App_DrawUI(AppState* app) {
 	}
 }
 
+static bool TexEd_BlocksMouse(AppState* app) {
+	if (!g_texEd.open) return false;
+	if (g_texEd.dragMode != TEXED_DRAG_NONE || g_texEd.sliderActive != 0) return true;
+	return CheckCollisionPointRec(GetMousePosition(), TexEd_PanelRect(app));
+}
+
 static void App_Draw(AppState* app) {
 	if (!app) return;
 
 	BeginDrawing();
 	ClearBackground(RAYWHITE);
+	if (TexEd_BlocksMouse(app)) SetMouseOffset(-100000, -100000);
 
 	BeginMode3D(app->character->renderer->camera);
 	DrawGrid(10, 1.0f);
@@ -4554,6 +5224,7 @@ static void App_Draw(AppState* app) {
 	DrawControlPanel(app);
 	DrawExportDialog(app);
 	DrawAddFramesDialog(app);
+	SetMouseOffset(0, 0);
 	TexEd_Draw(app);
 
 	EndDrawing();
@@ -5032,6 +5703,7 @@ int main(void) {
 			App_HandleInput(&app);
 			App_UpdateCamera(&app, dt);
 		}
+		TexEd_EnforceFrameLock(&app);
 		if (app.editor.saveStatusTimer > 0.0f) {
 			app.editor.saveStatusTimer -= dt;
 		}
