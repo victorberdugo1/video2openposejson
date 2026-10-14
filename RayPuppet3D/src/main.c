@@ -5624,6 +5624,7 @@ static bool App_Init(AppState* app) {
 	if (!app) return false;
 	memset(app, 0, sizeof(*app));
 	InitWindow(BASE_WIDTH, BASE_HEIGHT, "Bones3D - Animation Editor");
+	Bones_SetWriteDepth(false);
 	SetWindowState(FLAG_WINDOW_RESIZABLE);
 #if defined(linux)
 	for (int i = 0; i < 5; i++) PollInputEvents();

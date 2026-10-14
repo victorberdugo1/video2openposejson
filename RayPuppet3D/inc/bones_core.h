@@ -684,6 +684,7 @@ typedef struct AnimatedCharacter {
     float                   transitionTime;
     float                   transitionDuration;
     bool                    hasValidFromFrame;
+    Color                   tint;
 } AnimatedCharacter;
 
 typedef struct {
@@ -893,6 +894,7 @@ static inline void HairSystem_Draw(HairSystem* sys, Camera camera);
 static inline void HairSystem_DrawTransformed(HairSystem* sys, Camera camera,
                                               Vector3 worldPosition, Vector3 pivot, Matrix rot);
 static inline void HairSystem_Destroy(HairSystem* sys);
+static inline void HairSystem_SettleInstant(HairSystem* sys, int iterations);
 static inline void HairSystem_DebugPrint(HairSystem* sys);
 static inline void HairSystem_LoadTextures(HairSystem* sys, BonesRenderer* renderer);
 
@@ -972,7 +974,8 @@ static inline SlashHitboxInfo AnimController_GetActiveSlashHitbox(const Animatio
 static inline AnimatedCharacter* CreateAnimatedCharacter(const char* textureConfigPath, const char* textureSetsPath);
 static inline void DestroyAnimatedCharacter(AnimatedCharacter* character);
 static inline void UpdateAnimatedCharacter(AnimatedCharacter* character, float deltaTime);
-static inline void DrawAnimatedCharacterTransformed(AnimatedCharacter* character, Camera camera, Vector3 worldPosition, float worldRotation);
+static inline void DrawAnimatedCharacterTransformed(AnimatedCharacter* character, Camera camera, Vector3 worldPosition, float worldRotation, float scale);
+static inline void SetAnimatedCharacterTint(AnimatedCharacter* character, Color tint);
 static inline void SetCharacterFrame(AnimatedCharacter* character, int frame);
 static inline void SetCharacterAutoPlay(AnimatedCharacter* character, bool autoPlay);
 static inline void RestartAnimation(AnimatedCharacter* character);
@@ -3500,6 +3503,127 @@ static inline void RedrawWristsOnTop(BonesRenderer* renderer, BoneRenderData* bo
     rlEnableDepthMask();
 }
 
+static bool g_bonesWriteDepth = true;
+
+static inline void Bones_SetWriteDepth(bool enabled) {
+    g_bonesWriteDepth = enabled;
+}
+static Shader g_bonesDepthShader = { 0 };
+
+static inline bool Bones_EnsureDepthShader(void) {
+    static bool attempted = false;
+    if (g_bonesDepthShader.id != 0) return true;
+    if (attempted) return false;
+    attempted = true;
+    const char* fs =
+        "#version 330\n"
+        "in vec2 fragTexCoord;\n"
+        "uniform sampler2D texture0;\n"
+        "out vec4 finalColor;\n"
+        "void main() {\n"
+        "    if (texture(texture0, fragTexCoord).a < 0.35) discard;\n"
+        "    finalColor = vec4(0.0);\n"
+        "}\n";
+    Shader sh = LoadShaderFromMemory(NULL, fs);
+    if (sh.id == 0 || sh.id == rlGetShaderIdDefault()) return false;
+    g_bonesDepthShader = sh;
+    return true;
+}
+
+static inline int BonesRenderer_CollectItems(BonesRenderer* renderer, RenderItem* items,
+        BoneRenderData* bones, int boneCount,
+        HeadRenderData* heads, int headCount,
+        TorsoRenderData* torsos, int torsoCount,
+        DrawableQuad* quads, int quadCount)
+{
+    int itemCount = 0;
+    for (int i = 0; i < torsoCount && itemCount < MAX_RENDER_ITEMS; i++) {
+        if (!torsos[i].valid || !torsos[i].visible) continue;
+        items[itemCount++] = (RenderItem){0, i, CameraDepthOf(renderer->camera, torsos[i].position), TORSO_BIAS + INDEX_BIAS*i, false};
+    }
+    for (int i = 0; i < boneCount && itemCount < MAX_RENDER_ITEMS; i++) {
+        if (!bones[i].valid || !bones[i].visible) continue;
+        items[itemCount++] = (RenderItem){1, i, CameraDepthOf(renderer->camera, bones[i].position), BONE_BIAS + INDEX_BIAS*i, false};
+    }
+    for (int i = 0; i < headCount && itemCount < MAX_RENDER_ITEMS; i++) {
+        if (!heads[i].valid || !heads[i].visible) continue;
+        items[itemCount++] = (RenderItem){2, i, CameraDepthOf(renderer->camera, heads[i].position), HEAD_BIAS + INDEX_BIAS*i, false};
+    }
+    for (int i = 0; i < quadCount && itemCount < MAX_RENDER_ITEMS; i++) {
+        items[itemCount++] = (RenderItem){3, i, quads[i].depth, INDEX_BIAS*i, false};
+    }
+    return itemCount;
+}
+
+static inline void BonesRenderer_DrawItems(BonesRenderer* renderer, RenderItem* items, int itemCount,
+        BoneRenderData* bones, int boneCount,
+        HeadRenderData* heads,
+        TorsoRenderData* torsos,
+        DrawableQuad* quads)
+{
+    Vector3 camPos = renderer->camera.position;
+
+    for (int i = 0; i < itemCount; i++) {
+        RenderItem* item = &items[i];
+
+        if (item->type == 2) {
+            const HeadRenderData* curHead = &heads[item->index];
+            for (int j = 0; j < boneCount; j++) {
+                const BoneRenderData* bone = &bones[j];
+                if (!bone->valid || !bone->visible || strcmp(bone->boneName, "Neck") != 0) continue;
+                if (Vector3Distance(bone->position, curHead->position) < 2.0f) {
+                    Vector3 toCam = Vector3Subtract(camPos, bone->position);
+                    float   dist  = Vector3Length(toCam);
+                    Vector3 renderPos = Vector3Add(bone->position,
+                        dist > MIN_DISTANCE_THRESHOLD ? Vector3Scale(Vector3Normalize(toCam), BONE_BIAS + INDEX_BIAS*j) : (Vector3){0});
+                    RenderBoneInternal(renderer, bone, renderPos, NULL, bones, boneCount);
+                }
+            }
+        }
+
+        if (item->type == 3) {
+            DrawableQuad_Draw(&quads[item->index]);
+            continue;
+        }
+
+        Vector3 itemPos;
+        switch (item->type) {
+            case 0: itemPos = torsos[item->index].position; break;
+            case 1: itemPos = bones[item->index].position;  break;
+            case 2: itemPos = heads[item->index].position;  break;
+            default: continue;
+        }
+
+        Vector3 toCam = Vector3Subtract(camPos, itemPos);
+        float   dist  = Vector3Length(toCam);
+        Vector3 renderOffset = dist > MIN_DISTANCE_THRESHOLD
+            ? Vector3Scale(Vector3Normalize(toCam), item->depthBias) : (Vector3){0};
+
+        switch (item->type) {
+            case 0: {
+                TorsoRenderData adj = torsos[item->index];
+                adj.position = Vector3Add(adj.position, renderOffset);
+                int ti = BonesRenderer_LoadTexture(renderer, adj.texturePath);
+                DrawTorsoBillboard(renderer->textures[ti], renderer->camera, &adj, renderer->physCols, renderer->physRows);
+                break;
+            }
+            case 1: {
+                const BoneRenderData* b = &bones[item->index];
+                if (strcmp(b->boneName, "Neck") != 0)
+                    RenderBoneInternal(renderer, b, Vector3Add(b->position, renderOffset), NULL, bones, boneCount);
+                break;
+            }
+            case 2: {
+                HeadRenderData adj = heads[item->index];
+                adj.position = Vector3Add(adj.position, renderOffset);
+                int ti = BonesRenderer_LoadTexture(renderer, adj.texturePath);
+                DrawHeadBillboard(renderer->textures[ti], renderer->camera, &adj, renderer->physCols, renderer->physRows);
+                break;
+            }
+        }
+    }
+}
+
 static inline void BonesRenderer_RenderFrame(BonesRenderer* renderer,
         BoneRenderData* bones, int boneCount,
         HeadRenderData* heads, int headCount,
@@ -3514,24 +3638,8 @@ static inline void BonesRenderer_RenderFrame(BonesRenderer* renderer,
     int totalItems = boneCount + headCount + torsoCount + quadCount;
     if (totalItems > 0) {
         static RenderItem renderItems[MAX_RENDER_ITEMS];
-        int itemCount = 0;
-        Vector3 camPos = renderer->camera.position;
-
-        for (int i = 0; i < torsoCount && itemCount < MAX_RENDER_ITEMS; i++) {
-            if (!torsos[i].valid || !torsos[i].visible) continue;
-            renderItems[itemCount++] = (RenderItem){0, i, CameraDepthOf(renderer->camera, torsos[i].position), TORSO_BIAS + INDEX_BIAS*i, false};
-        }
-        for (int i = 0; i < boneCount && itemCount < MAX_RENDER_ITEMS; i++) {
-            if (!bones[i].valid || !bones[i].visible) continue;
-            renderItems[itemCount++] = (RenderItem){1, i, CameraDepthOf(renderer->camera, bones[i].position), BONE_BIAS + INDEX_BIAS*i, false};
-        }
-        for (int i = 0; i < headCount && itemCount < MAX_RENDER_ITEMS; i++) {
-            if (!heads[i].valid || !heads[i].visible) continue;
-            renderItems[itemCount++] = (RenderItem){2, i, CameraDepthOf(renderer->camera, heads[i].position), HEAD_BIAS + INDEX_BIAS*i, false};
-        }
-        for (int i = 0; i < quadCount && itemCount < MAX_RENDER_ITEMS; i++) {
-            renderItems[itemCount++] = (RenderItem){3, i, quads[i].depth, INDEX_BIAS*i, false};
-        }
+        int itemCount = BonesRenderer_CollectItems(renderer, renderItems,
+            bones, boneCount, heads, headCount, torsos, torsoCount, quads, quadCount);
 
         DetectZFighting(renderItems, itemCount);
         SortRenderItems(renderItems, itemCount);
@@ -3541,70 +3649,40 @@ static inline void BonesRenderer_RenderFrame(BonesRenderer* renderer,
         rlDisableDepthMask();
         rlDisableBackfaceCulling();
 
-        for (int i = 0; i < itemCount; i++) {
-            RenderItem* item = &renderItems[i];
-
-            if (item->type == 2) {
-                const HeadRenderData* curHead = &heads[item->index];
-                for (int j = 0; j < boneCount; j++) {
-                    const BoneRenderData* bone = &bones[j];
-                    if (!bone->valid || !bone->visible || strcmp(bone->boneName, "Neck") != 0) continue;
-                    if (Vector3Distance(bone->position, curHead->position) < 2.0f) {
-                        Vector3 toCam = Vector3Subtract(camPos, bone->position);
-                        float   dist  = Vector3Length(toCam);
-                        Vector3 renderPos = Vector3Add(bone->position,
-                            dist > MIN_DISTANCE_THRESHOLD ? Vector3Scale(Vector3Normalize(toCam), BONE_BIAS + INDEX_BIAS*j) : (Vector3){0});
-                        RenderBoneInternal(renderer, bone, renderPos, NULL, bones, boneCount);
-                    }
-                }
-            }
-
-            if (item->type == 3) {
-                DrawableQuad_Draw(&quads[item->index]);
-                continue;
-            }
-
-            Vector3 itemPos;
-            switch (item->type) {
-                case 0: itemPos = torsos[item->index].position; break;
-                case 1: itemPos = bones[item->index].position;  break;
-                case 2: itemPos = heads[item->index].position;  break;
-                default: continue;
-            }
-
-            Vector3 toCam = Vector3Subtract(camPos, itemPos);
-            float   dist  = Vector3Length(toCam);
-            Vector3 renderOffset = dist > MIN_DISTANCE_THRESHOLD
-                ? Vector3Scale(Vector3Normalize(toCam), item->depthBias) : (Vector3){0};
-
-            switch (item->type) {
-                case 0: {
-                    TorsoRenderData adj = torsos[item->index];
-                    adj.position = Vector3Add(adj.position, renderOffset);
-                    int ti = BonesRenderer_LoadTexture(renderer, adj.texturePath);
-                    DrawTorsoBillboard(renderer->textures[ti], renderer->camera, &adj, renderer->physCols, renderer->physRows);
-                    break;
-                }
-                case 1: {
-                    const BoneRenderData* b = &bones[item->index];
-                    if (strcmp(b->boneName, "Neck") != 0)
-                        RenderBoneInternal(renderer, b, Vector3Add(b->position, renderOffset), NULL, bones, boneCount);
-                    break;
-                }
-                case 2: {
-                    HeadRenderData adj = heads[item->index];
-                    adj.position = Vector3Add(adj.position, renderOffset);
-                    int ti = BonesRenderer_LoadTexture(renderer, adj.texturePath);
-                    DrawHeadBillboard(renderer->textures[ti], renderer->camera, &adj, renderer->physCols, renderer->physRows);
-                    break;
-                }
-            }
-        }
+        BonesRenderer_DrawItems(renderer, renderItems, itemCount, bones, boneCount, heads, torsos, quads);
 
         EndBlendMode();
         rlEnableDepthMask();
         rlEnableBackfaceCulling();
     }
+    EndMode3D();
+}
+
+static inline void BonesRenderer_WriteDepth(BonesRenderer* renderer,
+        BoneRenderData* bones, int boneCount,
+        HeadRenderData* heads, int headCount,
+        TorsoRenderData* torsos, int torsoCount,
+        DrawableQuad* quads, int quadCount)
+{
+    if (!g_bonesWriteDepth || g_quadRenderNoDepthTest || !renderer || !Bones_EnsureDepthShader()) return;
+    static RenderItem depthItems[MAX_RENDER_ITEMS];
+    int itemCount = BonesRenderer_CollectItems(renderer, depthItems,
+        bones, boneCount, heads, headCount, torsos, torsoCount, quads, quadCount);
+    if (itemCount == 0) return;
+
+    BeginMode3D(renderer->camera);
+    BeginShaderMode(g_bonesDepthShader);
+    rlColorMask(false, false, false, false);
+    rlEnableDepthTest();
+    rlEnableDepthMask();
+    rlDisableBackfaceCulling();
+
+    BonesRenderer_DrawItems(renderer, depthItems, itemCount, bones, boneCount, heads, torsos, quads);
+
+    rlDrawRenderBatchActive();
+    rlColorMask(true, true, true, true);
+    rlEnableBackfaceCulling();
+    EndShaderMode();
     EndMode3D();
 }
 
@@ -5580,6 +5658,7 @@ static inline Vector3 GetActiveSlashBonePos(const AnimatedCharacter* character, 
 static inline AnimatedCharacter* CreateAnimatedCharacter(const char* textureConfigPath, const char* textureSetsPath) {
     AnimatedCharacter* character = (AnimatedCharacter*)calloc(1, sizeof(AnimatedCharacter));
     if (!character) return NULL;
+    character->tint = (Color){255, 255, 255, 255};
 
     character->renderer = BonesRenderer_Create();
     if (!character->renderer || !BonesRenderer_Init(character->renderer)) {
@@ -5895,6 +5974,23 @@ static inline void HairSystem_Update(HairSystem* sys, const Person* person, cons
                     }
                 }
             }
+        }
+    }
+}
+
+static inline void HairSystem_SettleInstant(HairSystem* sys, int iterations) {
+    if (!sys || !sys->loaded) return;
+    for (int h = 0; h < sys->count; h++) {
+        HairPiece* hair = &sys->pieces[h];
+        if (!hair->enabled || !hair->visible) continue;
+        if (!hair->initialized) HairPiece_Init(hair);
+        for (int i = 0; i < iterations; i++) {
+            HairPiece_ApplyForces(hair, 0.016f);
+            HairPiece_ConstrainEdges(hair, 3);
+        }
+        for (int v = 0; v < hair->vertexCount; v++) {
+            hair->velocities[v] = (Vector3){0, 0, 0};
+            hair->oldPositions[v] = hair->vertices[v];
         }
     }
 }
@@ -6759,10 +6855,17 @@ static inline void DrawModel3DWithDepthOrder(Model3DAttachmentSystem* attachment
     }
 }
 
+static inline void SetAnimatedCharacterTint(AnimatedCharacter* character, Color tint) {
+    if (character) character->tint = tint;
+}
+
 static inline void DrawAnimatedCharacterTransformed(AnimatedCharacter* character, Camera camera,
-                                                     Vector3 worldPosition, float worldRotation)
+                                                     Vector3 worldPosition, float worldRotation, float scale)
 {
     if (!character || !character->animation.isLoaded) return;
+    if (scale <= 0.0f) scale = 1.0f;
+    Color prevQuadTint = g_quadRenderTint;
+    g_quadRenderTint = character->tint;
 
     character->worldPosition     = worldPosition;
     character->worldRotation     = worldRotation;
@@ -6772,7 +6875,7 @@ static inline void DrawAnimatedCharacterTransformed(AnimatedCharacter* character
     Camera origCam = character->renderer->camera;
     character->renderer->camera  = camera;
 
-    Matrix  rot   = MatrixRotateY(worldRotation);
+    Matrix  rot   = MatrixMultiply(MatrixScale(scale, scale, scale), MatrixRotateY(worldRotation));
     Vector3 pivot = character->autoCenter;
 
     int bc = character->renderBonesCount;
@@ -6889,7 +6992,7 @@ static inline void DrawAnimatedCharacterTransformed(AnimatedCharacter* character
 
     static DrawableQuad clothQuads[MAX_DRAWABLE_QUADS];
     int clothQuadCount = 0;
-    Matrix clothRot = MatrixRotateY(character->worldRotation);
+    Matrix clothRot = rot;
     if (character->clothPanels && character->clothPanels->loaded)
         Cloth_Collect(character->clothPanels, camera, character->worldPosition, clothRot,
                       character->worldPivot, clothQuads, &clothQuadCount, MAX_DRAWABLE_QUADS);
@@ -6916,8 +7019,15 @@ static inline void DrawAnimatedCharacterTransformed(AnimatedCharacter* character
     DrawModel3DWithDepthOrder(&character->model3dAttachments, rf, pid,
         character->worldPosition, character->worldPivot, rot, true, camera, transformedCenter, false);
 
+    BonesRenderer_WriteDepth(character->renderer,
+        bonesCopy  ? bonesCopy  : character->renderBones,  bc,
+        headsCopy  ? headsCopy  : character->renderHeads,   hc,
+        torsosCopy ? torsosCopy : character->renderTorsos, tc,
+        clothQuads, clothQuadCount);
+
     free(bonesCopy); free(headsCopy); free(torsosCopy); free(transformedFrame);
     character->renderer->camera = origCam;
+    g_quadRenderTint = prevQuadTint;
 
     bool hasLiveTrail = false;
     for (int i = 0; i < SLASH_TRAIL_MAX_ACTIVE; i++)
@@ -7100,6 +7210,8 @@ static inline bool BonesCopyFrame(BonesAnimation* animation, int sourceFrame, in
 
 static inline void DrawAnimatedCharacter(AnimatedCharacter* character, Camera camera) {
     if (!character || !character->animation.isLoaded) return;
+    Color prevQuadTint = g_quadRenderTint;
+    g_quadRenderTint = character->tint;
     character->renderer->camera = camera;
 
 
@@ -7157,6 +7269,12 @@ static inline void DrawAnimatedCharacter(AnimatedCharacter* character, Camera ca
                        character->autoCenter, character->autoCenterCalculated);
     EndMode3D();
 
+    BonesRenderer_WriteDepth(character->renderer,
+        character->renderBones,  character->renderBonesCount,
+        character->renderHeads,  character->renderHeadsCount,
+        character->renderTorsos, character->renderTorsosCount,
+        clothQuads2, clothQuadCount2);
+
     if (hasVisibleModel && modelDist <= charDist) {
         BeginMode3D(camera); rlDisableDepthTest();
         Model3D_Draw(&character->model3dAttachments, rf, pid,
@@ -7168,6 +7286,7 @@ static inline void DrawAnimatedCharacter(AnimatedCharacter* character, Camera ca
     BeginMode3D(camera);
     SlashTrail_Draw(&character->slashTrails, camera);
     EndMode3D();
+    g_quadRenderTint = prevQuadTint;
 }
 
 static inline void SetCharacterBillboards(AnimatedCharacter* character, bool heads, bool torsos) {
