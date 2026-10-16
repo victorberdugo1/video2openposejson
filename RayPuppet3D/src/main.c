@@ -3858,6 +3858,11 @@ typedef enum {
 #define TEXED_CELL_ZOOM_FINE 1.01f
 #define TEXED_TILE_SHIFT 6
 #define TEXED_TILE (1 << TEXED_TILE_SHIFT)
+#define TEXED_VIEW_ZOOM_MIN 1.0f
+#define TEXED_VIEW_ZOOM_MAX 32.0f
+#define TEXED_VIEW_ZOOM_STEP 1.2f
+#define TEXED_PIXEL_GRID_MIN 8.0f
+#define TEXED_POINT_FILTER_MIN 2.0f
 
 typedef struct {
 	int x;
@@ -3865,6 +3870,9 @@ typedef struct {
 	int w;
 	int h;
 	Color* pixels;
+	bool isXform;
+	int cell;
+	TexCellXform xform;
 } TexUndoPatch;
 
 typedef struct {
@@ -3887,6 +3895,7 @@ typedef struct {
 	TexCellXform dragStartXform;
 	Vector2 dragPivot;
 	float dragStartAngle;
+	int dragButton;
 	Image disk;
 	TexTool tool;
 	float brushSize;
@@ -3907,6 +3916,10 @@ typedef struct {
 	int frameMinY;
 	int frameMaxX;
 	int frameMaxY;
+	int clipX0;
+	int clipY0;
+	int clipX1;
+	int clipY1;
 	TexUndoPatch undo[TEXED_UNDO_MAX];
 	int undoCount;
 	bool wasPlaying;
@@ -3918,6 +3931,15 @@ typedef struct {
 	int smDim;
 	bool smPrimed;
 	float smCarry;
+	float viewZoom;
+	float viewPanX;
+	float viewPanY;
+	bool panning;
+	int panButton;
+	Vector2 panStartMouse;
+	Vector2 panStartOffset;
+	bool panCursor;
+	bool previewPoint;
 } TexEditor;
 
 static TexEditor g_texEd = {0};
@@ -3943,16 +3965,80 @@ static Rectangle TexEd_ToggleRect(AppState* app) {
 	return (Rectangle){app->screenWidth - w - 10.0f * s, 265.0f * s, w, 32.0f * s};
 }
 
-static Rectangle TexEd_AtlasRect(AppState* app) {
+static Rectangle TexEd_ViewRect(AppState* app) {
 	Rectangle p = TexEd_PanelRect(app);
 	float s = TexEd_UiScale(app);
 	float pad = 12.0f * s;
-	float availW = p.width - 2.0f * pad;
-	float availH = p.height - 290.0f * s;
-	float k = fminf(availW / (float)g_texEd.working.width, availH / (float)g_texEd.working.height);
+	return (Rectangle){p.x + pad, p.y + 100.0f * s, p.width - 2.0f * pad, p.height - 330.0f * s};
+}
+
+static Rectangle TexEd_InteractRect(AppState* app) {
+	Rectangle v = TexEd_ViewRect(app);
+	float margin = 10.0f * TexEd_UiScale(app);
+	return (Rectangle){v.x - margin, v.y - margin, v.width + 2.0f * margin, v.height + 2.0f * margin};
+}
+
+static Rectangle TexEd_ViewBarRect(AppState* app) {
+	Rectangle v = TexEd_ViewRect(app);
+	float s = TexEd_UiScale(app);
+	float h = 30.0f * s;
+	float w = fminf(v.width, 470.0f * s);
+	return (Rectangle){v.x, v.y + v.height + 4.0f * s, w, h};
+}
+
+static bool TexEd_PointInView(AppState* app, Vector2 m) {
+	return CheckCollisionPointRec(m, TexEd_InteractRect(app)) && !CheckCollisionPointRec(m, TexEd_ViewBarRect(app));
+}
+
+static float TexEd_FitScale(AppState* app) {
+	Rectangle v = TexEd_ViewRect(app);
+	return fminf(v.width / (float)g_texEd.working.width, v.height / (float)g_texEd.working.height);
+}
+
+static Rectangle TexEd_AtlasRect(AppState* app) {
+	Rectangle v = TexEd_ViewRect(app);
+	float k = TexEd_FitScale(app) * g_texEd.viewZoom;
 	float w = g_texEd.working.width * k;
 	float h = g_texEd.working.height * k;
-	return (Rectangle){p.x + (p.width - w) * 0.5f, p.y + 100.0f * s, w, h};
+	float x = w <= v.width ? v.x + (v.width - w) * 0.5f : Clamp(v.x + (v.width - w) * 0.5f + g_texEd.viewPanX, v.x + v.width - w, v.x);
+	float y = h <= v.height ? v.y : Clamp(v.y + g_texEd.viewPanY, v.y + v.height - h, v.y);
+	if (g_texEd.viewZoom > 1.0f) {
+		x = roundf(x);
+		y = roundf(y);
+	}
+	return (Rectangle){x, y, w, h};
+}
+
+static void TexEd_NormalizeView(AppState* app) {
+	Rectangle v = TexEd_ViewRect(app);
+	Rectangle ar = TexEd_AtlasRect(app);
+	g_texEd.viewPanX = ar.x - (v.x + (v.width - ar.width) * 0.5f);
+	g_texEd.viewPanY = ar.y - v.y;
+}
+
+static void TexEd_ResetView(void) {
+	g_texEd.viewZoom = 1.0f;
+	g_texEd.viewPanX = 0.0f;
+	g_texEd.viewPanY = 0.0f;
+}
+
+static Vector2 TexEd_ViewCenter(AppState* app) {
+	Rectangle v = TexEd_ViewRect(app);
+	return (Vector2){v.x + v.width * 0.5f, v.y + v.height * 0.5f};
+}
+
+static void TexEd_ZoomView(AppState* app, float zoom, Vector2 anchor) {
+	zoom = Clamp(zoom, TEXED_VIEW_ZOOM_MIN, TEXED_VIEW_ZOOM_MAX);
+	Rectangle before = TexEd_AtlasRect(app);
+	float kBefore = before.width / (float)g_texEd.working.width;
+	Vector2 pivot = {(anchor.x - before.x) / kBefore, (anchor.y - before.y) / kBefore};
+	g_texEd.viewZoom = zoom;
+	Rectangle v = TexEd_ViewRect(app);
+	float k = TexEd_FitScale(app) * zoom;
+	float w = g_texEd.working.width * k;
+	g_texEd.viewPanX = anchor.x - pivot.x * k - (v.x + (v.width - w) * 0.5f);
+	g_texEd.viewPanY = anchor.y - pivot.y * k - v.y;
+	TexEd_NormalizeView(app);
 }
 
 static void TexEd_CellSize(float* cw, float* ch) {
@@ -4090,6 +4176,15 @@ static void TexEd_UndoClear(void) {
 	g_texEd.undoCount = 0;
 }
 
+static void TexEd_UndoAppend(TexUndoPatch entry) {
+	if (g_texEd.undoCount == TEXED_UNDO_MAX) {
+		MemFree(g_texEd.undo[0].pixels);
+		memmove(&g_texEd.undo[0], &g_texEd.undo[1], (TEXED_UNDO_MAX - 1) * sizeof(TexUndoPatch));
+		g_texEd.undoCount--;
+	}
+	g_texEd.undo[g_texEd.undoCount++] = entry;
+}
+
 static void TexEd_UndoPush(int x0, int y0, int x1, int y1) {
 	int w = x1 - x0;
 	int h = y1 - y0;
@@ -4101,12 +4196,11 @@ static void TexEd_UndoPush(int x0, int y0, int x1, int y1) {
 	for (int y = 0; y < h; y++) {
 		memcpy(pixels + y * w, src + (y0 + y) * stride + x0, (size_t)w * sizeof(Color));
 	}
-	if (g_texEd.undoCount == TEXED_UNDO_MAX) {
-		MemFree(g_texEd.undo[0].pixels);
-		memmove(&g_texEd.undo[0], &g_texEd.undo[1], (TEXED_UNDO_MAX - 1) * sizeof(TexUndoPatch));
-		g_texEd.undoCount--;
-	}
-	g_texEd.undo[g_texEd.undoCount++] = (TexUndoPatch){x0, y0, w, h, pixels};
+	TexEd_UndoAppend((TexUndoPatch){.x = x0, .y = y0, .w = w, .h = h, .pixels = pixels});
+}
+
+static void TexEd_UndoPushXform(int cell, const TexCellXform* before) {
+	TexEd_UndoAppend((TexUndoPatch){.isXform = true, .cell = cell, .xform = *before});
 }
 
 static void TexEd_Unload(void) {
@@ -4144,6 +4238,9 @@ static bool TexEd_Load(int index) {
 	g_texEd.sliderActive = 0;
 	g_texEd.preview = LoadTextureFromImage(g_texEd.working);
 	SetTextureFilter(g_texEd.preview, TEXTURE_FILTER_BILINEAR);
+	g_texEd.previewPoint = false;
+	g_texEd.panning = false;
+	TexEd_ResetView();
 	g_texEd.current = index;
 	TexEd_ResetXforms();
 	g_texEd.selected = 0;
@@ -4296,6 +4393,13 @@ static void TexEd_SyncRect(AppState* app, int x0, int y0, int x1, int y1) {
 static bool TexEd_UndoPop(AppState* app) {
 	if (g_texEd.undoCount == 0) return false;
 	TexUndoPatch patch = g_texEd.undo[--g_texEd.undoCount];
+	if (patch.isXform) {
+		g_texEd.xform[patch.cell] = patch.xform;
+		g_texEd.selected = patch.cell;
+		TexEd_ComposeCell(patch.cell);
+		TexEd_SyncTextures(app);
+		return true;
+	}
 	Color* work = (Color*)g_texEd.working.data;
 	Color* orig = (Color*)g_texEd.original.data;
 	int stride = g_texEd.working.width;
@@ -4322,7 +4426,12 @@ static void TexEd_BakeXforms(void) {
 	UnloadImage(g_texEd.original);
 	g_texEd.original = ImageCopy(g_texEd.working);
 	TexEd_ResetXforms();
-	TexEd_UndoClear();
+	int kept = 0;
+	for (int i = 0; i < g_texEd.undoCount; i++) {
+		if (g_texEd.undo[i].isXform) continue;
+		g_texEd.undo[kept++] = g_texEd.undo[i];
+	}
+	g_texEd.undoCount = kept;
 	g_texEd.edited = true;
 }
 
@@ -4366,6 +4475,10 @@ static void TexEd_EraseSegment(Vector2 a, Vector2 b) {
 	if (y0 < 0) y0 = 0;
 	if (x1 > W) x1 = W;
 	if (y1 > H) y1 = H;
+	if (x0 < g_texEd.clipX0) x0 = g_texEd.clipX0;
+	if (y0 < g_texEd.clipY0) y0 = g_texEd.clipY0;
+	if (x1 > g_texEd.clipX1) x1 = g_texEd.clipX1;
+	if (y1 > g_texEd.clipY1) y1 = g_texEd.clipY1;
 	if (x1 <= x0 || y1 <= y0) return;
 
 	float dx = b.x - a.x;
@@ -4477,6 +4590,10 @@ static void TexEd_SmudgeDab(Vector2 c) {
 	int y0 = oy < 0 ? 0 : oy;
 	int x1 = ox + D > W ? W : ox + D;
 	int y1 = oy + D > H ? H : oy + D;
+	if (x0 < g_texEd.clipX0) x0 = g_texEd.clipX0;
+	if (y0 < g_texEd.clipY0) y0 = g_texEd.clipY0;
+	if (x1 > g_texEd.clipX1) x1 = g_texEd.clipX1;
+	if (y1 > g_texEd.clipY1) y1 = g_texEd.clipY1;
 	if (x1 <= x0 || y1 <= y0) return;
 	float* acc = g_texEd.smAccum;
 
@@ -4582,6 +4699,16 @@ static void TexEd_BeginStroke(AppState* app, Vector2 pos) {
 	TexEd_ResetFrameBounds();
 	g_texEd.strokePrevPt = pos;
 	g_texEd.strokePrevMid = pos;
+	int gridCols = g_texEd.gridCols[g_texEd.current];
+	int gridRows = g_texEd.gridRows[g_texEd.current];
+	int cellW = g_texEd.working.width / gridCols;
+	int cellH = g_texEd.working.height / gridRows;
+	int cellCol = Clamp((int)floorf(pos.x / (float)cellW), 0, gridCols - 1);
+	int cellRow = Clamp((int)floorf(pos.y / (float)cellH), 0, gridRows - 1);
+	g_texEd.clipX0 = cellCol * cellW;
+	g_texEd.clipY0 = cellRow * cellH;
+	g_texEd.clipX1 = g_texEd.clipX0 + cellW;
+	g_texEd.clipY1 = g_texEd.clipY0 + cellH;
 	if (g_texEd.tool == TEXED_TOOL_SMUDGE) {
 		if (!TexEd_SmudgeBegin(pos)) {
 			UnloadImage(g_texEd.strokeBase);
@@ -4687,14 +4814,39 @@ static void TexEd_Slider(int id, Rectangle r, const char* label, float* value, f
 	DrawText(label, (int)(r.x + (r.width - tw) * 0.5f), (int)(r.y + (r.height - fs) * 0.5f), fs, WHITE);
 }
 
-static void TexEd_DrawChecker(Rectangle ar, float cell) {
-	for (float y = 0.0f; y < ar.height; y += cell) {
-		float h = fminf(cell, ar.height - y);
-		for (float x = 0.0f; x < ar.width; x += cell) {
-			float w = fminf(cell, ar.width - x);
-			bool odd = (((int)(x / cell)) + ((int)(y / cell))) & 1;
-			DrawRectangleRec((Rectangle){ar.x + x, ar.y + y, w, h}, odd ? (Color){120, 120, 120, 255} : (Color){165, 165, 165, 255});
+static void TexEd_DrawChecker(Rectangle ar, Rectangle clip, float cell) {
+	Rectangle vis = GetCollisionRec(ar, clip);
+	if (vis.width <= 0.0f || vis.height <= 0.0f) return;
+	int c0 = (int)floorf((vis.x - ar.x) / cell);
+	int c1 = (int)ceilf((vis.x + vis.width - ar.x) / cell);
+	int r0 = (int)floorf((vis.y - ar.y) / cell);
+	int r1 = (int)ceilf((vis.y + vis.height - ar.y) / cell);
+	for (int r = r0; r < r1; r++) {
+		float y = ar.y + r * cell;
+		float h = fminf(cell, ar.y + ar.height - y);
+		for (int c = c0; c < c1; c++) {
+			float x = ar.x + c * cell;
+			float w = fminf(cell, ar.x + ar.width - x);
+			DrawRectangleRec((Rectangle){x, y, w, h}, ((c + r) & 1) ? (Color){120, 120, 120, 255} : (Color){165, 165, 165, 255});
 		}
+	}
+}
+
+static void TexEd_DrawPixelGrid(Rectangle ar, Rectangle clip, float k) {
+	Rectangle vis = GetCollisionRec(ar, clip);
+	if (vis.width <= 0.0f || vis.height <= 0.0f) return;
+	int x0 = (int)floorf((vis.x - ar.x) / k);
+	int x1 = (int)ceilf((vis.x + vis.width - ar.x) / k);
+	int y0 = (int)floorf((vis.y - ar.y) / k);
+	int y1 = (int)ceilf((vis.y + vis.height - ar.y) / k);
+	Color line = {0, 0, 0, 60};
+	for (int x = x0; x <= x1; x++) {
+		float sx = roundf(ar.x + x * k);
+		DrawLineV((Vector2){sx, vis.y}, (Vector2){sx, vis.y + vis.height}, line);
+	}
+	for (int y = y0; y <= y1; y++) {
+		float sy = roundf(ar.y + y * k);
+		DrawLineV((Vector2){vis.x, sy}, (Vector2){vis.x + vis.width, sy}, line);
 	}
 }
 
@@ -4704,7 +4856,6 @@ static void TexEd_DrawFitText(const char* text, int x, int y, int fs, int maxWid
 }
 
 static void TexEd_CellChanged(AppState* app, int cell) {
-	TexEd_UndoClear();
 	TexEd_ComposeCell(cell);
 	TexEd_SyncTextures(app);
 }
@@ -4721,32 +4872,9 @@ static Vector2 TexEd_VertexScreen(const TexCellXform* xf, int i, Vector2 center,
 	return (Vector2){center.x + xf->x[i] * k, center.y + xf->y[i] * k};
 }
 
-static Vector2 TexEd_RotHandleScreen(const TexCellXform* xf, Vector2 center, float k, float dist, Vector2* anchor) {
-	Vector2 a = {center.x + (xf->x[0] + xf->x[1]) * 0.5f * k, center.y + (xf->y[0] + xf->y[1]) * 0.5f * k};
-	Vector2 cen = TexEd_Centroid(xf);
-	Vector2 d = {a.x - (center.x + cen.x * k), a.y - (center.y + cen.y * k)};
-	float len = hypotf(d.x, d.y);
-	if (len < 0.001f) {
-		d = (Vector2){0.0f, -1.0f};
-	} else {
-		d = (Vector2){d.x / len, d.y / len};
-	}
-	*anchor = a;
-	return (Vector2){a.x + d.x * dist, a.y + d.y * dist};
-}
-
 static bool TexEd_RotHandleBlocksUi(AppState* app) {
-	if (g_texEd.dragMode != TEXED_DRAG_NONE) return true;
-	if (g_texEd.tool != TEXED_TOOL_MOVE) return false;
-	Rectangle ar = TexEd_AtlasRect(app);
-	float k = ar.width / (float)g_texEd.working.width;
-	float s = TexEd_UiScale(app);
-	TexCellXform* xf = &g_texEd.xform[g_texEd.selected];
-	Vector2 center = TexEd_CellCenterScreen(ar, g_texEd.selected);
-	Vector2 anchor;
-	Vector2 rot = TexEd_RotHandleScreen(xf, center, k, 30.0f * s, &anchor);
-	Vector2 m = GetMousePosition();
-	return hypotf(m.x - rot.x, m.y - rot.y) <= TexEd_HitRadius(s);
+	(void)app;
+	return g_texEd.dragMode != TEXED_DRAG_NONE;
 }
 
 static int TexEd_HitVertex(const TexCellXform* xf, Vector2 center, float k, Vector2 m, float radius) {
@@ -4755,6 +4883,57 @@ static int TexEd_HitVertex(const TexCellXform* xf, Vector2 center, float k, Vect
 		if (hypotf(m.x - v.x, m.y - v.y) <= radius) return i;
 	}
 	return -1;
+}
+
+static Vector2 TexEd_RotHandleScreen(AppState* app, const TexCellXform* xf, Vector2 center, float k, float s) {
+	Vector2 a = TexEd_VertexScreen(xf, 0, center, k);
+	Vector2 b = TexEd_VertexScreen(xf, 1, center, k);
+	Vector2 cen = TexEd_Centroid(xf);
+	Vector2 pivot = {center.x + cen.x * k, center.y + cen.y * k};
+	Vector2 mid = {(a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f};
+	Vector2 dir = Vector2Normalize(Vector2Subtract(mid, pivot));
+	float offset = 26.0f * s;
+	Vector2 handle = Vector2Add(mid, Vector2Scale(dir, offset));
+	if (!CheckCollisionPointRec(handle, TexEd_InteractRect(app))) {
+		handle = Vector2Subtract(mid, Vector2Scale(dir, offset));
+	}
+	return handle;
+}
+
+static bool TexEd_HitRotHandle(AppState* app, const TexCellXform* xf, Vector2 center, float k, float s, Vector2 m) {
+	Vector2 handle = TexEd_RotHandleScreen(app, xf, center, k, s);
+	return hypotf(m.x - handle.x, m.y - handle.y) <= TexEd_HitRadius(s) * 1.2f;
+}
+
+static bool TexEd_HitCornerRotZone(const TexCellXform* xf, Vector2 center, float k, Vector2 m, float radius) {
+	Vector2 cen = TexEd_Centroid(xf);
+	Vector2 pivot = {center.x + cen.x * k, center.y + cen.y * k};
+	for (int i = 0; i < 4; i++) {
+		Vector2 v = TexEd_VertexScreen(xf, i, center, k);
+		float d = hypotf(m.x - v.x, m.y - v.y);
+		if (d <= radius || d > radius * 3.0f) continue;
+		if ((m.x - v.x) * (v.x - pivot.x) + (m.y - v.y) * (v.y - pivot.y) > 0.0f) return true;
+	}
+	return false;
+}
+
+static void TexEd_DrawRotHandle(Vector2 from, Vector2 handle, float radius, bool active) {
+	DrawLineEx(from, handle, 2.0f, BLACK);
+	DrawLineEx(from, handle, 1.0f, WHITE);
+	DrawCircleV(handle, radius, active ? ORANGE : WHITE);
+	DrawCircleLinesV(handle, radius, BLACK);
+	float arc = radius * 0.55f;
+	DrawRingLines(handle, arc, arc, 40.0f, 320.0f, 24, BLACK);
+	float endAngle = 320.0f * DEG2RAD;
+	Vector2 tip = {handle.x + cosf(endAngle) * arc, handle.y + sinf(endAngle) * arc};
+	Vector2 tangent = {-sinf(endAngle), cosf(endAngle)};
+	Vector2 radial = {cosf(endAngle), sinf(endAngle)};
+	float head = radius * 0.32f;
+	Vector2 p1 = Vector2Add(tip, Vector2Scale(tangent, head));
+	Vector2 p2 = Vector2Add(tip, Vector2Add(Vector2Scale(radial, head * 0.7f), Vector2Scale(tangent, -head * 0.2f)));
+	Vector2 p3 = Vector2Add(tip, Vector2Add(Vector2Scale(radial, -head * 0.7f), Vector2Scale(tangent, -head * 0.2f)));
+	DrawTriangle(p1, p3, p2, BLACK);
+	DrawTriangle(p1, p2, p3, BLACK);
 }
 
 static void TexEd_EnforceFrameLock(AppState* app) {
@@ -4769,6 +4948,11 @@ static void TexEd_EnforceFrameLock(AppState* app) {
 static void TexEd_Close(AppState* app) {
 	if (!g_texEd.open) return;
 	g_texEd.open = false;
+	g_texEd.panning = false;
+	if (g_texEd.panCursor) {
+		SetMouseCursor(MOUSE_CURSOR_DEFAULT);
+		g_texEd.panCursor = false;
+	}
 	if (g_texEd.wasPlaying && app->character) {
 		app->editor.isPlaying = true;
 		SetCharacterAutoPlay(app->character, true);
@@ -4791,6 +4975,48 @@ static void TexEd_Open(AppState* app) {
 		g_texEd.smudgeStrength = 0.6f;
 	}
 	if (!g_texEd.loaded && g_texEd.pathCount > 0) TexEd_Load(0);
+}
+
+static bool TexEd_UpdateView(AppState* app, Vector2 m, bool inView, bool hover) {
+	bool ctrl = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
+	bool space = IsKeyDown(KEY_SPACE);
+	bool idle = g_texEd.dragMode == TEXED_DRAG_NONE && g_texEd.sliderActive == 0;
+
+	if (!g_texEd.panning && idle && inView) {
+		bool middle = IsMouseButtonPressed(MOUSE_BUTTON_MIDDLE);
+		bool spaceDrag = space && IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+		if (middle || spaceDrag) {
+			g_texEd.panning = true;
+			g_texEd.panButton = middle ? MOUSE_BUTTON_MIDDLE : MOUSE_BUTTON_LEFT;
+			g_texEd.panStartMouse = m;
+			g_texEd.panStartOffset = (Vector2){g_texEd.viewPanX, g_texEd.viewPanY};
+		}
+	}
+	if (g_texEd.panning) {
+		if (IsMouseButtonDown(g_texEd.panButton)) {
+			g_texEd.viewPanX = g_texEd.panStartOffset.x + (m.x - g_texEd.panStartMouse.x);
+			g_texEd.viewPanY = g_texEd.panStartOffset.y + (m.y - g_texEd.panStartMouse.y);
+			TexEd_NormalizeView(app);
+		} else {
+			g_texEd.panning = false;
+		}
+	}
+
+	bool wantCursor = g_texEd.panning || (space && inView);
+	if (wantCursor != g_texEd.panCursor) {
+		SetMouseCursor(wantCursor ? MOUSE_CURSOR_RESIZE_ALL : MOUSE_CURSOR_DEFAULT);
+		g_texEd.panCursor = wantCursor;
+	}
+
+	if (hover && ctrl && IsKeyPressed(KEY_ZERO)) TexEd_ResetView();
+	if (hover && ctrl && IsKeyPressed(KEY_ONE)) TexEd_ZoomView(app, 1.0f / TexEd_FitScale(app), TexEd_ViewCenter(app));
+
+	float wheel = GetMouseWheelMove();
+	if (ctrl && inView && wheel != 0.0f && !g_texEd.panning) {
+		TexEd_ZoomView(app, g_texEd.viewZoom * powf(TEXED_VIEW_ZOOM_STEP, wheel), m);
+		return true;
+	}
+	return g_texEd.panning;
 }
 
 static bool TexEd_UpdateBrush(AppState* app, Rectangle ar, float k, bool hover, bool inAtlas) {
@@ -4831,9 +5057,12 @@ static bool TexEd_Update(AppState* app) {
 
 	int cols = g_texEd.gridCols[g_texEd.current];
 	int rows = g_texEd.gridRows[g_texEd.current];
+	TexEd_NormalizeView(app);
+	bool inView = TexEd_PointInView(app, m);
+	if (TexEd_UpdateView(app, m, inView, hover)) return true;
 	Rectangle ar = TexEd_AtlasRect(app);
 	float k = ar.width / (float)g_texEd.working.width;
-	bool inAtlas = CheckCollisionPointRec(m, ar);
+	bool inAtlas = inView && CheckCollisionPointRec(m, ar);
 	float s = TexEd_UiScale(app);
 	float hitR = TexEd_HitRadius(s);
 	bool shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
@@ -4843,23 +5072,29 @@ static bool TexEd_Update(AppState* app) {
 	}
 	if (g_texEd.tool != TEXED_TOOL_MOVE) return TexEd_UpdateBrush(app, ar, k, hover, inAtlas);
 
-	if (hover && g_texEd.dragMode == TEXED_DRAG_NONE && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+	bool ctrl = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
+	if (hover && ctrl && g_texEd.dragMode == TEXED_DRAG_NONE && IsKeyPressed(KEY_Z)) TexEd_UndoPop(app);
+
+	bool rightPress = IsMouseButtonPressed(MOUSE_BUTTON_RIGHT);
+	if (inView && g_texEd.dragMode == TEXED_DRAG_NONE && (rightPress || IsMouseButtonPressed(MOUSE_BUTTON_LEFT))) {
 		TexCellXform* sel = &g_texEd.xform[g_texEd.selected];
 		Vector2 center = TexEd_CellCenterScreen(ar, g_texEd.selected);
 		int hitV = TexEd_HitVertex(sel, center, k, m, hitR);
-		Vector2 anchor;
-		Vector2 rot = TexEd_RotHandleScreen(sel, center, k, 30.0f * s, &anchor);
-		if (hitV >= 0) {
-			g_texEd.dragMode = TEXED_DRAG_VERTEX;
-			g_texEd.dragVertex = hitV;
-			g_texEd.dragStartMouse = m;
-			g_texEd.dragStartXform = *sel;
-		} else if (hypotf(m.x - rot.x, m.y - rot.y) <= hitR) {
+		bool rotPress = rightPress || TexEd_HitRotHandle(app, sel, center, k, s, m) ||
+				(hitV < 0 && TexEd_HitCornerRotZone(sel, center, k, m, hitR));
+		if (rotPress) {
 			Vector2 cen = TexEd_Centroid(sel);
 			Vector2 pv = {center.x + cen.x * k, center.y + cen.y * k};
 			g_texEd.dragMode = TEXED_DRAG_ROTATE;
+			g_texEd.dragButton = rightPress ? MOUSE_BUTTON_RIGHT : MOUSE_BUTTON_LEFT;
 			g_texEd.dragPivot = cen;
 			g_texEd.dragStartAngle = atan2f(m.y - pv.y, m.x - pv.x) * RAD2DEG;
+			g_texEd.dragStartMouse = m;
+			g_texEd.dragStartXform = *sel;
+		} else if (hitV >= 0) {
+			g_texEd.dragMode = TEXED_DRAG_VERTEX;
+			g_texEd.dragButton = MOUSE_BUTTON_LEFT;
+			g_texEd.dragVertex = hitV;
 			g_texEd.dragStartMouse = m;
 			g_texEd.dragStartXform = *sel;
 		} else if (inAtlas) {
@@ -4869,6 +5104,7 @@ static bool TexEd_Update(AppState* app) {
 			if (r >= rows) r = rows - 1;
 			g_texEd.selected = r * cols + c;
 			g_texEd.dragMode = TEXED_DRAG_MOVE;
+			g_texEd.dragButton = MOUSE_BUTTON_LEFT;
 			g_texEd.dragStartMouse = m;
 			g_texEd.dragStartXform = g_texEd.xform[g_texEd.selected];
 		}
@@ -4877,8 +5113,9 @@ static bool TexEd_Update(AppState* app) {
 	TexCellXform* xf = &g_texEd.xform[g_texEd.selected];
 	TexCellXform before = *xf;
 
+	bool dragEnded = false;
 	if (g_texEd.dragMode != TEXED_DRAG_NONE) {
-		if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+		if (IsMouseButtonDown(g_texEd.dragButton)) {
 			float dx = roundf((m.x - g_texEd.dragStartMouse.x) / k);
 			float dy = roundf((m.y - g_texEd.dragStartMouse.y) / k);
 			if (g_texEd.dragMode == TEXED_DRAG_MOVE) {
@@ -4896,6 +5133,7 @@ static bool TexEd_Update(AppState* app) {
 			}
 		} else {
 			g_texEd.dragMode = TEXED_DRAG_NONE;
+			dragEnded = true;
 		}
 	}
 
@@ -4913,10 +5151,16 @@ static bool TexEd_Update(AppState* app) {
 		if (IsKeyPressed(KEY_DOWN))  TexEd_Translate(xf, xf, 0.0f, step);
 		if (IsKeyPressed(KEY_Q)) TexEd_RotateAbout(xf, xf, TexEd_Centroid(xf), -rotStep);
 		if (IsKeyPressed(KEY_E)) TexEd_RotateAbout(xf, xf, TexEd_Centroid(xf), rotStep);
-		if (IsKeyPressed(KEY_R)) *xf = TexEd_IdentityXform();
+		if (IsKeyPressed(KEY_R) && !ctrl) *xf = TexEd_IdentityXform();
 	}
 
-	if (memcmp(&before, xf, sizeof(before)) != 0) TexEd_CellChanged(app, g_texEd.selected);
+	if (memcmp(&before, xf, sizeof(before)) != 0) {
+		if (g_texEd.dragMode == TEXED_DRAG_NONE) TexEd_UndoPushXform(g_texEd.selected, &before);
+		TexEd_CellChanged(app, g_texEd.selected);
+	}
+	if (dragEnded && memcmp(&g_texEd.dragStartXform, xf, sizeof(*xf)) != 0) {
+		TexEd_UndoPushXform(g_texEd.selected, &g_texEd.dragStartXform);
+	}
 	return hover || g_texEd.dragMode != TEXED_DRAG_NONE;
 }
 
@@ -4967,9 +5211,13 @@ static void TexEd_Draw(AppState* app) {
 		Rectangle zoomOutBtn = {zoomInBtn.x - 4.0f * s - 30.0f * s, p.y + 52.0f * s, 30.0f * s, 32.0f * s};
 		float step = (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT)) ? TEXED_CELL_ZOOM_FINE : TEXED_CELL_ZOOM_STEP;
 		float scaleBefore = TexEd_ScaleOf(zxf);
+		TexCellXform xfBefore = *zxf;
 		if (Button(zoomOutBtn, "-", GRAY) && idle) TexEd_ScaleAbout(zxf, 1.0f / step);
 		if (Button(zoomInBtn, "+", GRAY) && idle) TexEd_ScaleAbout(zxf, step);
-		if (fabsf(TexEd_ScaleOf(zxf) - scaleBefore) > 1e-6f) TexEd_CellChanged(app, g_texEd.selected);
+		if (fabsf(TexEd_ScaleOf(zxf) - scaleBefore) > 1e-6f) {
+			TexEd_UndoPushXform(g_texEd.selected, &xfBefore);
+			TexEd_CellChanged(app, g_texEd.selected);
+		}
 		const char* zoomText = TextFormat("Zoom celda %d%%", (int)roundf(TexEd_ScaleOf(zxf) * 100.0f));
 		DrawText(zoomText, (int)(zoomOutBtn.x - 8.0f * s) - MeasureText(zoomText, fs), (int)(p.y + 60 * s), fs, LIGHTGRAY);
 	}
@@ -4994,14 +5242,23 @@ static void TexEd_Draw(AppState* app) {
 			(int)(p.x + pad + 100 * s), (int)(p.y + 60 * s), fs, WHITE);
 
 	Rectangle ar = TexEd_AtlasRect(app);
+	Rectangle view = TexEd_ViewRect(app);
+	Rectangle interact = TexEd_InteractRect(app);
 	float k = ar.width / (float)g_texEd.working.width;
+	bool wantPoint = g_texEd.viewZoom > 1.0f && k >= TEXED_POINT_FILTER_MIN;
+	if (wantPoint != g_texEd.previewPoint) {
+		SetTextureFilter(g_texEd.preview, wantPoint ? TEXTURE_FILTER_POINT : TEXTURE_FILTER_BILINEAR);
+		g_texEd.previewPoint = wantPoint;
+	}
+	BeginScissorMode((int)view.x, (int)view.y, (int)ceilf(view.width), (int)ceilf(view.height));
 	if (moveTool) {
 		DrawRectangleRec(ar, (Color){90, 90, 90, 255});
 	} else {
-		TexEd_DrawChecker(ar, 8.0f * s < 4.0f ? 4.0f : 8.0f * s);
+		TexEd_DrawChecker(ar, view, 8.0f * s < 4.0f ? 4.0f : 8.0f * s);
 	}
 	DrawTexturePro(g_texEd.preview, (Rectangle){0, 0, (float)g_texEd.working.width, (float)g_texEd.working.height},
 			ar, (Vector2){0, 0}, 0.0f, WHITE);
+	if (k >= TEXED_PIXEL_GRID_MIN) TexEd_DrawPixelGrid(ar, view, k);
 
 	float cellW = ar.width / cols;
 	float cellH = ar.height / rows;
@@ -5016,11 +5273,13 @@ static void TexEd_Draw(AppState* app) {
 	for (int i = 0; i < cols * rows; i++) {
 		DrawText(TextFormat("%d", i), (int)(ar.x + (i % cols) * cellW + 3), (int)(ar.y + (i / cols) * cellH + 2), idxSize, YELLOW);
 	}
+	EndScissorMode();
 
 	TexCellXform* xf = &g_texEd.xform[g_texEd.selected];
 	Vector2 m = GetMousePosition();
 	float footerY = p.y + p.height - 140 * s;
 
+	BeginScissorMode((int)interact.x, (int)interact.y, (int)ceilf(interact.width), (int)ceilf(interact.height));
 	if (moveTool) {
 		Rectangle sel = {ar.x + (g_texEd.selected % cols) * cellW, ar.y + (g_texEd.selected / cols) * cellH, cellW, cellH};
 		DrawRectangleLinesEx(sel, 3, RED);
@@ -5034,12 +5293,21 @@ static void TexEd_Draw(AppState* app) {
 			Vector2 b = TexEd_VertexScreen(xf, (i + 1) % 4, center, k);
 			DrawLineEx(a, b, 2.0f, quadColor);
 		}
-		Vector2 anchor;
-		Vector2 rot = TexEd_RotHandleScreen(xf, center, k, 30.0f * s, &anchor);
-		DrawLineEx(anchor, rot, 2.0f, LIME);
-		bool rotActive = g_texEd.dragMode == TEXED_DRAG_ROTATE || hypotf(m.x - rot.x, m.y - rot.y) <= hitR;
-		DrawCircleV(rot, hitR * 0.8f, rotActive ? ORANGE : LIME);
-		DrawCircleLinesV(rot, hitR * 0.8f, BLACK);
+		Vector2 cen = TexEd_Centroid(xf);
+		Vector2 pv = {center.x + cen.x * k, center.y + cen.y * k};
+		Vector2 topA = TexEd_VertexScreen(xf, 0, center, k);
+		Vector2 topB = TexEd_VertexScreen(xf, 1, center, k);
+		Vector2 topMid = {(topA.x + topB.x) * 0.5f, (topA.y + topB.y) * 0.5f};
+		Vector2 rotHandle = TexEd_RotHandleScreen(app, xf, center, k, s);
+		bool rotating = g_texEd.dragMode == TEXED_DRAG_ROTATE;
+		bool rotHover = g_texEd.dragMode == TEXED_DRAG_NONE && TexEd_HitRotHandle(app, xf, center, k, s, m);
+		TexEd_DrawRotHandle(topMid, rotHandle, hitR * 0.9f, rotating || rotHover);
+		if (rotating) {
+			DrawLineEx(pv, m, 2.0f, LIME);
+			DrawCircleV(pv, hitR * 0.5f, ORANGE);
+			DrawCircleLinesV(pv, hitR * 0.5f, BLACK);
+			DrawText(TextFormat("%.1f", TexEd_RotationOf(xf)), (int)m.x + (int)(14 * s), (int)m.y - (int)(24 * s), (int)(14 * s) < 10 ? 10 : (int)(14 * s), WHITE);
+		}
 		for (int i = 0; i < 4; i++) {
 			Vector2 v = TexEd_VertexScreen(xf, i, center, k);
 			bool active = (g_texEd.dragMode == TEXED_DRAG_VERTEX && g_texEd.dragVertex == i) || (g_texEd.dragMode == TEXED_DRAG_NONE && hoverV == i);
@@ -5048,7 +5316,7 @@ static void TexEd_Draw(AppState* app) {
 		}
 
 	} else {
-		bool overView = CheckCollisionPointRec(m, ar);
+		bool overView = TexEd_PointInView(app, m) && CheckCollisionPointRec(m, ar);
 		if (g_texEd.sliderActive == 0 && (overView || g_texEd.dragMode == TEXED_DRAG_BRUSH)) {
 			float rad = g_texEd.brushSize * 0.5f * k;
 			DrawCircleLinesV(m, rad + 1.0f, BLACK);
@@ -5057,6 +5325,27 @@ static void TexEd_Draw(AppState* app) {
 		}
 	}
 
+	EndScissorMode();
+
+	Rectangle bar = TexEd_ViewBarRect(app);
+	DrawRectangleRec(bar, (Color){20, 20, 20, 200});
+	DrawRectangleLinesEx(bar, 1, BLACK);
+	float bx = bar.x + 4.0f * s;
+	float by = bar.y + 3.0f * s;
+	float bh = bar.height - 6.0f * s;
+	Vector2 viewCenter = TexEd_ViewCenter(app);
+	bool viewIdle = idle && !g_texEd.panning;
+	if (Button((Rectangle){bx, by, 26.0f * s, bh}, "-", GRAY) && viewIdle) TexEd_ZoomView(app, g_texEd.viewZoom / TEXED_VIEW_ZOOM_STEP, viewCenter);
+	if (Button((Rectangle){bx + 30.0f * s, by, 26.0f * s, bh}, "+", GRAY) && viewIdle) TexEd_ZoomView(app, g_texEd.viewZoom * TEXED_VIEW_ZOOM_STEP, viewCenter);
+	if (Button((Rectangle){bx + 60.0f * s, by, 64.0f * s, bh}, "AJUSTAR", GRAY) && viewIdle) TexEd_ResetView();
+	if (Button((Rectangle){bx + 128.0f * s, by, 40.0f * s, bh}, "1:1", GRAY) && viewIdle) TexEd_ZoomView(app, 1.0f / TexEd_FitScale(app), viewCenter);
+	int barFs = (int)(13.0f * s);
+	if (barFs < 10) barFs = 10;
+	DrawText(TextFormat("%d%%", (int)roundf(k * 100.0f)), (int)(bx + 176.0f * s), (int)(bar.y + (bar.height - barFs) * 0.5f), barFs, WHITE);
+	TexEd_DrawFitText("Ctrl+Rueda: zoom vista  |  Espacio o rueda central: mover",
+			(int)(bx + 232.0f * s), (int)(bar.y + (bar.height - barFs + 2) * 0.5f), barFs - 2,
+			(int)(bar.x + bar.width - 6.0f * s - (bx + 232.0f * s)), LIGHTGRAY);
+
 	int textMaxW = (int)p.width - 2 * pad;
 	if (moveTool) {
 		Vector2 cen = TexEd_Centroid(xf);
@@ -5064,7 +5353,7 @@ static void TexEd_Draw(AppState* app) {
 					g_texEd.selected % cols, g_texEd.selected / cols, (int)roundf(cen.x), (int)roundf(cen.y),
 					TexEd_RotationOf(xf), TexEd_ScaleOf(xf)),
 				(int)p.x + pad, (int)footerY, fs, WHITE);
-		DrawText("Arrastrar: mover  |  Vertices: estirar  |  Circulo verde: girar (Shift 15)  |  Rueda: escala",
+		DrawText("Arrastrar: mover  |  Vertices: estirar  |  Tirador superior o fuera de esquinas: girar (Shift 15)  |  Rueda: escala",
 				(int)p.x + pad, (int)(footerY + 22 * s), fs - 3, LIGHTGRAY);
 		TexEd_DrawFitText("Flechas: 1px (Shift 8)  |  Q/E: girar  |  R: reset  |  Rueda o botones +/-: zoom celda (Shift fino)  |  B: herramienta",
 				(int)p.x + pad, (int)(footerY + 40 * s), fs - 3, textMaxW, LIGHTGRAY);
@@ -5103,6 +5392,7 @@ static void TexEd_Draw(AppState* app) {
 	Rectangle saveBtn = {p.x + 3 * pad + 2 * btnW, btnY, btnW, 40 * s};
 
 	if (Button(resetCell, "RESET CELDA", GRAY)) {
+		TexEd_UndoPushXform(g_texEd.selected, xf);
 		*xf = TexEd_IdentityXform();
 		TexEd_CellChanged(app, g_texEd.selected);
 	}
