@@ -3387,10 +3387,68 @@ static inline void SortRenderItems(RenderItem* items, int itemCount) {
     }
 }
 
+static inline Vector3 SnapLimbToTorsoView(const BoneRenderData* bone, Camera camera,
+                                          const TorsoRenderData* torsos, int torsoCount)
+{
+    TorsoType type;
+    if      (strstr(bone->boneName, "Shoulder")) type = TORSO_CHEST;
+    else if (strstr(bone->boneName, "Hip"))      type = TORSO_HIP;
+    else return bone->position;
+
+    for (int i = 0; i < torsoCount; i++) {
+        const TorsoRenderData* t = &torsos[i];
+        if (!t->valid || !t->orientation.valid || t->type != type) continue;
+        if (strcmp(t->personId, bone->personId) != 0) continue;
+
+        Vector3 camDir = SafeNormalize(Vector3Subtract(t->position, camera.position));
+        Vector3 local  = {
+            Vector3DotProduct(camDir, t->orientation.right),
+            Vector3DotProduct(camDir, t->orientation.up),
+            Vector3DotProduct(camDir, t->orientation.forward)
+        };
+        float pitch = atan2f(local.y, sqrtf(local.x*local.x + local.z*local.z));
+        if (fabsf(pitch) * RAD2DEG >= 70.0f) return bone->position;
+
+        float yaw        = atan2f(local.x, local.z);
+        float snappedYaw = roundf(yaw / (PI * 0.25f)) * (PI * 0.25f);
+        float snappedPitch = (fabsf(pitch) * RAD2DEG < 22.5f) ? 0.0f : copysignf(PI * 0.25f, pitch);
+
+        Vector3 snappedLocal = {
+            cosf(snappedPitch) * sinf(snappedYaw),
+            sinf(snappedPitch),
+            cosf(snappedPitch) * cosf(snappedYaw)
+        };
+        Vector3 snappedDir = Vector3Add(
+            Vector3Add(Vector3Scale(t->orientation.right,   snappedLocal.x),
+                       Vector3Scale(t->orientation.up,      snappedLocal.y)),
+                       Vector3Scale(t->orientation.forward, snappedLocal.z));
+
+        Vector3 realRight = SafeNormalize(Vector3CrossProduct(camDir, camera.up));
+        Vector3 realUp    = Vector3CrossProduct(realRight, camDir);
+        Vector3 snapRight = SafeNormalize(Vector3CrossProduct(snappedDir, camera.up));
+        Vector3 snapUp    = Vector3CrossProduct(snapRight, snappedDir);
+
+        Vector3 d  = Vector3Subtract(bone->position, t->position);
+        float   dx = Vector3DotProduct(d, snapRight);
+        float   dy = Vector3DotProduct(d, snapUp);
+        float   dz = Vector3DotProduct(d, snappedDir);
+
+        Vector3 snapped = t->position;
+        snapped = Vector3Add(snapped, Vector3Scale(realRight, dx));
+        snapped = Vector3Add(snapped, Vector3Scale(realUp,    dy));
+        snapped = Vector3Add(snapped, Vector3Scale(camDir,    dz));
+        return snapped;
+    }
+    return bone->position;
+}
+
 static void RenderBoneInternal(BonesRenderer* renderer, const BoneRenderData* bone,
                                 Vector3 renderPosition, const AnimationFrame* frame,
-                                BoneRenderData* allBones, int boneCount)
+                                BoneRenderData* allBones, int boneCount,
+                                const TorsoRenderData* torsos, int torsoCount)
 {
+    renderPosition = Vector3Add(renderPosition,
+        Vector3Subtract(SnapLimbToTorsoView(bone, renderer->camera, torsos, torsoCount), bone->position));
     int texIndex = BonesRenderer_LoadTexture(renderer, bone->texturePath);
     Texture2D tex = renderer->textures[texIndex];
     bool isWrist  = IsWristBone(bone->boneName);
@@ -3497,7 +3555,7 @@ static inline void RedrawWristsOnTop(BonesRenderer* renderer, BoneRenderData* bo
     rlDisableDepthMask();
     for (int k = 0; k < wristCount; k++) {
         BoneRenderData* b = &bones[wristIdx[k]];
-        RenderBoneInternal(renderer, b, b->position, NULL, bones, boneCount);
+        RenderBoneInternal(renderer, b, b->position, NULL, bones, boneCount, NULL, 0);
     }
     EndBlendMode();
     rlEnableDepthMask();
@@ -3558,7 +3616,7 @@ static inline int BonesRenderer_CollectItems(BonesRenderer* renderer, RenderItem
 static inline void BonesRenderer_DrawItems(BonesRenderer* renderer, RenderItem* items, int itemCount,
         BoneRenderData* bones, int boneCount,
         HeadRenderData* heads,
-        TorsoRenderData* torsos,
+        TorsoRenderData* torsos, int torsoCount,
         DrawableQuad* quads)
 {
     Vector3 camPos = renderer->camera.position;
@@ -3576,7 +3634,7 @@ static inline void BonesRenderer_DrawItems(BonesRenderer* renderer, RenderItem* 
                     float   dist  = Vector3Length(toCam);
                     Vector3 renderPos = Vector3Add(bone->position,
                         dist > MIN_DISTANCE_THRESHOLD ? Vector3Scale(Vector3Normalize(toCam), BONE_BIAS + INDEX_BIAS*j) : (Vector3){0});
-                    RenderBoneInternal(renderer, bone, renderPos, NULL, bones, boneCount);
+                    RenderBoneInternal(renderer, bone, renderPos, NULL, bones, boneCount, torsos, torsoCount);
                 }
             }
         }
@@ -3610,7 +3668,7 @@ static inline void BonesRenderer_DrawItems(BonesRenderer* renderer, RenderItem* 
             case 1: {
                 const BoneRenderData* b = &bones[item->index];
                 if (strcmp(b->boneName, "Neck") != 0)
-                    RenderBoneInternal(renderer, b, Vector3Add(b->position, renderOffset), NULL, bones, boneCount);
+                    RenderBoneInternal(renderer, b, Vector3Add(b->position, renderOffset), NULL, bones, boneCount, torsos, torsoCount);
                 break;
             }
             case 2: {
@@ -3649,7 +3707,7 @@ static inline void BonesRenderer_RenderFrame(BonesRenderer* renderer,
         rlDisableDepthMask();
         rlDisableBackfaceCulling();
 
-        BonesRenderer_DrawItems(renderer, renderItems, itemCount, bones, boneCount, heads, torsos, quads);
+        BonesRenderer_DrawItems(renderer, renderItems, itemCount, bones, boneCount, heads, torsos, torsoCount, quads);
 
         EndBlendMode();
         rlEnableDepthMask();
@@ -3677,7 +3735,7 @@ static inline void BonesRenderer_WriteDepth(BonesRenderer* renderer,
     rlEnableDepthMask();
     rlDisableBackfaceCulling();
 
-    BonesRenderer_DrawItems(renderer, depthItems, itemCount, bones, boneCount, heads, torsos, quads);
+    BonesRenderer_DrawItems(renderer, depthItems, itemCount, bones, boneCount, heads, torsos, torsoCount, quads);
 
     rlDrawRenderBatchActive();
     rlColorMask(true, true, true, true);
