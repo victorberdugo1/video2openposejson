@@ -1,13 +1,13 @@
 #include "bones_core.h"
 
 #ifdef _WIN32
-    #define WIN32_LEAN_AND_MEAN
-    #define NOGDI
-    #define NOUSER
-    #include <windows.h>
+#define WIN32_LEAN_AND_MEAN
+#define NOGDI
+#define NOUSER
+#include <windows.h>
 #else
-    #include <dirent.h>
-    #include <sys/stat.h>
+#include <dirent.h>
+#include <sys/stat.h>
 #endif
 
 #define BASE_WIDTH 1920
@@ -121,9 +121,9 @@ typedef struct {
 static PoseClipboard g_clipboard = {0};
 
 typedef struct {
-    char  boneName[MAX_BONE_NAME_LENGTH];
-    float yaw;
-    float pitch;
+	char  boneName[MAX_BONE_NAME_LENGTH];
+	float yaw;
+	float pitch;
 } BoneOrientOffset;
 
 #define MAX_ORIENT_OFFSETS 64
@@ -211,7 +211,7 @@ typedef struct {
 	AnimatedCharacter* character;
 	int camMode;
 	float orbitYaw, orbitPitch, orbitRadius;
-	Vector3 targetOffset; // Offset del punto objetivo en relación a la cámara
+	Vector3 targetOffset;
 	bool showUI;
 	EditorState editor;
 	DebugOptions debug;
@@ -281,10 +281,10 @@ static void CopyPoseToClipboard(AppState* app) {
 	}
 
 	const AnimationFrame* frame = &app->character->animation.frames[currentFrame];
-	
+
 	// Clear clipboard
 	memset(&g_clipboard, 0, sizeof(PoseClipboard));
-	
+
 	// Find the first active person
 	const Person* person = NULL;
 	for (int p = 0; p < frame->personCount; p++) {
@@ -293,7 +293,7 @@ static void CopyPoseToClipboard(AppState* app) {
 			break;
 		}
 	}
-	
+
 	if (!person) {
 		TraceLog(LOG_WARNING, "No active person found in frame");
 		return;
@@ -319,9 +319,9 @@ static void CopyPoseToClipboard(AppState* app) {
 	g_clipboard.sourceFrame = frame->frameNumber;
 
 	TraceLog(LOG_INFO, "Copied %d bones from %s frame %d", 
-		g_clipboard.boneCount, 
-		g_clipboard.sourceAnimation, 
-		g_clipboard.sourceFrame);
+			g_clipboard.boneCount, 
+			g_clipboard.sourceAnimation, 
+			g_clipboard.sourceFrame);
 }
 
 static void PastePoseFromClipboard(AppState* app) {
@@ -342,7 +342,7 @@ static void PastePoseFromClipboard(AppState* app) {
 	}
 
 	AnimationFrame* frame = &app->character->animation.frames[currentFrame];
-	
+
 	// Convert to keyframe if not already
 	if (!frame->isOriginalKeyframe) {
 		frame->isOriginalKeyframe = true;
@@ -357,7 +357,7 @@ static void PastePoseFromClipboard(AppState* app) {
 			break;
 		}
 	}
-	
+
 	if (!person) {
 		TraceLog(LOG_WARNING, "No active person found in target frame");
 		return;
@@ -398,11 +398,11 @@ static void PastePoseFromClipboard(AppState* app) {
 		RecalculateAffectedInterpolations(app, currentFrameNumber);
 
 		TraceLog(LOG_INFO, "Pasted %d bones from %s frame %d to %s frame %d", 
-			pastedCount,
-			g_clipboard.sourceAnimation,
-			g_clipboard.sourceFrame,
-			app->currentAnimation,
-			frame->frameNumber);
+				pastedCount,
+				g_clipboard.sourceAnimation,
+				g_clipboard.sourceFrame,
+				app->currentAnimation,
+				frame->frameNumber);
 	} else {
 		TraceLog(LOG_WARNING, "No bones were pasted");
 	}
@@ -475,49 +475,49 @@ static bool LoadAnimationsFromDirectory(AnimationManager* manager, const char* a
 		if (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
 		const char* name = findData.cFileName;
 #else
-	DIR* dir = opendir(animationsPath);
-	if (!dir) {
-		TraceLog(LOG_WARNING, "Cannot open animations directory: %s", animationsPath);
-		return false;
-	}
-	struct dirent* entry;
-	while ((entry = readdir(dir)) != NULL && manager->animationCount < MAX_ANIMATIONS) {
-		const char* name = entry->d_name;
-		if (!name) continue;
+		DIR* dir = opendir(animationsPath);
+		if (!dir) {
+			TraceLog(LOG_WARNING, "Cannot open animations directory: %s", animationsPath);
+			return false;
+		}
+		struct dirent* entry;
+		while ((entry = readdir(dir)) != NULL && manager->animationCount < MAX_ANIMATIONS) {
+			const char* name = entry->d_name;
+			if (!name) continue;
 #endif
 
-		if (HasExtension(name, ".anim") && manager->animationCount < MAX_ANIMATIONS) {
-			char baseName[64];
-			strncpy(baseName, name, sizeof(baseName) - 1);
-			baseName[sizeof(baseName) - 1] = '\0';
-			char* dot = strrchr(baseName, '.');
-			if (dot) *dot = '\0';
+			if (HasExtension(name, ".anim") && manager->animationCount < MAX_ANIMATIONS) {
+				char baseName[64];
+				strncpy(baseName, name, sizeof(baseName) - 1);
+				baseName[sizeof(baseName) - 1] = '\0';
+				char* dot = strrchr(baseName, '.');
+				if (dot) *dot = '\0';
 
-			char jsonPath[512];
-			char animPath[512];
-			snprintf(jsonPath, sizeof(jsonPath), "%s%s.json", animationsPath, baseName);
-			snprintf(animPath, sizeof(animPath), "%s%s.anim", animationsPath, baseName);
+				char jsonPath[512];
+				char animPath[512];
+				snprintf(jsonPath, sizeof(jsonPath), "%s%s.json", animationsPath, baseName);
+				snprintf(animPath, sizeof(animPath), "%s%s.anim", animationsPath, baseName);
 
-			FILE* testFile = fopen(jsonPath, "r");
-			if (testFile) {
-				fclose(testFile);
-				AnimationInfo* info = &manager->animations[manager->animationCount];
-				strncpy(info->name, baseName, sizeof(info->name) - 1);
-				info->name[sizeof(info->name) - 1] = '\0';
-				strncpy(info->jsonPath, jsonPath, sizeof(info->jsonPath) - 1);
-				info->jsonPath[sizeof(info->jsonPath) - 1] = '\0';
-				strncpy(info->metaPath, animPath, sizeof(info->metaPath) - 1);
-				info->metaPath[sizeof(info->metaPath) - 1] = '\0';
-				manager->animationCount++;
-				TraceLog(LOG_INFO, "Found animation: %s", baseName);
-			} else {
-				TraceLog(LOG_DEBUG, "Skipping anim without json: %s", name);
+				FILE* testFile = fopen(jsonPath, "r");
+				if (testFile) {
+					fclose(testFile);
+					AnimationInfo* info = &manager->animations[manager->animationCount];
+					strncpy(info->name, baseName, sizeof(info->name) - 1);
+					info->name[sizeof(info->name) - 1] = '\0';
+					strncpy(info->jsonPath, jsonPath, sizeof(info->jsonPath) - 1);
+					info->jsonPath[sizeof(info->jsonPath) - 1] = '\0';
+					strncpy(info->metaPath, animPath, sizeof(info->metaPath) - 1);
+					info->metaPath[sizeof(info->metaPath) - 1] = '\0';
+					manager->animationCount++;
+					TraceLog(LOG_INFO, "Found animation: %s", baseName);
+				} else {
+					TraceLog(LOG_DEBUG, "Skipping anim without json: %s", name);
+				}
 			}
-		}
 
 #ifdef _WIN32
-	} while (FindNextFileA(hFind, &findData));
-	FindClose(hFind);
+		} while (FindNextFileA(hFind, &findData));
+		FindClose(hFind);
 #else
 	}
 	closedir(dir);
@@ -666,23 +666,23 @@ static bool PerformUndo(AppState* app) {
 		case UNDO_FRAME_DELETE:
 		case UNDO_FRAME_DUPLICATE:
 		case UNDO_FRAMES_ADD: {
-									 RestoreFrameRange(&app->character->animation, action);
-									 app->character->maxFrames = app->character->animation.frameCount;
-									 if (app->character->animController && app->character->animController->currentClipIndex >= 0) {
-										 AnimController_UpdateFrameBounds(app->character->animController,
-												 app->character->animController->currentClipIndex,
-												 &app->character->animation);
-									 }
-									 int clampedFrame = app->character->currentFrame;
-									 if (clampedFrame >= app->character->animation.frameCount) {
-										 clampedFrame = app->character->animation.frameCount - 1;
-									 }
-									 if (clampedFrame >= 0) {
-										 SetCharacterFrame(app->character, clampedFrame);
-									 }
-									 app->character->forceUpdate = true;
-									 break;
-								 }
+								  RestoreFrameRange(&app->character->animation, action);
+								  app->character->maxFrames = app->character->animation.frameCount;
+								  if (app->character->animController && app->character->animController->currentClipIndex >= 0) {
+									  AnimController_UpdateFrameBounds(app->character->animController,
+											  app->character->animController->currentClipIndex,
+											  &app->character->animation);
+								  }
+								  int clampedFrame = app->character->currentFrame;
+								  if (clampedFrame >= app->character->animation.frameCount) {
+									  clampedFrame = app->character->animation.frameCount - 1;
+								  }
+								  if (clampedFrame >= 0) {
+									  SetCharacterFrame(app->character, clampedFrame);
+								  }
+								  app->character->forceUpdate = true;
+								  break;
+							  }
 		case UNDO_PASTE_POSE: {
 								  RestoreFrameRange(&app->character->animation, action);
 								  RecalculateAffectedInterpolations(app, app->character->animation.frames[action->opFrameIndex].frameNumber);
@@ -750,16 +750,16 @@ static bool PerformRedo(AppState* app) {
 									 break;
 								 }
 		case UNDO_FRAME_DELETE: {
-									 BonesDeleteFrame(app, &app->character->animation, action->opFrameIndex);
-									 app->character->maxFrames = app->character->animation.frameCount;
-									 app->character->forceUpdate = true;
-									 break;
-								 }
+									BonesDeleteFrame(app, &app->character->animation, action->opFrameIndex);
+									app->character->maxFrames = app->character->animation.frameCount;
+									app->character->forceUpdate = true;
+									break;
+								}
 		case UNDO_FRAME_DUPLICATE: {
-										BonesDuplicateFrame(app, &app->character->animation, action->opFrameIndex);
-										app->character->forceUpdate = true;
-										break;
-									}
+									   BonesDuplicateFrame(app, &app->character->animation, action->opFrameIndex);
+									   app->character->forceUpdate = true;
+									   break;
+								   }
 		case UNDO_FRAMES_ADD: {
 								  AddMultipleFramesAtEnd(app, action->opCount, &app->character->animation);
 								  app->character->forceUpdate = true;
@@ -2180,18 +2180,18 @@ static void DrawOnionSkin(AppState* app) {
 		ch->renderTorsosCount = 0;
 
 		CollectBonesForRendering(&ch->animation, ch->renderer->camera,
-			&ch->renderBones, &ch->renderBonesCount, &ch->renderBonesCapacity,
-			ch->boneConfigs, ch->boneConfigCount, ch->textureSets, ch->ornaments);
+				&ch->renderBones, &ch->renderBonesCount, &ch->renderBonesCapacity,
+				ch->boneConfigs, ch->boneConfigCount, ch->textureSets, ch->ornaments);
 
 		if (ch->renderHeadBillboards)
 			CollectHeadsForRendering(&ch->animation, &ch->renderHeads,
-				&ch->renderHeadsCount, &ch->renderHeadsCapacity,
-				ch->boneConfigs, ch->boneConfigCount, ch->textureSets);
+					&ch->renderHeadsCount, &ch->renderHeadsCapacity,
+					ch->boneConfigs, ch->boneConfigCount, ch->textureSets);
 
 		if (ch->renderTorsoBillboards)
 			CollectTorsosForRendering(&ch->animation, &ch->renderTorsos,
-				&ch->renderTorsosCount, &ch->renderTorsosCapacity,
-				ch->boneConfigs, ch->boneConfigCount, ch->textureSets);
+					&ch->renderTorsosCount, &ch->renderTorsosCapacity,
+					ch->boneConfigs, ch->boneConfigCount, ch->textureSets);
 
 		float alpha = 1.0f - (float)(abs(delta) - 1) * 0.35f;
 		float a = alpha * 0.65f;
@@ -2203,11 +2203,11 @@ static void DrawOnionSkin(AppState* app) {
 		g_quadRenderNoDepthTest = true;
 
 		BonesRenderer_RenderFrame(ch->renderer,
-			ch->renderBones,  ch->renderBonesCount,
-			ch->renderHeads,  ch->renderHeadsCount,
-			ch->renderTorsos, ch->renderTorsosCount,
-			ch->autoCenter, ch->autoCenterCalculated,
-			NULL, 0);
+				ch->renderBones,  ch->renderBonesCount,
+				ch->renderHeads,  ch->renderHeadsCount,
+				ch->renderTorsos, ch->renderTorsosCount,
+				ch->autoCenter, ch->autoCenterCalculated,
+				NULL, 0);
 	}
 
 	g_quadRenderTint        = (Color){255, 255, 255, 255};
@@ -2220,18 +2220,18 @@ static void DrawOnionSkin(AppState* app) {
 	ch->renderTorsosCount = 0;
 
 	CollectBonesForRendering(&ch->animation, ch->renderer->camera,
-		&ch->renderBones, &ch->renderBonesCount, &ch->renderBonesCapacity,
-		ch->boneConfigs, ch->boneConfigCount, ch->textureSets, ch->ornaments);
+			&ch->renderBones, &ch->renderBonesCount, &ch->renderBonesCapacity,
+			ch->boneConfigs, ch->boneConfigCount, ch->textureSets, ch->ornaments);
 
 	if (ch->renderHeadBillboards)
 		CollectHeadsForRendering(&ch->animation, &ch->renderHeads,
-			&ch->renderHeadsCount, &ch->renderHeadsCapacity,
-			ch->boneConfigs, ch->boneConfigCount, ch->textureSets);
+				&ch->renderHeadsCount, &ch->renderHeadsCapacity,
+				ch->boneConfigs, ch->boneConfigCount, ch->textureSets);
 
 	if (ch->renderTorsoBillboards)
 		CollectTorsosForRendering(&ch->animation, &ch->renderTorsos,
-			&ch->renderTorsosCount, &ch->renderTorsosCapacity,
-			ch->boneConfigs, ch->boneConfigCount, ch->textureSets);
+				&ch->renderTorsosCount, &ch->renderTorsosCapacity,
+				ch->boneConfigs, ch->boneConfigCount, ch->textureSets);
 }
 
 static void UpdateGroupDrag(AppState* app) {
@@ -2809,14 +2809,14 @@ static void DrawControlPanel(AppState* app) {
 		// Detectar si la animación terminó automáticamente (sin loop)
 		bool animationFinished = false;
 		if (app->character && app->character->animController && 
-		    app->character->animController->currentClipIndex >= 0) {
+				app->character->animController->currentClipIndex >= 0) {
 			AnimationClipMetadata* clip = &app->character->animController->clips[app->character->animController->currentClipIndex];
 			// La animación terminó si: no tiene loop, isPlaying está true pero controller->playing está false
 			if (!clip->loop && app->editor.isPlaying && !app->character->animController->playing) {
 				animationFinished = true;
 			}
 		}
-		
+
 		// Si la animación terminó automáticamente, no cambiar isPlaying, solo reiniciar
 		if (animationFinished) {
 			TraceLog(LOG_INFO, "Animation finished, restarting...");
@@ -3250,7 +3250,7 @@ static void DrawBoneOrientGizmo(AppState* app) {
 	Vector2 boneScreen = GetWorldToScreen(bonePos, camera);
 
 	Color axisColor = (app->editor.orientDragAxis == 1) ? RED :
-	                  (app->editor.orientDragAxis == 2) ? GREEN : BLUE;
+		(app->editor.orientDragAxis == 2) ? GREEN : BLUE;
 
 	DrawCircleLines((int)boneScreen.x, (int)boneScreen.y, radius, axisColor);
 
@@ -3274,7 +3274,7 @@ static void DrawBoneOrientGizmo(AppState* app) {
 	int fs = (int)(11 * scale2);
 	if (fs < 9) fs = 9;
 	const char* axisName = (app->editor.orientDragAxis == 1) ? "yaw" :
-	                       (app->editor.orientDragAxis == 2) ? "pitch" : "roll";
+		(app->editor.orientDragAxis == 2) ? "pitch" : "roll";
 	char label[32];
 	snprintf(label, sizeof(label), "%s %.1f", axisName, currentValue);
 	DrawText(label, (int)boneScreen.x + (int)(dotRadius * 2), (int)boneScreen.y - (int)(dotRadius * 2), fs, ORANGE);
@@ -4737,7 +4737,7 @@ static void TexEd_StrokeMove(Vector2 pos) {
 		float t = (float)i / (float)n;
 		float u = 1.0f - t;
 		Vector2 q = {u * u * p0.x + 2.0f * u * t * prev.x + t * t * mid.x,
-				u * u * p0.y + 2.0f * u * t * prev.y + t * t * mid.y};
+			u * u * p0.y + 2.0f * u * t * prev.y + t * t * mid.y};
 		TexEd_StrokeSegment(last, q);
 		last = q;
 	}
@@ -5081,7 +5081,7 @@ static bool TexEd_Update(AppState* app) {
 		Vector2 center = TexEd_CellCenterScreen(ar, g_texEd.selected);
 		int hitV = TexEd_HitVertex(sel, center, k, m, hitR);
 		bool rotPress = rightPress || TexEd_HitRotHandle(app, sel, center, k, s, m) ||
-				(hitV < 0 && TexEd_HitCornerRotZone(sel, center, k, m, hitR));
+			(hitV < 0 && TexEd_HitCornerRotZone(sel, center, k, m, hitR));
 		if (rotPress) {
 			Vector2 cen = TexEd_Centroid(sel);
 			Vector2 pv = {center.x + cen.x * k, center.y + cen.y * k};
@@ -5594,14 +5594,14 @@ static void App_HandleInput(AppState* app) {
 		// Detectar si la animación terminó automáticamente (sin loop)
 		bool animationFinished = false;
 		if (app->character && app->character->animController && 
-		    app->character->animController->currentClipIndex >= 0) {
+				app->character->animController->currentClipIndex >= 0) {
 			AnimationClipMetadata* clip = &app->character->animController->clips[app->character->animController->currentClipIndex];
 			// La animación terminó si: no tiene loop, isPlaying está true pero controller->playing está false
 			if (!clip->loop && app->editor.isPlaying && !app->character->animController->playing) {
 				animationFinished = true;
 			}
 		}
-		
+
 		// Si la animación terminó automáticamente, no cambiar isPlaying, solo reiniciar
 		if (animationFinished) {
 			TraceLog(LOG_INFO, "Animation finished, restarting...");
@@ -5787,7 +5787,7 @@ static void App_UpdateCamera(AppState* app, float dt) {
 		float moveSpeed = TARGET_MOVE_SENSITIVITY;
 		if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
 			moveSpeed *= 3.0f; // Más rápido con Shift
-		
+
 		// Calcular vectores de la cámara
 		Vector3 cameraPos = app->character->renderer->camera.position;
 		Vector3 currentTarget = Vector3Add(baseCameraTarget, app->targetOffset);
@@ -5889,7 +5889,7 @@ static void App_UpdateCamera(AppState* app, float dt) {
 				Vector3Subtract(app->character->renderer->camera.position, Vector3Scale(forward, speed));
 		if (IsKeyDown(KEY_D))
 			app->character->renderer->camera.position =
-					Vector3Add(app->character->renderer->camera.position, Vector3Scale(right_dir, speed));
+				Vector3Add(app->character->renderer->camera.position, Vector3Scale(right_dir, speed));
 		if (IsKeyDown(KEY_A))
 			app->character->renderer->camera.position =
 				Vector3Subtract(app->character->renderer->camera.position, Vector3Scale(right_dir, speed));
